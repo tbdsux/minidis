@@ -1,6 +1,7 @@
 package minidis
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 type Minidis struct {
 	session  *discordgo.Session
 	commands map[string]SlashCommandProps
+	guilds   []string // guilds to sync the app commands
 	Token    string
 	AppID    string
 }
@@ -23,13 +25,13 @@ func New(token string) *Minidis {
 	}
 
 	return &Minidis{
-		session: s,
-		Token:   token,
-		AppID:   s.State.User.ID,
+		session:  s,
+		commands: map[string]SlashCommandProps{},
+		Token:    token,
 	}
 }
 
-func (m *Minidis) Run() {
+func (m *Minidis) Run() error {
 	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
@@ -41,15 +43,23 @@ func (m *Minidis) Run() {
 
 	// try to open websocker
 	if err := m.session.Open(); err != nil {
-		log.Fatalf("Cannot open session: %v\n", err)
+		return fmt.Errorf("cannot open session: %v", err)
 	}
 
-	// always close websocket.
-	defer m.session.Close()
+	// set app id
+	m.AppID = m.session.State.User.ID
+
+	// sync commands internally
+	if err := m.syncCommands(m.guilds); err != nil {
+		return fmt.Errorf("failed to sync commands: %v", err)
+	}
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, os.Interrupt)
 	<-sc
 
 	log.Println("Closing...")
+
+	// Close the websocket as final.
+	return m.session.Close()
 }
