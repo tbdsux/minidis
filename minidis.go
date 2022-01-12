@@ -10,7 +10,7 @@ import (
 
 type Minidis struct {
 	session  *discordgo.Session
-	commands []SlashCommandProps
+	commands map[string]SlashCommandProps
 	Token    string
 	AppID    string
 }
@@ -30,6 +30,14 @@ func New(token string) *Minidis {
 }
 
 func (m *Minidis) Run() {
+	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			m.executeSlash(s, i.Interaction)
+		case discordgo.InteractionMessageComponent:
+			return
+		}
+	})
 
 	// try to open websocker
 	if err := m.session.Open(); err != nil {

@@ -8,11 +8,12 @@ type SlashCommandProps struct {
 	Command     string
 	Description string
 	Options     []*discordgo.ApplicationCommandOption
+	Execute     func(c *SlashContext) error
 }
 
 // AddCommand adds a new slash command.
 func (m *Minidis) AddCommand(cmd SlashCommandProps) {
-	m.commands = append(m.commands, cmd)
+	m.commands[cmd.Command] = cmd
 }
 
 func (m *Minidis) SyncCommands(guildIDs ...string) error {
