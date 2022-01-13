@@ -11,6 +11,7 @@ type SlashContext struct {
 	Options []*discordgo.ApplicationCommandInteractionDataOption
 }
 
+// Creates a new slash context for slash command interaction. This is called internally.
 func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.Interaction) *SlashContext {
 	context := &SlashContext{
 		event:   event,
@@ -32,13 +33,73 @@ func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.I
 }
 
 // SendText sends a string text as interaction response.
-func (s *SlashContext) SendText(content string) error {
+func (s *SlashContext) ReplyString(content string) (*InteractionContext, error) {
+	return s.ReplyC(ReplyProps{
+		Content: content,
+	})
+}
+
+// Reply sends a string content with embeds if there is.
+func (s *SlashContext) Reply(content string, embeds ...*discordgo.MessageEmbed) (*InteractionContext, error) {
+	return s.ReplyC(ReplyProps{
+		Content: content,
+		Embeds:  embeds,
+	})
+}
+
+// Reply sends a string content with embeds if there is. `Ephemeral` - the response message will only be seen
+// by the user who called it.
+func (s *SlashContext) ReplyEphemeral(content string, embeds ...*discordgo.MessageEmbed) (*InteractionContext, error) {
+	return s.ReplyC(ReplyProps{
+		Content:     content,
+		Embeds:      embeds,
+		IsEphemeral: true,
+	})
+}
+
+type ReplyProps struct {
+	Content         string
+	Embeds          []*discordgo.MessageEmbed
+	Components      []discordgo.MessageComponent
+	IsEphemeral     bool
+	Attachments     []*discordgo.File
+	AllowedMentions *discordgo.MessageAllowedMentions
+}
+
+// ReplyC is the full reply component structure.
+func (s *SlashContext) ReplyC(reply ReplyProps) (*InteractionContext, error) {
 	res := &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: content,
+			Content: reply.Content,
 		},
 	}
 
-	return s.session.InteractionRespond(s.event, res)
+	if len(reply.Embeds) > 0 {
+		res.Data.Embeds = reply.Embeds
+	}
+
+	if len(reply.Components) > 0 {
+		res.Data.Components = reply.Components
+	}
+
+	if len(reply.Attachments) > 0 {
+		res.Data.Files = reply.Attachments
+	}
+
+	if reply.IsEphemeral {
+		res.Data.Flags = 1 << 6
+	}
+
+	if reply.AllowedMentions != nil {
+		res.Data.AllowedMentions = reply.AllowedMentions
+	}
+
+	// send response
+	if err := s.session.InteractionRespond(s.event, res); err != nil {
+		return nil, err
+	}
+
+	// return new context
+	return s.NewInteractionContext(), nil
 }

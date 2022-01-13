@@ -25,7 +25,9 @@ func main() {
 		Description: "Simple ping command.",
 		Options:     []*discordgo.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
-			return c.SendText(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
+			_, err := c.ReplyString(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
+
+			return err
 		},
 	})
 
