@@ -1,6 +1,8 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/bwmarrin/discordgo"
+)
 
 type InteractionContext struct {
 	event   *discordgo.Interaction
@@ -17,6 +19,7 @@ func (s *SlashContext) NewInteractionContext() *InteractionContext {
 	return &InteractionContext{
 		event:   s.event,
 		session: s.session,
+		AppID:   s.session.State.User.ID,
 	}
 }
 

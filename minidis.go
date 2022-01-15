@@ -31,11 +31,14 @@ func New(token string) *Minidis {
 	}
 }
 
+// Run executes the command handler.
 func (m *Minidis) Run() error {
 	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
-			m.executeSlash(s, i.Interaction)
+			if err := m.executeSlash(s, i.Interaction); err != nil {
+				log.Printf("failed to execute slash command: %v\n", err)
+			}
 		case discordgo.InteractionMessageComponent:
 			return
 		}
