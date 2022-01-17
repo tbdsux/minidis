@@ -11,11 +11,39 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 	allCommands := []*discordgo.ApplicationCommand{}
 
 	for _, v := range m.commands {
-		allCommands = append(allCommands, &discordgo.ApplicationCommand{
+		cmd := &discordgo.ApplicationCommand{
 			Name:        v.Command,
 			Description: v.Description,
 			Options:     v.Options,
-		})
+		}
+
+		for _, g := range v.subcommandGroups {
+			group := &discordgo.ApplicationCommandOption{
+				Name:        g.Command,
+				Description: g.Description,
+				Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
+			}
+
+			for _, scmd := range g.subcommands {
+				group.Options = append(group.Options, &discordgo.ApplicationCommandOption{
+					Name:        scmd.Command,
+					Description: scmd.Description,
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+				})
+			}
+
+			cmd.Options = append(cmd.Options, group)
+		}
+
+		for _, scmd := range v.subcommands {
+			cmd.Options = append(cmd.Options, &discordgo.ApplicationCommandOption{
+				Name:        scmd.Command,
+				Description: scmd.Description,
+				Type:        discordgo.ApplicationCommandOptionSubCommand,
+			})
+		}
+
+		allCommands = append(allCommands, cmd)
 	}
 
 	if len(guildIDs) == 0 {

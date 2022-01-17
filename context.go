@@ -18,6 +18,7 @@ func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.I
 		event:   event,
 		session: session,
 		AppID:   session.State.User.ID,
+		Options: map[string]*discordgo.ApplicationCommandInteractionDataOption{},
 	}
 
 	// parse options into a map for better accessibility
