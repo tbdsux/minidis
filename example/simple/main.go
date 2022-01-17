@@ -34,6 +34,20 @@ func main() {
 		},
 	})
 
+	// deferred replies
+	bot.AddCommand(&minidis.SlashCommandProps{
+		Command:     "defer",
+		Description: "Deferred reply.",
+		Execute: func(c *minidis.SlashContext) error {
+			c.DeferReply(true)
+
+			time.Sleep(time.Second * 5)
+
+			return c.Edit("This is a deffered reply edit message!")
+		},
+	})
+
+	// responses
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Command:     "response",
 		Description: "Responses management.",

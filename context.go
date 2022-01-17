@@ -106,6 +106,23 @@ func (s *SlashContext) ReplyC(reply ReplyProps) error {
 	return s.session.InteractionRespond(s.event, res)
 }
 
+// DeferReply sends an interaction response where the user sees a loading state.
+// After sending, 15 minutes is given to complete your command's tasks.
+// This is considered as an interaction response, so you should not use the `Reply*` functions after.
+// - `ephemeral` -> only the user sees the loading state
+func (s *SlashContext) DeferReply(ephemeral bool) error {
+	res := &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{},
+	}
+
+	if ephemeral {
+		res.Data.Flags = 1 << 6
+	}
+
+	return s.session.InteractionRespond(s.event, res)
+}
+
 // Edit edis the interaction response.
 func (s *SlashContext) Edit(content string) error {
 	return s.EditC(EditProps{
