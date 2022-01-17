@@ -12,6 +12,8 @@ type SlashCommandProps struct {
 }
 
 // AddCommand adds a new slash command.
-func (m *Minidis) AddCommand(cmd SlashCommandProps) {
+func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
 	m.commands[cmd.Command] = cmd
+
+	return cmd
 }

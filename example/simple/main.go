@@ -24,7 +24,7 @@ func main() {
 	})
 
 	// simple command
-	bot.AddCommand(minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.SlashCommandProps{
 		Command:     "ping",
 		Description: "Simple ping command.",
 		Options:     []*discordgo.ApplicationCommandOption{},
@@ -34,7 +34,7 @@ func main() {
 		},
 	})
 
-	bot.AddCommand(minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.SlashCommandProps{
 		Command:     "response",
 		Description: "Responses management.",
 		Options:     []*discordgo.ApplicationCommandOption{},

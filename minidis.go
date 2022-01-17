@@ -11,7 +11,7 @@ import (
 
 type Minidis struct {
 	session  *discordgo.Session
-	commands map[string]SlashCommandProps
+	commands map[string]*SlashCommandProps
 	guilds   []string // guilds to sync the app commands
 	Token    string
 	AppID    string
@@ -26,7 +26,7 @@ func New(token string) *Minidis {
 
 	return &Minidis{
 		session:  s,
-		commands: map[string]SlashCommandProps{},
+		commands: map[string]*SlashCommandProps{},
 		Token:    token,
 	}
 }
@@ -44,7 +44,7 @@ func (m *Minidis) Run() error {
 		}
 	})
 
-	// try to open websocker
+	// try to open websocket
 	if err := m.session.Open(); err != nil {
 		return fmt.Errorf("cannot open session: %v", err)
 	}
