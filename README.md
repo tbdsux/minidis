@@ -2,6 +2,14 @@
 
 Simple slash commands handler for discord.go (wip)
 
+## Install
+
+This is usable for simple and basic commands but is still missing some of other features.
+
+```sh
+go get -u github.com/World-of-Cryptopups/minidis
+```
+
 ## Usage
 
 - Basic Usage
@@ -10,37 +18,34 @@ Simple slash commands handler for discord.go (wip)
 package main
 
 import (
- "fmt"
- "log"
- "os"
+    "fmt"
+    "log"
+    "os"
 
- "github.com/World-of-Cryptopups/minidis"
- "github.com/bwmarrin/discordgo"
+    "github.com/World-of-Cryptopups/minidis"
+    "github.com/bwmarrin/discordgo"
 )
 
 func main() {
- bot := minidis.New(os.Getenv("TOKEN"))
+    bot := minidis.New(os.Getenv("TOKEN"))
 
- // set intents
- bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
+    // set intents
+    bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
 
- bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
-  log.Println("Bot is ready!")
- })
+    bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+    log.Println("Bot is ready!")
+    })
 
- // simple command
- bot.AddCommand(minidis.SlashCommandProps{
-  Command:     "ping",
-  Description: "Simple ping command.",
-  Options:     []*discordgo.ApplicationCommandOption{},
-  Execute: func(c *minidis.SlashContext) error {
-   _, err := c.ReplyString(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
+    // simple command
+    bot.AddCommand(minidis.SlashCommandProps{
+        Command:     "ping",
+        Description: "Simple ping command.",
+        Execute: func(c *minidis.SlashContext) error {
+            return c.ReplyString(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
+        },
+    })
 
-   return err
-  },
- })
-
- bot.Run()
+    bot.Run()
 }
 
 ```
