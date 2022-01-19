@@ -10,11 +10,13 @@ import (
 )
 
 type Minidis struct {
-	session  *discordgo.Session
-	commands map[string]*SlashCommandProps
-	guilds   []string // guilds to sync the app commands
-	Token    string
-	AppID    string
+	session                *discordgo.Session
+	commands               map[string]*SlashCommandProps
+	componentHandlers      map[string]*ComponentInteractionProps
+	customComponentHandler func(*SlashContext, *ComponentContext) error
+	guilds                 []string // guilds to sync the app commands
+	Token                  string
+	AppID                  string
 }
 
 func New(token string) *Minidis {
@@ -25,9 +27,11 @@ func New(token string) *Minidis {
 	}
 
 	return &Minidis{
-		session:  s,
-		commands: map[string]*SlashCommandProps{},
-		Token:    token,
+		session:                s,
+		commands:               map[string]*SlashCommandProps{},
+		componentHandlers:      map[string]*ComponentInteractionProps{},
+		customComponentHandler: nil,
+		Token:                  token,
 	}
 }
 
@@ -40,7 +44,9 @@ func (m *Minidis) Run() error {
 				log.Printf("failed to execute slash command: %v\n", err)
 			}
 		case discordgo.InteractionMessageComponent:
-			return
+			if err := m.executeComponentHandler(s, i.Interaction); err != nil {
+				log.Printf("failed to execute component handler: %v\n", err)
+			}
 		}
 	})
 

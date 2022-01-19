@@ -9,11 +9,13 @@ type SlashContext struct {
 	Author  *discordgo.User
 	Member  *discordgo.Member // only filled when called in a guild
 	IsDM    bool
+
+	// NOTE: this is empty if component is called
 	Options map[string]*discordgo.ApplicationCommandInteractionDataOption
 }
 
 // Creates a new slash context for slash command interaction. This is called internally.
-func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.Interaction) *SlashContext {
+func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.Interaction, isSlash bool) *SlashContext {
 	context := &SlashContext{
 		event:   event,
 		session: session,
@@ -21,9 +23,11 @@ func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.I
 		Options: map[string]*discordgo.ApplicationCommandInteractionDataOption{},
 	}
 
-	// parse options into a map for better accessibility
-	for _, v := range event.ApplicationCommandData().Options {
-		context.Options[v.Name] = v
+	if isSlash {
+		// parse options into a map for better accessibility
+		for _, v := range event.ApplicationCommandData().Options {
+			context.Options[v.Name] = v
+		}
 	}
 
 	if event.GuildID == "" {

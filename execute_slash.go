@@ -6,7 +6,7 @@ import (
 
 func (m *Minidis) executeSlash(s *discordgo.Session, i *discordgo.Interaction) error {
 	if cmd, ok := m.commands[i.ApplicationCommandData().Name]; ok {
-		context := m.NewSlashContext(s, i)
+		context := m.NewSlashContext(s, i, true)
 
 		if len(i.ApplicationCommandData().Options) > 0 {
 			scmd := i.ApplicationCommandData().Options[0]
