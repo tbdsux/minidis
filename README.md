@@ -1,6 +1,8 @@
 # minidis
 
-Simple slash commands handler for discord.go (wip)
+Simple slash commands handler for [discordgo](https://github.com/bwmarrin/discordgo)
+
+This just wraps functions and is based from the examples provided by [discordgo](https://github.com/bwmarrin/discordgo) and this is made in order to make its api more readable and easier to maintain.
 
 ## Install
 
@@ -11,8 +13,6 @@ go get -u github.com/World-of-Cryptopups/minidis
 ```
 
 ## Usage
-
-- Basic Usage
 
 ```go
 package main
@@ -33,7 +33,7 @@ func main() {
     bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
 
     bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
-    log.Println("Bot is ready!")
+        log.Println("Bot is ready!")
     })
 
     // simple command
@@ -49,6 +49,8 @@ func main() {
 }
 
 ```
+
+More [examples...](./example/)
 
 ##
 
