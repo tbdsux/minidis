@@ -2,9 +2,10 @@ module github.com/World-of-Cryptopups/minidis
 
 go 1.17
 
+require github.com/bwmarrin/discordgo v0.24.1-0.20220307125103-9586f7fb38cd
+
 require (
-	github.com/bwmarrin/discordgo v0.23.3-0.20211228023845-29269347e820 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
-	golang.org/x/crypto v0.0.0-20211215153901-e495a2d5b3d3 // indirect
-	golang.org/x/sys v0.0.0-20220111092808-5a964db01320 // indirect
+	github.com/gorilla/websocket v1.5.0 // indirect
+	golang.org/x/crypto v0.0.0-20220214200702-86341886e292 // indirect
+	golang.org/x/sys v0.0.0-20220227234510-4e6760a101f9 // indirect
 )
