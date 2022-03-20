@@ -1,4 +1,4 @@
-module github.com/World-of-Cryptopups/minidis
+module github.com/TheBoringDude/minidis
 
 go 1.17
 

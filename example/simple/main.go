@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/World-of-Cryptopups/minidis"
+	"github.com/TheBoringDude/minidis"
 	"github.com/bwmarrin/discordgo"
 )
 
