@@ -9,7 +9,7 @@ This just wraps functions and is based from the examples provided by [discordgo]
 This is usable for simple and basic commands but is still missing some of other features.
 
 ```sh
-go get -u github.com/World-of-Cryptopups/minidis
+go get -u github.com/TheBoringDude/minidis
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ import (
     "log"
     "os"
 
-    "github.com/World-of-Cryptopups/minidis"
+    "github.com/TheBoringDude/minidis"
     "github.com/bwmarrin/discordgo"
 )
 
@@ -54,4 +54,4 @@ More [examples...](./example/)
 
 ##
 
-**&copy; 2022 | World of Cryptopups**
+**&copy; 2022 | TheBoringDude**
