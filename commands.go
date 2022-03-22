@@ -5,12 +5,12 @@ import (
 )
 
 type SlashCommandProps struct {
-	Command     string
-	Description string
-	Options     []*discordgo.ApplicationCommandOption
-	Execute     func(c *SlashContext) error
+	Command          string
+	Description      string
+	Options          []*discordgo.ApplicationCommandOption
+	Execute          func(c *SlashContext) error
 	subcommandGroups map[string]*SlashSubcommandGroupProps
-	subcommands map[string]*SlashSubcommandProps
+	subcommands      map[string]*SlashSubcommandProps
 }
 
 type SlashSubcommandProps struct {
@@ -19,7 +19,6 @@ type SlashSubcommandProps struct {
 	Options     []*discordgo.ApplicationCommandOption
 	Execute     func(c *SlashContext) error
 }
-
 
 type SlashSubcommandGroupProps struct {
 	Command     string
@@ -31,11 +30,18 @@ type SlashSubcommandGroupProps struct {
 func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
 	m.commands[cmd.Command] = cmd
 
-
 	cmd.subcommandGroups = map[string]*SlashSubcommandGroupProps{}
-	cmd.subcommands =  map[string]*SlashSubcommandProps{}
+	cmd.subcommands = map[string]*SlashSubcommandProps{}
 
 	return cmd
+}
+
+// RegisterCommands is used for adding multiple already defined commands.
+// It does not return anything. It just wrap the `AddCommand` function.
+func (m *Minidis) RegisterCommands(cmds ...*SlashCommandProps) {
+	for _, v := range cmds {
+		m.AddCommand(v)
+	}
 }
 
 // AddSubcommand adds a new sub command for the parent command.

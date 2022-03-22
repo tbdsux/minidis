@@ -64,6 +64,17 @@ func main() {
 		},
 	})
 
+	bot.OnBeforeStart(func(s *discordgo.Session) {
+		// try to remove old commands first
+		if err := bot.ClearCommands(); err != nil {
+			log.Fatal(err)
+		}
+	})
+
+	bot.OnClose(func(s *discordgo.Session) {
+		log.Println("Closing...")
+	})
+
 	if err := bot.Run(); err != nil {
 		log.Fatalln(err)
 	}

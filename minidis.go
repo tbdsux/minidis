@@ -12,8 +12,15 @@ type Minidis struct {
 	guilds                 []string // guilds to sync the app commands
 	Token                  string
 	AppID                  string
+	customHandlers         *CustomHandlers
 }
 
+type CustomHandlers struct {
+	onClose       func(*discordgo.Session)
+	onBeforeStart func(*discordgo.Session)
+}
+
+// Create a new Minidis instance.
 func New(token string) *Minidis {
 	s, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -27,5 +34,9 @@ func New(token string) *Minidis {
 		componentHandlers:      map[string]*ComponentInteractionProps{},
 		customComponentHandler: nil,
 		Token:                  token,
+		customHandlers: &CustomHandlers{
+			onClose:       nil,
+			onBeforeStart: nil,
+		},
 	}
 }

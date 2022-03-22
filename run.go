@@ -43,6 +43,11 @@ func run(m *Minidis) error {
 	// set app id
 	m.AppID = m.session.State.User.ID
 
+	if m.customHandlers.onBeforeStart != nil {
+		// call beforeStart wrapper if not nil
+		m.customHandlers.onBeforeStart(m.session)
+	}
+
 	// sync commands internally
 	if err := m.syncCommands(m.guilds); err != nil {
 		return fmt.Errorf("failed to sync commands: %v", err)
@@ -52,7 +57,10 @@ func run(m *Minidis) error {
 	signal.Notify(sc, os.Interrupt)
 	<-sc
 
-	log.Println("Closing...")
+	if m.customHandlers.onClose != nil {
+		// call onClose wrapper if not nil
+		m.customHandlers.onClose(m.session)
+	}
 
 	// Close the websocket as final.
 	return m.session.Close()
