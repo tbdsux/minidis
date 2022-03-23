@@ -9,6 +9,7 @@ type SlashContext struct {
 	Author  *discordgo.User
 	Member  *discordgo.Member // only filled when called in a guild
 	IsDM    bool
+	Bot     *discordgo.User // this is the bot user
 
 	// NOTE: this is empty if component is called
 	Options map[string]*discordgo.ApplicationCommandInteractionDataOption
@@ -21,6 +22,7 @@ func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.I
 		session: session,
 		AppID:   session.State.User.ID,
 		Options: map[string]*discordgo.ApplicationCommandInteractionDataOption{},
+		Bot:     session.State.User,
 	}
 
 	if isSlash {
