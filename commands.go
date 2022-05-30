@@ -36,6 +36,26 @@ func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
 	return cmd
 }
 
+type MessageCommandProps struct {
+	Command string
+	Execute func(c *MessageCommandContext) error
+}
+
+// AddMessageCommand adds a new message command.
+func (m *Minidis) AddMessageCommand(cmd *MessageCommandProps) {
+	m.messageCommands[cmd.Command] = cmd
+}
+
+type UserCommandProps struct {
+	Command string
+	Execute func(c *UserCommandContext) error
+}
+
+// AddUserCommand adds a new user command.
+func (m *Minidis) AddUserCommand(cmd *UserCommandProps) {
+	m.userCommands[cmd.Command] = cmd
+}
+
 // RegisterCommands is used for adding multiple already defined commands.
 // It does not return anything. It just wrap the `AddCommand` function.
 func (m *Minidis) RegisterCommands(cmds ...*SlashCommandProps) {

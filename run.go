@@ -25,6 +25,24 @@ func run(m *Minidis) error {
 	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
+			if i.ApplicationCommandData().Resolved != nil {
+				// message commands
+				if len(i.ApplicationCommandData().Resolved.Messages) != 0 {
+					if err := m.executeMessage(s, i.Interaction); err != nil {
+						log.Printf("failed to execute message command: %v", err)
+					}
+				}
+
+				// user commands
+				if len(i.ApplicationCommandData().Resolved.Members) != 0 || len(i.ApplicationCommandData().Resolved.Users) != 0 {
+					if err := m.executeUser(s, i.Interaction); err != nil {
+						log.Printf("failed to execute user command: %v", err)
+					}
+				}
+
+				break
+			}
+
 			if err := m.executeSlash(s, i.Interaction); err != nil {
 				log.Printf("failed to execute slash command: %v\n", err)
 			}
@@ -32,6 +50,8 @@ func run(m *Minidis) error {
 			if err := m.executeComponentHandler(s, i.Interaction); err != nil {
 				log.Printf("failed to execute component handler: %v\n", err)
 			}
+		default:
+
 		}
 	})
 

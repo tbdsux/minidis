@@ -1,6 +1,8 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/bwmarrin/discordgo"
+)
 
 // Sync the commands to these guilds.
 func (m *Minidis) SyncToGuilds(guildIDs ...string) {
@@ -10,6 +12,7 @@ func (m *Minidis) SyncToGuilds(guildIDs ...string) {
 func (m *Minidis) syncCommands(guildIDs []string) error {
 	allCommands := []*discordgo.ApplicationCommand{}
 
+	// parse slash commands
 	for _, v := range m.commands {
 		cmd := &discordgo.ApplicationCommand{
 			Name:        v.Command,
@@ -46,9 +49,28 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 		allCommands = append(allCommands, cmd)
 	}
 
+	// parse message commands
+	for _, v := range m.messageCommands {
+		cmd := &discordgo.ApplicationCommand{
+			Name: v.Command,
+			Type: discordgo.MessageApplicationCommand,
+		}
+
+		allCommands = append(allCommands, cmd)
+	}
+
+	// parse user commands
+	for _, v := range m.userCommands {
+		cmd := &discordgo.ApplicationCommand{
+			Name: v.Command,
+			Type: discordgo.UserApplicationCommand,
+		}
+
+		allCommands = append(allCommands, cmd)
+	}
+
 	if len(guildIDs) == 0 {
 		return m.setupCommands("", allCommands)
-
 	}
 
 	for _, v := range guildIDs {

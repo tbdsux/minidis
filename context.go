@@ -81,35 +81,7 @@ type ReplyProps struct {
 
 // ReplyC is the full reply component structure.
 func (s *SlashContext) ReplyC(reply ReplyProps) error {
-	res := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: reply.Content,
-		},
-	}
-
-	if len(reply.Embeds) > 0 {
-		res.Data.Embeds = reply.Embeds
-	}
-
-	if len(reply.Components) > 0 {
-		res.Data.Components = reply.Components
-	}
-
-	if len(reply.Attachments) > 0 {
-		res.Data.Files = reply.Attachments
-	}
-
-	if reply.IsEphemeral {
-		res.Data.Flags = 1 << 6
-	}
-
-	if reply.AllowedMentions != nil {
-		res.Data.AllowedMentions = reply.AllowedMentions
-	}
-
-	// send response
-	return s.session.InteractionRespond(s.event, res)
+	return replyFunc(s.session, s.event, reply)
 }
 
 // DeferReply sends an interaction response where the user sees a loading state.
@@ -225,4 +197,37 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 		event:   s.event,
 		AppID:   s.AppID,
 	}, nil
+}
+
+// general function for sending replies back
+func replyFunc(session *discordgo.Session, interaction *discordgo.Interaction, reply ReplyProps) error {
+	res := &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: reply.Content,
+		},
+	}
+
+	if len(reply.Embeds) > 0 {
+		res.Data.Embeds = reply.Embeds
+	}
+
+	if len(reply.Components) > 0 {
+		res.Data.Components = reply.Components
+	}
+
+	if len(reply.Attachments) > 0 {
+		res.Data.Files = reply.Attachments
+	}
+
+	if reply.IsEphemeral {
+		res.Data.Flags = 1 << 6
+	}
+
+	if reply.AllowedMentions != nil {
+		res.Data.AllowedMentions = reply.AllowedMentions
+	}
+
+	// send response
+	return session.InteractionRespond(interaction, res)
 }

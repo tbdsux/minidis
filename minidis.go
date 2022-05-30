@@ -7,6 +7,8 @@ import (
 type Minidis struct {
 	session                *discordgo.Session
 	commands               map[string]*SlashCommandProps
+	messageCommands        map[string]*MessageCommandProps
+	userCommands           map[string]*UserCommandProps
 	componentHandlers      map[string]*ComponentInteractionProps
 	customComponentHandler func(*SlashContext, *ComponentContext) error
 	guilds                 []string // guilds to sync the app commands
@@ -31,6 +33,8 @@ func New(token string) *Minidis {
 	return &Minidis{
 		session:                s,
 		commands:               map[string]*SlashCommandProps{},
+		messageCommands:        map[string]*MessageCommandProps{},
+		userCommands:           map[string]*UserCommandProps{},
 		componentHandlers:      map[string]*ComponentInteractionProps{},
 		customComponentHandler: nil,
 		Token:                  token,

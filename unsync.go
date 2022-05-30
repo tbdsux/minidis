@@ -1,9 +1,5 @@
 package minidis
 
-import (
-	"fmt"
-)
-
 // ClearCommands removes the application commands from the guild.
 // If there are no guilds specified using `SyncToGuilds()`, global commands will be removed.
 func (m *Minidis) ClearCommands() error {
@@ -16,8 +12,6 @@ func (m *Minidis) ClearCommands() error {
 
 		// remove each command
 		for _, cmd := range guildCommands {
-			fmt.Println(cmd.Name)
-
 			if err = m.session.ApplicationCommandDelete(m.AppID, v, cmd.ID); err != nil {
 				return err
 			}
