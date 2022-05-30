@@ -41,12 +41,12 @@ func (f *FollowupContext) EditC(reply EditProps) error {
 	}
 
 	// edit followup response
-	_, err := f.session.FollowupMessageEdit(f.AppID, f.event, f.message.ID, res)
+	_, err := f.session.FollowupMessageEdit(f.event, f.message.ID, res)
 
 	return err
 }
 
 // Delete deletes the followup message.
 func (f *FollowupContext) Delete() error {
-	return f.session.FollowupMessageDelete(f.AppID, f.event, f.message.ID)
+	return f.session.FollowupMessageDelete(f.event, f.message.ID)
 }

@@ -167,14 +167,14 @@ func (s *SlashContext) EditC(reply EditProps) error {
 	}
 
 	// edit interaction response
-	_, err := s.session.InteractionResponseEdit(s.AppID, s.event, res)
+	_, err := s.session.InteractionResponseEdit(s.event, res)
 
 	return err
 }
 
 // Delete deletes the interaction response.
 func (s *SlashContext) Delete() error {
-	return s.session.InteractionResponseDelete(s.AppID, s.event)
+	return s.session.InteractionResponseDelete(s.event)
 }
 
 // Followup creates a followup message to the interaction response.
@@ -213,7 +213,7 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	}
 
 	// send follup
-	message, err := s.session.FollowupMessageCreate(s.AppID, s.event, true, res)
+	message, err := s.session.FollowupMessageCreate(s.event, true, res)
 	if err != nil {
 		return nil, err
 	}
