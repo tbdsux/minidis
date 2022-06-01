@@ -5,8 +5,15 @@ import (
 )
 
 type SlashCommandProps struct {
-	Name             string
-	Description      string
+	Name        string // Name of the command
+	Description string // Description of the command
+
+	NameLocalizations        *map[discordgo.Locale]string
+	DescriptionLocalizations *map[discordgo.Locale]string
+
+	DefaultMemberPermissions int64
+	DmPermission             bool
+
 	Options          []*discordgo.ApplicationCommandOption
 	Execute          func(c *SlashContext) error
 	subcommandGroups map[string]*SlashSubcommandGroupProps

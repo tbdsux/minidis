@@ -2,7 +2,7 @@ module github.com/TheBoringDude/minidis
 
 go 1.17
 
-require github.com/bwmarrin/discordgo v0.25.0
+require github.com/bwmarrin/discordgo v0.25.1-0.20220523182309-414e505c5647
 
 require (
 	github.com/gorilla/websocket v1.5.0 // indirect

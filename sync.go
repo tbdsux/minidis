@@ -15,9 +15,13 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 	// parse slash commands
 	for _, v := range m.commands {
 		cmd := &discordgo.ApplicationCommand{
-			Name:        v.Name,
-			Description: v.Description,
-			Options:     v.Options,
+			Name:                     v.Name,
+			Description:              v.Description,
+			NameLocalizations:        v.NameLocalizations,
+			DescriptionLocalizations: v.DescriptionLocalizations,
+			DefaultMemberPermissions: &v.DefaultMemberPermissions,
+			DMPermission:             &v.DmPermission,
+			Options:                  v.Options,
 		}
 
 		for _, g := range v.subcommandGroups {

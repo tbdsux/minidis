@@ -119,15 +119,15 @@ type EditProps struct {
 // EditC is the full edit interaction component structure.
 func (s *SlashContext) EditC(reply EditProps) error {
 	res := &discordgo.WebhookEdit{
-		Content: reply.Content,
+		Content: &reply.Content,
 	}
 
 	if len(reply.Embeds) > 0 {
-		res.Embeds = reply.Embeds
+		res.Embeds = &reply.Embeds
 	}
 
 	if len(reply.Components) > 0 {
-		res.Components = reply.Components
+		res.Components = &reply.Components
 	}
 
 	if len(reply.Attachments) > 0 {
