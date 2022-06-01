@@ -24,7 +24,7 @@ func main() {
 
 	// message command
 	bot.AddMessageCommand(&minidis.MessageCommandProps{
-		Command: "re-reply",
+		Name: "re-reply",
 		Execute: func(c *minidis.MessageCommandContext) error {
 			return c.ReplyC(minidis.ReplyProps{
 				Content:     c.Message.Content,

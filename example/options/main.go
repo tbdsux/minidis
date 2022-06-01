@@ -24,7 +24,7 @@ func main() {
 
 	// sample command with options
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "options",
+		Name:        "options",
 		Description: "Simple command with options.",
 		Options: []*discordgo.ApplicationCommandOption{
 			{

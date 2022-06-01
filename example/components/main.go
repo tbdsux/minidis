@@ -23,7 +23,7 @@ func main() {
 
 	// simple command
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "buttons",
+		Name:        "buttons",
 		Description: "Show buttons component.",
 		Options:     []*discordgo.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
@@ -68,7 +68,7 @@ func main() {
 	})
 
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "selects",
+		Name:        "selects",
 		Description: "Example for select options.",
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyC(

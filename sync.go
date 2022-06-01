@@ -15,21 +15,21 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 	// parse slash commands
 	for _, v := range m.commands {
 		cmd := &discordgo.ApplicationCommand{
-			Name:        v.Command,
+			Name:        v.Name,
 			Description: v.Description,
 			Options:     v.Options,
 		}
 
 		for _, g := range v.subcommandGroups {
 			group := &discordgo.ApplicationCommandOption{
-				Name:        g.Command,
+				Name:        g.Name,
 				Description: g.Description,
 				Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
 			}
 
 			for _, scmd := range g.subcommands {
 				group.Options = append(group.Options, &discordgo.ApplicationCommandOption{
-					Name:        scmd.Command,
+					Name:        scmd.Name,
 					Description: scmd.Description,
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 				})
@@ -40,7 +40,7 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 
 		for _, scmd := range v.subcommands {
 			cmd.Options = append(cmd.Options, &discordgo.ApplicationCommandOption{
-				Name:        scmd.Command,
+				Name:        scmd.Name,
 				Description: scmd.Description,
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			})
@@ -52,7 +52,7 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 	// parse message commands
 	for _, v := range m.messageCommands {
 		cmd := &discordgo.ApplicationCommand{
-			Name: v.Command,
+			Name: v.Name,
 			Type: discordgo.MessageApplicationCommand,
 		}
 

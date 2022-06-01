@@ -5,7 +5,7 @@ import (
 )
 
 type SlashCommandProps struct {
-	Command          string
+	Name             string
 	Description      string
 	Options          []*discordgo.ApplicationCommandOption
 	Execute          func(c *SlashContext) error
@@ -14,21 +14,21 @@ type SlashCommandProps struct {
 }
 
 type SlashSubcommandProps struct {
-	Command     string
+	Name        string
 	Description string
 	Options     []*discordgo.ApplicationCommandOption
 	Execute     func(c *SlashContext) error
 }
 
 type SlashSubcommandGroupProps struct {
-	Command     string
+	Name        string
 	Description string
 	subcommands map[string]*SlashSubcommandProps
 }
 
 // AddCommand adds a new slash command.
 func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
-	m.commands[cmd.Command] = cmd
+	m.commands[cmd.Name] = cmd
 
 	cmd.subcommandGroups = map[string]*SlashSubcommandGroupProps{}
 	cmd.subcommands = map[string]*SlashSubcommandProps{}
@@ -37,13 +37,13 @@ func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
 }
 
 type MessageCommandProps struct {
-	Command string
+	Name    string
 	Execute func(c *MessageCommandContext) error
 }
 
 // AddMessageCommand adds a new message command.
 func (m *Minidis) AddMessageCommand(cmd *MessageCommandProps) {
-	m.messageCommands[cmd.Command] = cmd
+	m.messageCommands[cmd.Name] = cmd
 }
 
 type UserCommandProps struct {
@@ -67,13 +67,13 @@ func (m *Minidis) RegisterCommands(cmds ...*SlashCommandProps) {
 // AddSubcommand adds a new sub command for the parent command.
 // Note: this will make your parent command not execute.
 func (s *SlashCommandProps) AddSubcommand(cmd *SlashSubcommandProps) {
-	s.subcommands[cmd.Command] = cmd
+	s.subcommands[cmd.Name] = cmd
 }
 
 // AddSubcommand adds a new group for sub commands for the parent command.
 // Note: this will make your parent command not execute.
 func (s *SlashCommandProps) AddSubcommandGroup(group *SlashSubcommandGroupProps) *SlashSubcommandGroupProps {
-	s.subcommandGroups[group.Command] = group
+	s.subcommandGroups[group.Name] = group
 
 	group.subcommands = map[string]*SlashSubcommandProps{}
 
@@ -83,5 +83,5 @@ func (s *SlashCommandProps) AddSubcommandGroup(group *SlashSubcommandGroupProps)
 // AddSubcommand adds a new sub command for the subcommmand group.
 // Note: this will make your parent command not execute.
 func (s *SlashSubcommandGroupProps) AddSubcommand(cmd *SlashSubcommandProps) {
-	s.subcommands[cmd.Command] = cmd
+	s.subcommands[cmd.Name] = cmd
 }

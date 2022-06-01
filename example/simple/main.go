@@ -25,7 +25,7 @@ func main() {
 
 	// simple command
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "ping",
+		Name:        "ping",
 		Description: "Simple ping command.",
 		Options:     []*discordgo.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
@@ -36,7 +36,7 @@ func main() {
 
 	// deferred replies
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "defer",
+		Name:        "defer",
 		Description: "Deferred reply.",
 		Execute: func(c *minidis.SlashContext) error {
 			c.DeferReply(true)
@@ -49,7 +49,7 @@ func main() {
 
 	// responses
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "response",
+		Name:        "response",
 		Description: "Responses management.",
 		Options:     []*discordgo.ApplicationCommandOption{},
 		Execute: func(s *minidis.SlashContext) error {

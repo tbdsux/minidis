@@ -22,7 +22,7 @@ func main() {
 	})
 
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "hello",
+		Name:        "hello",
 		Description: "Say hello to the bot.",
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyString("Hi!")
@@ -31,11 +31,11 @@ func main() {
 
 	// group command
 	cmd := bot.AddCommand(&minidis.SlashCommandProps{
-		Command:     "group",
+		Name:        "group",
 		Description: "Simple group command.",
 	})
 	cmd.AddSubcommand(&minidis.SlashSubcommandProps{
-		Command:     "subcommand",
+		Name:        "subcommand",
 		Description: "A simple subcommand.",
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyString("This is a subcommand!")
@@ -43,11 +43,11 @@ func main() {
 	})
 
 	group := cmd.AddSubcommandGroup(&minidis.SlashSubcommandGroupProps{
-		Command:     "subgroup",
+		Name:        "subgroup",
 		Description: "A sub command group.",
 	})
 	group.AddSubcommand(&minidis.SlashSubcommandProps{
-		Command:     "sg",
+		Name:        "sg",
 		Description: "Nested subcommand inside sub command group.",
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyString("This a sub command under a sub command group.")
