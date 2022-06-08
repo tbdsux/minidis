@@ -4,7 +4,7 @@ import "github.com/bwmarrin/discordgo"
 
 type SlashContext struct {
 	event   *discordgo.Interaction
-	session *discordgo.Session
+	Session *discordgo.Session
 	AppID   string
 	Author  *discordgo.User
 	Member  *discordgo.Member // only filled when called in a guild
@@ -19,7 +19,7 @@ type SlashContext struct {
 func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.Interaction, isSlash bool) *SlashContext {
 	context := &SlashContext{
 		event:   event,
-		session: session,
+		Session: session,
 		AppID:   session.State.User.ID,
 		Options: map[string]*discordgo.ApplicationCommandInteractionDataOption{},
 		Bot:     session.State.User,
@@ -81,7 +81,7 @@ type ReplyProps struct {
 
 // ReplyC is the full reply component structure.
 func (s *SlashContext) ReplyC(reply ReplyProps) error {
-	return replyFunc(s.session, s.event, reply)
+	return replyFunc(s.Session, s.event, reply)
 }
 
 // DeferReply sends an interaction response where the user sees a loading state.
@@ -98,7 +98,7 @@ func (s *SlashContext) DeferReply(ephemeral bool) error {
 		res.Data.Flags = 1 << 6
 	}
 
-	return s.session.InteractionRespond(s.event, res)
+	return s.Session.InteractionRespond(s.event, res)
 }
 
 // Edit edis the interaction response.
@@ -139,14 +139,14 @@ func (s *SlashContext) EditC(reply EditProps) error {
 	}
 
 	// edit interaction response
-	_, err := s.session.InteractionResponseEdit(s.event, res)
+	_, err := s.Session.InteractionResponseEdit(s.event, res)
 
 	return err
 }
 
 // Delete deletes the interaction response.
 func (s *SlashContext) Delete() error {
-	return s.session.InteractionResponseDelete(s.event)
+	return s.Session.InteractionResponseDelete(s.event)
 }
 
 // Followup creates a followup message to the interaction response.
@@ -185,7 +185,7 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	}
 
 	// send follup
-	message, err := s.session.FollowupMessageCreate(s.event, true, res)
+	message, err := s.Session.FollowupMessageCreate(s.event, true, res)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	// return new context
 	return &FollowupContext{
 		message: message,
-		session: s.session,
+		Session: s.Session,
 		event:   s.event,
 		AppID:   s.AppID,
 	}, nil

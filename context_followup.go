@@ -7,7 +7,7 @@ import (
 type FollowupContext struct {
 	message *discordgo.Message
 	event   *discordgo.Interaction
-	session *discordgo.Session
+	Session *discordgo.Session
 	AppID   string
 }
 
@@ -41,12 +41,12 @@ func (f *FollowupContext) EditC(reply EditProps) error {
 	}
 
 	// edit followup response
-	_, err := f.session.FollowupMessageEdit(f.event, f.message.ID, res)
+	_, err := f.Session.FollowupMessageEdit(f.event, f.message.ID, res)
 
 	return err
 }
 
 // Delete deletes the followup message.
 func (f *FollowupContext) Delete() error {
-	return f.session.FollowupMessageDelete(f.event, f.message.ID)
+	return f.Session.FollowupMessageDelete(f.event, f.message.ID)
 }
