@@ -29,7 +29,7 @@ func main() {
 		Description: "Simple ping command.",
 		Options:     []*discordgo.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
-			return c.ReplyString(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
+			return c.ReplyString(fmt.Sprintf("Hello **%s**, pong? Guild: %s", c.Author.Username, c.GuildId))
 
 		},
 	})
@@ -60,7 +60,12 @@ func main() {
 
 			time.Sleep(time.Second * 5)
 
-			return s.Edit("new message here!")
+			s.Edit("new message here!")
+
+			time.Sleep(time.Second * 5)
+
+			_, err := s.Followup("another message in here!")
+			return err
 		},
 	})
 

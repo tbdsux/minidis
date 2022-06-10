@@ -1,45 +1,61 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/bwmarrin/discordgo"
+)
 
 type SlashContext struct {
-	event   *discordgo.Interaction
+	inter   *discordgo.Interaction
 	Session *discordgo.Session
-	AppID   string
-	Author  *discordgo.User
-	Member  *discordgo.Member // only filled when called in a guild
-	IsDM    bool
-	Bot     *discordgo.User // this is the bot user
+
+	AppID  string
+	Author *discordgo.User
+	Member *discordgo.Member // only filled when called in a guild
+	IsDM   bool
+	Bot    *discordgo.User // this is the bot user
+
+	Id          string
+	GuildId     string
+	GuildLocale *discordgo.Locale
+	Local       discordgo.Locale
+	ChannelId   string
 
 	// NOTE: this is empty if component is called
 	Options map[string]*discordgo.ApplicationCommandInteractionDataOption
 }
 
 // Creates a new slash context for slash command interaction. This is called internally.
-func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.Interaction, isSlash bool) *SlashContext {
+func (m *Minidis) NewSlashContext(session *discordgo.Session, inter *discordgo.Interaction, isSlash bool) *SlashContext {
 	context := &SlashContext{
-		event:   event,
+		inter:   inter,
 		Session: session,
+
 		AppID:   session.State.User.ID,
 		Options: map[string]*discordgo.ApplicationCommandInteractionDataOption{},
 		Bot:     session.State.User,
+
+		Id:          inter.ID,
+		GuildId:     inter.GuildID,
+		GuildLocale: inter.GuildLocale,
+		Local:       inter.Locale,
+		ChannelId:   inter.ChannelID,
 	}
 
 	if isSlash {
 		// parse options into a map for better accessibility
-		for _, v := range event.ApplicationCommandData().Options {
+		for _, v := range inter.ApplicationCommandData().Options {
 			context.Options[v.Name] = v
 		}
 	}
 
-	if event.GuildID == "" {
+	if inter.GuildID == "" {
 		// if dm
 		context.IsDM = true
-		context.Author = event.User
+		context.Author = inter.User
 	} else {
 		context.IsDM = false
-		context.Author = event.Member.User
-		context.Member = event.Member
+		context.Author = inter.Member.User
+		context.Member = inter.Member
 	}
 
 	return context
@@ -47,6 +63,8 @@ func (m *Minidis) NewSlashContext(session *discordgo.Session, event *discordgo.I
 
 // SendText sends a string text as interaction response.
 func (s *SlashContext) ReplyString(content string) error {
+	// return errors.New("sample")
+
 	return s.ReplyC(ReplyProps{
 		Content: content,
 	})
@@ -81,7 +99,7 @@ type ReplyProps struct {
 
 // ReplyC is the full reply component structure.
 func (s *SlashContext) ReplyC(reply ReplyProps) error {
-	return replyFunc(s.Session, s.event, reply)
+	return replyFunc(s.Session, s.inter, reply)
 }
 
 // DeferReply sends an interaction response where the user sees a loading state.
@@ -98,7 +116,7 @@ func (s *SlashContext) DeferReply(ephemeral bool) error {
 		res.Data.Flags = 1 << 6
 	}
 
-	return s.Session.InteractionRespond(s.event, res)
+	return s.Session.InteractionRespond(s.inter, res)
 }
 
 // Edit edis the interaction response.
@@ -139,14 +157,14 @@ func (s *SlashContext) EditC(reply EditProps) error {
 	}
 
 	// edit interaction response
-	_, err := s.Session.InteractionResponseEdit(s.event, res)
+	_, err := s.Session.InteractionResponseEdit(s.inter, res)
 
 	return err
 }
 
 // Delete deletes the interaction response.
 func (s *SlashContext) Delete() error {
-	return s.Session.InteractionResponseDelete(s.event)
+	return s.Session.InteractionResponseDelete(s.inter)
 }
 
 // Followup creates a followup message to the interaction response.
@@ -185,7 +203,7 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	}
 
 	// send follup
-	message, err := s.Session.FollowupMessageCreate(s.event, true, res)
+	message, err := s.Session.FollowupMessageCreate(s.inter, true, res)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +212,7 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	return &FollowupContext{
 		message: message,
 		Session: s.Session,
-		event:   s.event,
+		event:   s.inter,
 		AppID:   s.AppID,
 	}, nil
 }
