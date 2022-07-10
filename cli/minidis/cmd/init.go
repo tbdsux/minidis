@@ -18,13 +18,11 @@ import (
 // initCmd represents the init command
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Short: "Generate a new boilerplate",
+	Long: `Generate a new boilerplate
+	
+It generates / creates the needed boilerplate files to
+start a new discord bot easily.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		wd, err := os.Getwd()
 		if err != nil {
