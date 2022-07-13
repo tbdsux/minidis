@@ -12,6 +12,14 @@ This is usable for simple and basic commands but is still missing some of other 
 go get -u github.com/TheBoringDude/minidis
 ```
 
+## [CLI](./cli/minidis/README.md)
+
+You can also use a simple boilerplate generator to kickstart a new discord bot project
+
+```sh
+go install github.com/TheBoringDude/minidis/cli/minidis@latest
+```
+
 ## Usage
 
 ```go
