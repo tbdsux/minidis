@@ -5,8 +5,8 @@ import (
 )
 
 type SlashContext struct {
-	inter   *discordgo.Interaction
-	Session *discordgo.Session
+	Interaction *discordgo.Interaction
+	Session     *discordgo.Session
 
 	AppID  string
 	Author *discordgo.User
@@ -27,8 +27,8 @@ type SlashContext struct {
 // Creates a new slash context for slash command interaction. This is called internally.
 func (m *Minidis) NewSlashContext(session *discordgo.Session, inter *discordgo.Interaction, isSlash bool) *SlashContext {
 	context := &SlashContext{
-		inter:   inter,
-		Session: session,
+		Interaction: inter,
+		Session:     session,
 
 		AppID:   session.State.User.ID,
 		Options: map[string]*discordgo.ApplicationCommandInteractionDataOption{},
@@ -99,7 +99,7 @@ type ReplyProps struct {
 
 // ReplyC is the full reply component structure.
 func (s *SlashContext) ReplyC(reply ReplyProps) error {
-	return replyFunc(s.Session, s.inter, reply)
+	return replyFunc(s.Session, s.Interaction, reply)
 }
 
 // DeferReply sends an interaction response where the user sees a loading state.
@@ -116,7 +116,7 @@ func (s *SlashContext) DeferReply(ephemeral bool) error {
 		res.Data.Flags = 1 << 6
 	}
 
-	return s.Session.InteractionRespond(s.inter, res)
+	return s.Session.InteractionRespond(s.Interaction, res)
 }
 
 // Edit edis the interaction response.
@@ -157,14 +157,14 @@ func (s *SlashContext) EditC(reply EditProps) error {
 	}
 
 	// edit interaction response
-	_, err := s.Session.InteractionResponseEdit(s.inter, res)
+	_, err := s.Session.InteractionResponseEdit(s.Interaction, res)
 
 	return err
 }
 
 // Delete deletes the interaction response.
 func (s *SlashContext) Delete() error {
-	return s.Session.InteractionResponseDelete(s.inter)
+	return s.Session.InteractionResponseDelete(s.Interaction)
 }
 
 // Followup creates a followup message to the interaction response.
@@ -203,17 +203,17 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	}
 
 	// send follup
-	message, err := s.Session.FollowupMessageCreate(s.inter, true, res)
+	message, err := s.Session.FollowupMessageCreate(s.Interaction, true, res)
 	if err != nil {
 		return nil, err
 	}
 
 	// return new context
 	return &FollowupContext{
-		message: message,
-		Session: s.Session,
-		event:   s.inter,
-		AppID:   s.AppID,
+		message:     message,
+		Session:     s.Session,
+		Interaction: s.Interaction,
+		AppID:       s.AppID,
 	}, nil
 }
 
