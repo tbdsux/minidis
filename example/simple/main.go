@@ -25,9 +25,10 @@ func main() {
 
 	// simple command
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Name:        "ping",
-		Description: "Simple ping command.",
-		Options:     []*discordgo.ApplicationCommandOption{},
+		Name:                     "ping",
+		Description:              "Simple ping command.",
+		DefaultMemberPermissions: 1 << 31,
+		Options:                  []*discordgo.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyString(fmt.Sprintf("Hello **%s**, pong? Guild: %s", c.Author.Username, c.GuildId))
 
@@ -36,8 +37,9 @@ func main() {
 
 	// deferred replies
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Name:        "defer",
-		Description: "Deferred reply.",
+		Name:                     "defer",
+		Description:              "Deferred reply.",
+		DefaultMemberPermissions: 1 << 31,
 		Execute: func(c *minidis.SlashContext) error {
 			c.DeferReply(true)
 
@@ -49,7 +51,7 @@ func main() {
 
 	// responses
 	bot.AddCommand(&minidis.SlashCommandProps{
-		Name:        "response",
+		Name:        "responses",
 		Description: "Responses management.",
 		Options:     []*discordgo.ApplicationCommandOption{},
 		Execute: func(s *minidis.SlashContext) error {
@@ -66,6 +68,15 @@ func main() {
 
 			_, err := s.Followup("another message in here!")
 			return err
+		},
+	})
+
+	bot.AddCommand(&minidis.SlashCommandProps{
+		Name:                     "admin-only",
+		Description:              "Admin only command",
+		DefaultMemberPermissions: 0, // 0 = admin only command
+		Execute: func(s *minidis.SlashContext) error {
+			return s.ReplyString("You should only see this reply if you are an admin!")
 		},
 	})
 
