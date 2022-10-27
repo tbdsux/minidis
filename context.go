@@ -249,3 +249,23 @@ func replyFunc(session *discordgo.Session, interaction *discordgo.Interaction, r
 	// send response
 	return session.InteractionRespond(interaction, res)
 }
+
+type ReplyModalProps struct {
+	Title      string
+	CustomID   string
+	Components []discordgo.MessageComponent
+}
+
+// ReplyModal returns a modal component as InteractionResponse
+func (s *SlashContext) ReplyModal(reply ReplyModalProps) error {
+	res := &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseModal,
+		Data: &discordgo.InteractionResponseData{
+			Title:      reply.Title,
+			CustomID:   reply.CustomID,
+			Components: reply.Components,
+		},
+	}
+
+	return s.Session.InteractionRespond(s.Interaction, res)
+}
