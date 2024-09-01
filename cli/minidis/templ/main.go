@@ -8,7 +8,7 @@ package main
 import (
 	"log"
 
-	"github.com/TheBoringDude/minidis"
+	"github.com/tbdsux/minidis"
 
 	"{{ .PkgName }}/commands"
 )
@@ -28,7 +28,7 @@ package commands
 import (
 	"log"
 
-	"github.com/TheBoringDude/minidis"
+	"github.com/tbdsux/minidis"
 	"github.com/bwmarrin/discordgo"
 
 	"{{ .PkgName }}/lib"
@@ -55,7 +55,7 @@ func init() {
 package commands
 
 import (
-	"github.com/TheBoringDude/minidis"
+	"github.com/tbdsux/minidis"
 )
 
 var helloCommand = &minidis.SlashCommandProps{

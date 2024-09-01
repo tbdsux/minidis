@@ -9,7 +9,7 @@ Structure inspirations is similar to Cobra cli framework (https://github.com/spf
 ## Install
 
 ```sh
-go install github.com/TheBoringDude/minidis/cli/minidis@latest
+go install github.com/tbdsux/minidis/cli/minidis@latest
 ```
 
 ## Commands

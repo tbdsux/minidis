@@ -1,6 +1,5 @@
 /*
 Copyright © 2022 NAME HERE <EMAIL ADDRESS>
-
 */
 package cmd
 
@@ -11,8 +10,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/TheBoringDude/minidis/cli/minidis/cmd/internal"
 	"github.com/spf13/cobra"
+	"github.com/tbdsux/minidis/cli/minidis/cmd/internal"
 )
 
 // initCmd represents the init command

@@ -4,8 +4,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/TheBoringDude/minidis"
 	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis"
 )
 
 func main() {
@@ -55,7 +55,7 @@ func main() {
 									Disabled: false,
 									// Link buttons don't require CustomID and do not trigger the gateway/HTTP event
 									URL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-									Emoji: discordgo.ComponentEmoji{
+									Emoji: &discordgo.ComponentEmoji{
 										Name: "🤷",
 									},
 								},
@@ -87,7 +87,7 @@ func main() {
 											// As with components, this things must have their own unique "id" to identify which is which.
 											// In this case such id is Value field.
 											Value: "go",
-											Emoji: discordgo.ComponentEmoji{
+											Emoji: &discordgo.ComponentEmoji{
 												Name: "🦦",
 											},
 											// You can also make it a default option, but in this case we won't.
@@ -97,7 +97,7 @@ func main() {
 										{
 											Label: "JS",
 											Value: "js",
-											Emoji: discordgo.ComponentEmoji{
+											Emoji: &discordgo.ComponentEmoji{
 												Name: "🟨",
 											},
 											Description: "JavaScript programming language",
@@ -105,7 +105,7 @@ func main() {
 										{
 											Label: "Python",
 											Value: "py",
-											Emoji: discordgo.ComponentEmoji{
+											Emoji: &discordgo.ComponentEmoji{
 												Name: "🐍",
 											},
 											Description: "Python programming language",

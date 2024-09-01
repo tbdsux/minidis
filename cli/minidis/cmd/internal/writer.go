@@ -5,8 +5,8 @@ import (
 	"os"
 	"text/template"
 
-	"github.com/TheBoringDude/minidis/cli/minidis/templ"
-	simplefiletest "github.com/TheBoringDude/simple-filetest"
+	"github.com/tbdsux/minidis/cli/minidis/templ"
+	simplefiletest "github.com/tbdsux/simple-filetest"
 )
 
 func (i *InitProject) Writer() error {

@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/TheBoringDude/minidis"
 	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis"
 )
 
 func main() {
@@ -31,7 +31,6 @@ func main() {
 		Options:                  []*discordgo.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyString(fmt.Sprintf("Hello **%s**, pong? Guild: %s", c.Author.Username, c.GuildId))
-
 		},
 	})
 

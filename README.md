@@ -9,7 +9,7 @@ This just wraps functions and is based from the examples provided by [discordgo]
 This is usable for simple and basic commands but is still missing some of other features.
 
 ```sh
-go get -u github.com/TheBoringDude/minidis
+go get -u github.com/tbdsux/minidis
 ```
 
 ## [CLI](./cli/minidis/README.md)
@@ -17,7 +17,7 @@ go get -u github.com/TheBoringDude/minidis
 You can also use a simple boilerplate generator to kickstart a new discord bot project
 
 ```sh
-go install github.com/TheBoringDude/minidis/cli/minidis@latest
+go install github.com/tbdsux/minidis/cli/minidis@latest
 ```
 
 ## Usage
@@ -30,7 +30,7 @@ import (
     "log"
     "os"
 
-    "github.com/TheBoringDude/minidis"
+    "github.com/tbdsux/minidis"
     "github.com/bwmarrin/discordgo"
 )
 
@@ -62,4 +62,4 @@ More [examples...](./example/)
 
 ##
 
-**&copy; 2022 | TheBoringDude**
+**&copy; 2022 | tbdsux**

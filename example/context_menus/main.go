@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/TheBoringDude/minidis"
 	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis"
 )
 
 func main() {
