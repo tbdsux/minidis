@@ -22,6 +22,19 @@ func Execute(bot *Minidis) error {
 
 // main bot command handler
 func run(m *Minidis) error {
+	// try to open websocket
+	if err := m.session.Open(); err != nil {
+		return fmt.Errorf("cannot open session: %v", err)
+	}
+
+	// set app id
+	m.AppID = m.session.State.User.ID
+
+	if m.customHandlers.onBeforeStart != nil {
+		// call beforeStart wrapper if not nil
+		m.customHandlers.onBeforeStart(m.session)
+	}
+
 	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
@@ -57,19 +70,6 @@ func run(m *Minidis) error {
 		}
 	})
 
-	// try to open websocket
-	if err := m.session.Open(); err != nil {
-		return fmt.Errorf("cannot open session: %v", err)
-	}
-
-	// set app id
-	m.AppID = m.session.State.User.ID
-
-	if m.customHandlers.onBeforeStart != nil {
-		// call beforeStart wrapper if not nil
-		m.customHandlers.onBeforeStart(m.session)
-	}
-
 	// sync commands internally
 	if err := m.syncCommands(m.guilds); err != nil {
 		return fmt.Errorf("failed to sync commands: %v", err)
@@ -77,6 +77,7 @@ func run(m *Minidis) error {
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, os.Interrupt)
+	fmt.Println("Press CTRL+C to exit.")
 	<-sc
 
 	if m.customHandlers.onClose != nil {

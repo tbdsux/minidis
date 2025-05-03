@@ -10,11 +10,22 @@ func (m *Minidis) ClearCommands() error {
 			return err
 		}
 
-		// remove each command
 		for _, cmd := range guildCommands {
 			if err = m.session.ApplicationCommandDelete(m.AppID, v, cmd.ID); err != nil {
 				return err
 			}
+		}		
+	}
+
+	// Remove global commands
+	globalCommands, err := m.session.ApplicationCommands(m.AppID, "")
+	if err != nil {
+		return err 
+	}
+
+	for _, cmd := range globalCommands {
+		if err = m.session.ApplicationCommandDelete(m.AppID, "", cmd.ID); err != nil {
+			return err
 		}
 	}
 
