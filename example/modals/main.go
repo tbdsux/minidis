@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/tbdsux/minidis"
@@ -15,10 +17,8 @@ var (
 )
 
 func main() {
+	guilds := strings.Split(os.Getenv("GUILD"), ",")
 	bot := minidis.New(os.Getenv("TOKEN"))
-
-	//
-	bot.SyncToGuilds(os.Getenv("GUILD"))
 
 	bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
 		log.Println("Bot is ready!")
@@ -80,7 +80,31 @@ func main() {
 		},
 	})
 
-	if err := bot.Run(); err != nil {
-		log.Fatalln(err)
+	// Open session
+	if err := bot.OpenSession(); err != nil {
+		log.Fatalln("Failed to open session:", err)
+		return
 	}
+
+	// Re-sync commands
+	if err := bot.ClearCommands(guilds...); err != nil {
+		log.Fatalln("Failed to clear commands:", err)
+		return
+	}
+	if err := bot.SyncCommands(guilds...); err != nil {
+		log.Fatalln("Failed to sync commands:", err)
+		return
+	}
+
+	// Run the bot
+	bot.Run()
+
+	// Wait for CTRL+C to exit
+	fmt.Println("Bot is running. Press CTRL+C to exit.")
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	<-sc
+
+	// Close the session
+	bot.CloseSession()
 }
