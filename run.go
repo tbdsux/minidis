@@ -18,7 +18,13 @@ func Execute(bot *Minidis) {
 }
 
 func (m *Minidis) OpenSession() error {
-	return m.Session.Open()
+	if err := m.Session.Open(); err != nil {
+		return err
+	}
+
+	m.AppID = m.Session.State.User.ID
+
+	return nil
 }
 
 func (m *Minidis) CloseSession() error {
@@ -27,8 +33,6 @@ func (m *Minidis) CloseSession() error {
 
 // main bot command handler
 func run(m *Minidis) {
-	m.AppID = m.Session.State.User.ID
-
 	m.Session.AddHandler(m.handleOnMessageCreate)
 
 	m.Session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
