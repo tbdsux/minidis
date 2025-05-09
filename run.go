@@ -35,6 +35,8 @@ func run(m *Minidis) error {
 		m.customHandlers.onBeforeStart(m.session)
 	}
 
+	m.session.AddHandler(m.handleOnMessageCreate)
+
 	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:

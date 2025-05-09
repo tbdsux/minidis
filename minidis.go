@@ -21,6 +21,9 @@ type Minidis struct {
 	Token          string
 	AppID          string
 	customHandlers *CustomHandlers
+
+	messageCreateHandler   func(*discordgo.Session, *discordgo.MessageCreate)
+	channelMessageHandlers map[string]func(*ChannelMessageContext) error
 }
 
 type CustomHandlers struct {
