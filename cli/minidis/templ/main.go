@@ -14,9 +14,33 @@ import (
 )
 
 func main() {
-	if err := minidis.Execute(commands.Bot); err != nil {
-		log.Fatal(err)
+	// Open session
+	if err := commands.Bot.OpenSession(); err != nil {
+		log.Fatalln("Failed to open session:", err)
+		return
 	}
+
+	// Re-sync commands
+	if err := commands.Bot.ClearCommands(guilds...); err != nil {
+		log.Fatalln("Failed to clear commands:", err)
+		return
+	}
+	if err := commands.Bot.SyncCommands(guilds...); err != nil {
+		log.Fatalln("Failed to sync commands:", err)
+		return
+	}
+
+	// Run the bot
+	commands.Bot.Run()
+
+	// Wait for CTRL+C to exit
+	fmt.Println("Bot is running. Press CTRL+C to exit.")
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	<-sc
+
+	// Close the session
+	commands.Bot.CloseSession()
 }
 
 `
@@ -79,7 +103,7 @@ import (
 )
 
 var (
-	GUILD = strings.Split(os.Getenv("GUILD"), ",")
+	GUILDS = strings.Split(os.Getenv("GUILD"), ",")
 	TOKEN = os.Getenv("TOKEN")
 )
 `
