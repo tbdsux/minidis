@@ -6,11 +6,14 @@ var (
 package main
 
 import (
+	"fmt"
 	"log"
-
-	"github.com/tbdsux/minidis"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"{{ .PkgName }}/commands"
+	"{{ .PkgName }}/lib"
 )
 
 func main() {
@@ -62,9 +65,6 @@ var Bot *minidis.Minidis
 
 func init() {
 	Bot = minidis.New(lib.TOKEN)
-
-	// sync to server
-	Bot.SyncToGuilds(lib.GUILD...)
 
 	Bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
 		log.Println("Bot is ready!")
