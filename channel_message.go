@@ -16,7 +16,7 @@ type ChannelMessageContext struct {
 
 func (m *Minidis) handleOnMessageCreate(s *discordgo.Session, i *discordgo.MessageCreate) {
 	// Check if we have the handler set for the channel
-	if handler, ok := m.channelMessageHandlers[i.ChannelID]; ok {
+	if handler, ok := m.ChannelMessageHandlers[i.ChannelID]; ok {
 		// If the message is from bot, ignore it
 		if i.Author.ID == s.State.User.ID {
 			return
@@ -37,19 +37,19 @@ func (m *Minidis) handleOnMessageCreate(s *discordgo.Session, i *discordgo.Messa
 		return
 	}
 
-	if m.messageCreateHandler != nil {
-		m.messageCreateHandler(s, i)
+	if m.MessageCreateHandler != nil {
+		m.MessageCreateHandler(s, i)
 	}
 }
 
 func (m *Minidis) OnChannelMessageCreate(handler func(c *ChannelMessageContext) error, channels ...string) {
-	if m.channelMessageHandlers == nil {
-		m.channelMessageHandlers = make(map[string]func(*ChannelMessageContext) error)
+	if m.ChannelMessageHandlers == nil {
+		m.ChannelMessageHandlers = make(map[string]func(*ChannelMessageContext) error)
 	}
 
 	// Could be useful for a bot in multiple different discord servers and channels
 	for _, channel := range channels {
-		m.channelMessageHandlers[channel] = handler
+		m.ChannelMessageHandlers[channel] = handler
 	}
 }
 

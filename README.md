@@ -1,6 +1,6 @@
 # minidis
 
-Simple slash commands handler for [discordgo](https://github.com/bwmarrin/discordgo)
+Simple discord bot framework wrapper for [discordgo](https://github.com/bwmarrin/discordgo)
 
 This just wraps functions and is based from the examples provided by [discordgo](https://github.com/bwmarrin/discordgo) and this is made in order to make its api more readable and easier to maintain.
 

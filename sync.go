@@ -4,16 +4,11 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// Sync the commands to these guilds.
-func (m *Minidis) SyncToGuilds(guildIDs ...string) {
-	m.guilds = guildIDs
-}
-
-func (m *Minidis) syncCommands(guildIDs []string) error {
+func (m *Minidis) SyncCommands(guildIDs ...string) error {
 	allCommands := []*discordgo.ApplicationCommand{}
 
 	// parse message commands
-	for _, v := range m.messageCommands {
+	for _, v := range m.MessageCommands {
 		cmd := &discordgo.ApplicationCommand{
 			Name: v.Name,
 			Type: discordgo.MessageApplicationCommand,
@@ -23,7 +18,7 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 	}
 
 	// parse user commands
-	for _, v := range m.userCommands {
+	for _, v := range m.UserCommands {
 		cmd := &discordgo.ApplicationCommand{
 			Name: v.Command,
 			Type: discordgo.UserApplicationCommand,
@@ -33,7 +28,7 @@ func (m *Minidis) syncCommands(guildIDs []string) error {
 	}
 
 	// parse slash commands
-	for _, v := range m.commands {
+	for _, v := range m.Commands {
 		cmd := &discordgo.ApplicationCommand{
 			Name:                     v.Name,
 			Description:              v.Description,
@@ -97,7 +92,7 @@ func inCommands(commands []*discordgo.ApplicationCommand, cmd string) bool {
 }
 
 func (m *Minidis) setupCommands(guildID string, commands []*discordgo.ApplicationCommand) error {
-	guildCommands, err := m.session.ApplicationCommands(m.AppID, guildID)
+	guildCommands, err := m.Session.ApplicationCommands(m.AppID, guildID)
 	if err != nil {
 		return err
 	}
@@ -110,12 +105,12 @@ func (m *Minidis) setupCommands(guildID string, commands []*discordgo.Applicatio
 	}
 
 	for _, v := range oldCommands {
-		if err = m.session.ApplicationCommandDelete(m.AppID, guildID, v); err != nil {
+		if err = m.Session.ApplicationCommandDelete(m.AppID, guildID, v); err != nil {
 			return err
 		}
 	}
 
-	_, err = m.session.ApplicationCommandBulkOverwrite(m.AppID, guildID, commands)
+	_, err = m.Session.ApplicationCommandBulkOverwrite(m.AppID, guildID, commands)
 
 	return err
 }

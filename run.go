@@ -1,43 +1,37 @@
 package minidis
 
 import (
-	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 // Run executes the command handler.
-func (m *Minidis) Run() error {
-	return run(m)
+func (m *Minidis) Run() {
+	run(m)
 }
 
 // Execute the bot.
 // It is similar to `Run()` function of `Minidis` struct.
-func Execute(bot *Minidis) error {
-	return run(bot)
+func Execute(bot *Minidis) {
+	run(bot)
+}
+
+func (m *Minidis) OpenSession() error {
+	return m.Session.Open()
+}
+
+func (m *Minidis) CloseSession() error {
+	return m.Session.Close()
 }
 
 // main bot command handler
-func run(m *Minidis) error {
-	// try to open websocket
-	if err := m.session.Open(); err != nil {
-		return fmt.Errorf("cannot open session: %v", err)
-	}
+func run(m *Minidis) {
+	m.AppID = m.Session.State.User.ID
 
-	// set app id
-	m.AppID = m.session.State.User.ID
+	m.Session.AddHandler(m.handleOnMessageCreate)
 
-	if m.customHandlers.onBeforeStart != nil {
-		// call beforeStart wrapper if not nil
-		m.customHandlers.onBeforeStart(m.session)
-	}
-
-	m.session.AddHandler(m.handleOnMessageCreate)
-
-	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	m.Session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		switch i.Type {
 		case discordgo.InteractionApplicationCommand:
 			err, exists := m.executeSlash(s, i.Interaction)
@@ -68,25 +62,7 @@ func run(m *Minidis) error {
 				log.Printf("failed to execute modal submit handler: %v\n", err)
 			}
 		default:
-
+			// TODO:
 		}
 	})
-
-	// sync commands internally
-	if err := m.syncCommands(m.guilds); err != nil {
-		return fmt.Errorf("failed to sync commands: %v", err)
-	}
-
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, os.Interrupt)
-	fmt.Println("Press CTRL+C to exit.")
-	<-sc
-
-	if m.customHandlers.onClose != nil {
-		// call onClose wrapper if not nil
-		m.customHandlers.onClose(m.session)
-	}
-
-	// Close the websocket as final.
-	return m.session.Close()
 }

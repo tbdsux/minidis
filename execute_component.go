@@ -8,7 +8,7 @@ func (m *Minidis) executeComponentHandler(session *discordgo.Session, event *dis
 	slashContext := m.NewSlashContext(session, event, false)
 	componentContext := m.NewComponentContext(event)
 
-	if handler, ok := m.componentHandlers[data.CustomID]; ok {
+	if handler, ok := m.ComponentHandlers[data.CustomID]; ok {
 		return handler.Execute(
 			slashContext,
 			componentContext,
@@ -16,8 +16,8 @@ func (m *Minidis) executeComponentHandler(session *discordgo.Session, event *dis
 	}
 
 	// nil means it is not set
-	if m.customComponentHandler != nil {
-		return m.customComponentHandler(
+	if m.CustomComponentHandler != nil {
+		return m.CustomComponentHandler(
 			slashContext,
 			componentContext,
 		)

@@ -5,7 +5,7 @@ import "github.com/bwmarrin/discordgo"
 func (m *Minidis) executeMessage(s *discordgo.Session, i *discordgo.Interaction) (error, bool) {
 	command := i.ApplicationCommandData().Name
 
-	if handler, ok := m.messageCommands[command]; ok {
+	if handler, ok := m.MessageCommands[command]; ok {
 		return handler.Execute(&MessageCommandContext{
 			Session:     s,
 			Interaction: i,
@@ -19,7 +19,7 @@ func (m *Minidis) executeMessage(s *discordgo.Session, i *discordgo.Interaction)
 func (m *Minidis) executeUser(s *discordgo.Session, i *discordgo.Interaction) (error, bool) {
 	command := i.ApplicationCommandData().Name
 
-	if handler, ok := m.userCommands[command]; ok {
+	if handler, ok := m.UserCommands[command]; ok {
 		return handler.Execute(&UserCommandContext{
 			Session:     s,
 			Interaction: i,

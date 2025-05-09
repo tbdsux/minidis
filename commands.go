@@ -35,7 +35,7 @@ type SlashSubcommandGroupProps struct {
 
 // AddCommand adds a new slash command.
 func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
-	m.commands[cmd.Name] = cmd
+	m.Commands[cmd.Name] = cmd
 
 	cmd.subcommandGroups = map[string]*SlashSubcommandGroupProps{}
 	cmd.subcommands = map[string]*SlashSubcommandProps{}
@@ -50,7 +50,7 @@ type MessageCommandProps struct {
 
 // AddMessageCommand adds a new message command.
 func (m *Minidis) AddMessageCommand(cmd *MessageCommandProps) {
-	m.messageCommands[cmd.Name] = cmd
+	m.MessageCommands[cmd.Name] = cmd
 }
 
 type UserCommandProps struct {
@@ -60,7 +60,7 @@ type UserCommandProps struct {
 
 // AddUserCommand adds a new user command.
 func (m *Minidis) AddUserCommand(cmd *UserCommandProps) {
-	m.userCommands[cmd.Command] = cmd
+	m.UserCommands[cmd.Command] = cmd
 }
 
 // RegisterCommands is used for adding multiple already defined commands.

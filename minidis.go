@@ -5,30 +5,23 @@ import (
 )
 
 type Minidis struct {
-	session *discordgo.Session
+	Session *discordgo.Session
 
-	commands        map[string]*SlashCommandProps
-	messageCommands map[string]*MessageCommandProps
-	userCommands    map[string]*UserCommandProps
+	Commands        map[string]*SlashCommandProps
+	MessageCommands map[string]*MessageCommandProps
+	UserCommands    map[string]*UserCommandProps
 
-	componentHandlers      map[string]*ComponentInteractionProps
-	customComponentHandler func(*SlashContext, *ComponentContext) error
+	ComponentHandlers      map[string]*ComponentInteractionProps
+	CustomComponentHandler func(*SlashContext, *ComponentContext) error
 
-	modalSubmitHandlers      map[string]*ModalInteractionProps
-	customModalSubmitHandler func(*SlashContext, *ModalSubmitContext) error
+	ModalSubmitHandlers      map[string]*ModalInteractionProps
+	CustomModalSubmitHandler func(*SlashContext, *ModalSubmitContext) error
 
-	guilds         []string // guilds to sync the app commands
-	Token          string
-	AppID          string
-	customHandlers *CustomHandlers
+	Token string
+	AppID string
 
-	messageCreateHandler   func(*discordgo.Session, *discordgo.MessageCreate)
-	channelMessageHandlers map[string]func(*ChannelMessageContext) error
-}
-
-type CustomHandlers struct {
-	onClose       func(*discordgo.Session)
-	onBeforeStart func(*discordgo.Session)
+	MessageCreateHandler   func(*discordgo.Session, *discordgo.MessageCreate)
+	ChannelMessageHandlers map[string]func(*ChannelMessageContext) error
 }
 
 // Create a new Minidis instance.
@@ -40,18 +33,14 @@ func New(token string) *Minidis {
 	}
 
 	return &Minidis{
-		session:                  s,
-		commands:                 map[string]*SlashCommandProps{},
-		messageCommands:          map[string]*MessageCommandProps{},
-		userCommands:             map[string]*UserCommandProps{},
-		componentHandlers:        map[string]*ComponentInteractionProps{},
-		modalSubmitHandlers:      map[string]*ModalInteractionProps{},
-		customComponentHandler:   nil,
-		customModalSubmitHandler: nil,
+		Session:                  s,
+		Commands:                 map[string]*SlashCommandProps{},
+		MessageCommands:          map[string]*MessageCommandProps{},
+		UserCommands:             map[string]*UserCommandProps{},
+		ComponentHandlers:        map[string]*ComponentInteractionProps{},
+		ModalSubmitHandlers:      map[string]*ModalInteractionProps{},
+		CustomComponentHandler:   nil,
+		CustomModalSubmitHandler: nil,
 		Token:                    token,
-		customHandlers: &CustomHandlers{
-			onClose:       nil,
-			onBeforeStart: nil,
-		},
 	}
 }
