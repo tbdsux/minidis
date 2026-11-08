@@ -22,14 +22,28 @@ func (m *Minidis) SyncCommands(guildIDs ...string) error {
 	return nil
 }
 
+// setGlobalScope sets the fields Discord only accepts on global commands.
+func setGlobalScope(cmd *discord.ApplicationCommand, contexts []discord.InteractionContextType, types []discord.ApplicationIntegrationType) {
+	if contexts != nil {
+		cmd.Contexts = &contexts
+	}
+	if types != nil {
+		cmd.IntegrationTypes = &types
+	}
+}
+
 func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 	allCommands := []*discord.ApplicationCommand{}
 
 	// parse message commands
 	for _, v := range m.MessageCommands {
 		cmd := &discord.ApplicationCommand{
-			Name: v.Name,
-			Type: discord.MessageApplicationCommand,
+			Name:                     v.Name,
+			Type:                     discord.MessageApplicationCommand,
+			DefaultMemberPermissions: v.DefaultMemberPermissions,
+		}
+		if global {
+			setGlobalScope(cmd, v.Contexts, v.IntegrationTypes)
 		}
 
 		allCommands = append(allCommands, cmd)
@@ -38,8 +52,12 @@ func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 	// parse user commands
 	for _, v := range m.UserCommands {
 		cmd := &discord.ApplicationCommand{
-			Name: v.Name,
-			Type: discord.UserApplicationCommand,
+			Name:                     v.Name,
+			Type:                     discord.UserApplicationCommand,
+			DefaultMemberPermissions: v.DefaultMemberPermissions,
+		}
+		if global {
+			setGlobalScope(cmd, v.Contexts, v.IntegrationTypes)
 		}
 
 		allCommands = append(allCommands, cmd)
@@ -56,13 +74,15 @@ func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 			Options:                  v.Options,
 		}
 
-		// Discord only accepts contexts on global commands.
 		if global {
-			contexts := []discord.InteractionContextType{discord.InteractionContextGuild}
-			if v.DmPermission {
-				contexts = append(contexts, discord.InteractionContextBotDM)
+			contexts := v.Contexts
+			if contexts == nil {
+				contexts = []discord.InteractionContextType{discord.InteractionContextGuild}
+				if v.DmPermission {
+					contexts = append(contexts, discord.InteractionContextBotDM)
+				}
 			}
-			cmd.Contexts = &contexts
+			setGlobalScope(cmd, contexts, v.IntegrationTypes)
 		}
 
 		for _, g := range v.subcommandGroups {

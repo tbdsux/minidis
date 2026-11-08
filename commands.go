@@ -16,6 +16,14 @@ type SlashCommandProps struct {
 	DefaultMemberPermissions *int64
 	DmPermission             bool
 
+	// Contexts says where a global command can be used, and overrides
+	// DmPermission when set. IntegrationTypes says how the app must be installed;
+	// add discord.ApplicationIntegrationUserInstall for a user-installable
+	// command. Discord only accepts both on global commands, so they are not
+	// sent when syncing to guilds.
+	Contexts         []discord.InteractionContextType
+	IntegrationTypes []discord.ApplicationIntegrationType
+
 	Options []*discord.ApplicationCommandOption
 	Execute func(c *SlashContext) error
 
@@ -54,6 +62,11 @@ func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
 type MessageCommandProps struct {
 	Name    string
 	Execute func(c *MessageCommandContext) error
+
+	// See SlashCommandProps for these. Unset Contexts leaves Discord's default.
+	DefaultMemberPermissions *int64
+	Contexts                 []discord.InteractionContextType
+	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
 // AddMessageCommand adds a new message command.
@@ -64,6 +77,11 @@ func (m *Minidis) AddMessageCommand(cmd *MessageCommandProps) {
 type UserCommandProps struct {
 	Name    string
 	Execute func(c *UserCommandContext) error
+
+	// See SlashCommandProps for these. Unset Contexts leaves Discord's default.
+	DefaultMemberPermissions *int64
+	Contexts                 []discord.InteractionContextType
+	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
 // AddUserCommand adds a new user command.
