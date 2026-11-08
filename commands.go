@@ -16,17 +16,23 @@ type SlashCommandProps struct {
 	DefaultMemberPermissions *int64
 	DmPermission             bool
 
-	Options          []*discord.ApplicationCommandOption
-	Execute          func(c *SlashContext) error
+	Options []*discord.ApplicationCommandOption
+	Execute func(c *SlashContext) error
+
+	// Autocomplete suggests values for options declared with Autocomplete: true.
+	// Middleware does not run for it, and it must respond within 3 seconds.
+	Autocomplete func(c *AutocompleteContext) error
+
 	subcommandGroups map[string]*SlashSubcommandGroupProps
 	subcommands      map[string]*SlashSubcommandProps
 }
 
 type SlashSubcommandProps struct {
-	Name        string
-	Description string
-	Options     []*discord.ApplicationCommandOption
-	Execute     func(c *SlashContext) error
+	Name         string
+	Description  string
+	Options      []*discord.ApplicationCommandOption
+	Execute      func(c *SlashContext) error
+	Autocomplete func(c *AutocompleteContext) error // see SlashCommandProps.Autocomplete
 }
 
 type SlashSubcommandGroupProps struct {

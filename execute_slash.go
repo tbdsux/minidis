@@ -8,18 +8,19 @@ import (
 
 // commandTarget is the command or subcommand an interaction is aimed at.
 type commandTarget struct {
-	execute func(*SlashContext) error
-	options []*discord.ApplicationCommandInteractionDataOption // the values the user gave it
+	execute      func(*SlashContext) error
+	autocomplete func(*AutocompleteContext) error
+	options      []*discord.ApplicationCommandInteractionDataOption // the values the user gave it
 }
 
 func (s *SlashSubcommandProps) target(options []*discord.ApplicationCommandInteractionDataOption) commandTarget {
-	return commandTarget{execute: s.Execute, options: options}
+	return commandTarget{execute: s.Execute, autocomplete: s.Autocomplete, options: options}
 }
 
 // resolve finds what the given options select. It falls back to the command
 // itself when no registered subcommand matches.
 func (s *SlashCommandProps) resolve(given []*discord.ApplicationCommandInteractionDataOption) commandTarget {
-	root := commandTarget{execute: s.Execute, options: given}
+	root := commandTarget{execute: s.Execute, autocomplete: s.Autocomplete, options: given}
 	if len(given) == 0 {
 		return root
 	}

@@ -47,13 +47,22 @@ func run(m *Minidis) {
 }
 
 func (m *Minidis) handleInteraction(s *client.Session, i *discord.InteractionCreate) {
-	c := m.NewSlashContext(s, i.Interaction, i.Type == discord.InteractionApplicationCommand)
+	isCommand := i.Type == discord.InteractionApplicationCommand ||
+		i.Type == discord.InteractionApplicationCommandAutocomplete
+	c := m.NewSlashContext(s, i.Interaction, isCommand)
 
 	defer func() {
 		if r := recover(); r != nil {
 			m.handleError(c, &PanicError{Value: r, Stack: debug.Stack()})
 		}
 	}()
+
+	if i.Type == discord.InteractionApplicationCommandAutocomplete {
+		if err := m.executeAutocomplete(c); err != nil {
+			m.handleError(c, err)
+		}
+		return
+	}
 
 	handler := m.route(c)
 	if handler == nil {
