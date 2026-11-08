@@ -1,0 +1,367 @@
+// Package discord holds the Discord API types. The client that sends and
+// receives them is in the discord/client package.
+package discord
+
+import (
+	"encoding/json"
+	"io"
+	"time"
+)
+
+// Bool returns a pointer to v, for optional boolean fields.
+func Bool(v bool) *bool { return &v }
+
+// Int returns a pointer to v, for optional integer fields.
+func Int(v int) *int { return &v }
+
+// Locale is a language code supported by Discord.
+type Locale string
+
+const (
+	EnglishUS    Locale = "en-US"
+	EnglishGB    Locale = "en-GB"
+	Bulgarian    Locale = "bg"
+	ChineseCN    Locale = "zh-CN"
+	ChineseTW    Locale = "zh-TW"
+	Croatian     Locale = "hr"
+	Czech        Locale = "cs"
+	Danish       Locale = "da"
+	Dutch        Locale = "nl"
+	Finnish      Locale = "fi"
+	French       Locale = "fr"
+	German       Locale = "de"
+	Greek        Locale = "el"
+	Hindi        Locale = "hi"
+	Hungarian    Locale = "hu"
+	Indonesian   Locale = "id"
+	Italian      Locale = "it"
+	Japanese     Locale = "ja"
+	Korean       Locale = "ko"
+	Lithuanian   Locale = "lt"
+	Norwegian    Locale = "no"
+	Polish       Locale = "pl"
+	PortugueseBR Locale = "pt-BR"
+	Romanian     Locale = "ro"
+	Russian      Locale = "ru"
+	SpanishES    Locale = "es-ES"
+	SpanishLATAM Locale = "es-419"
+	Swedish      Locale = "sv-SE"
+	Thai         Locale = "th"
+	Turkish      Locale = "tr"
+	Ukrainian    Locale = "uk"
+	Vietnamese   Locale = "vi"
+)
+
+// Intent is a bitfield of the gateway events a bot subscribes to.
+type Intent int
+
+const (
+	IntentsGuilds                      Intent = 1 << 0
+	IntentsGuildMembers                Intent = 1 << 1
+	IntentsGuildModeration             Intent = 1 << 2
+	IntentsGuildExpressions            Intent = 1 << 3
+	IntentsGuildIntegrations           Intent = 1 << 4
+	IntentsGuildWebhooks               Intent = 1 << 5
+	IntentsGuildInvites                Intent = 1 << 6
+	IntentsGuildVoiceStates            Intent = 1 << 7
+	IntentsGuildPresences              Intent = 1 << 8
+	IntentsGuildMessages               Intent = 1 << 9
+	IntentsGuildMessageReactions       Intent = 1 << 10
+	IntentsGuildMessageTyping          Intent = 1 << 11
+	IntentsDirectMessages              Intent = 1 << 12
+	IntentsDirectMessageReactions      Intent = 1 << 13
+	IntentsDirectMessageTyping         Intent = 1 << 14
+	IntentsMessageContent              Intent = 1 << 15
+	IntentsGuildScheduledEvents        Intent = 1 << 16
+	IntentsAutoModerationConfiguration Intent = 1 << 20
+	IntentsAutoModerationExecution     Intent = 1 << 21
+	IntentsGuildMessagePolls           Intent = 1 << 24
+	IntentsDirectMessagePolls          Intent = 1 << 25
+
+	// IntentsPrivileged are the intents that must be enabled in the developer portal.
+	IntentsPrivileged = IntentsGuildMembers | IntentsGuildPresences | IntentsMessageContent
+
+	// IntentsAllWithoutPrivileged is the default for a new Session.
+	IntentsAllWithoutPrivileged = IntentsGuilds | IntentsGuildModeration | IntentsGuildExpressions |
+		IntentsGuildIntegrations | IntentsGuildWebhooks | IntentsGuildInvites | IntentsGuildVoiceStates |
+		IntentsGuildMessages | IntentsGuildMessageReactions | IntentsGuildMessageTyping |
+		IntentsDirectMessages | IntentsDirectMessageReactions | IntentsDirectMessageTyping |
+		IntentsGuildScheduledEvents | IntentsAutoModerationConfiguration | IntentsAutoModerationExecution |
+		IntentsGuildMessagePolls | IntentsDirectMessagePolls
+
+	// IntentsAll includes the privileged intents.
+	IntentsAll = IntentsAllWithoutPrivileged | IntentsPrivileged
+
+	IntentsNone Intent = 0
+)
+
+// ChannelType is the type of a channel.
+type ChannelType int
+
+const (
+	ChannelTypeGuildText          ChannelType = 0
+	ChannelTypeDM                 ChannelType = 1
+	ChannelTypeGuildVoice         ChannelType = 2
+	ChannelTypeGroupDM            ChannelType = 3
+	ChannelTypeGuildCategory      ChannelType = 4
+	ChannelTypeGuildNews          ChannelType = 5
+	ChannelTypeGuildNewsThread    ChannelType = 10
+	ChannelTypeGuildPublicThread  ChannelType = 11
+	ChannelTypeGuildPrivateThread ChannelType = 12
+	ChannelTypeGuildStageVoice    ChannelType = 13
+	ChannelTypeGuildDirectory     ChannelType = 14
+	ChannelTypeGuildForum         ChannelType = 15
+	ChannelTypeGuildMedia         ChannelType = 16
+)
+
+// MessageFlags is a bitfield of message options.
+type MessageFlags int
+
+const (
+	MessageFlagsSuppressEmbeds        MessageFlags = 1 << 2
+	MessageFlagsEphemeral             MessageFlags = 1 << 6
+	MessageFlagsSuppressNotifications MessageFlags = 1 << 12
+	MessageFlagsIsVoiceMessage        MessageFlags = 1 << 13
+	MessageFlagsIsComponentsV2        MessageFlags = 1 << 15
+)
+
+// User is a Discord user.
+type User struct {
+	ID            string `json:"id"`
+	Username      string `json:"username"`
+	Discriminator string `json:"discriminator"`
+	GlobalName    string `json:"global_name"`
+	Avatar        string `json:"avatar"`
+	Banner        string `json:"banner"`
+	AccentColor   int    `json:"accent_color"`
+	Bot           bool   `json:"bot"`
+	System        bool   `json:"system"`
+	PublicFlags   int    `json:"public_flags"`
+}
+
+// Member is a user's membership of a guild. User is absent from members that
+// are nested inside a message or a resolved data map.
+type Member struct {
+	User        *User      `json:"user"`
+	Nick        string     `json:"nick"`
+	Avatar      string     `json:"avatar"`
+	Roles       []string   `json:"roles"`
+	JoinedAt    time.Time  `json:"joined_at"`
+	Deaf        bool       `json:"deaf"`
+	Mute        bool       `json:"mute"`
+	Flags       int        `json:"flags"`
+	Pending     bool       `json:"pending"`
+	Permissions int64      `json:"permissions,string"`
+	TimeoutEnds *time.Time `json:"communication_disabled_until"`
+}
+
+// Role is a guild role.
+type Role struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Color       int    `json:"color"`
+	Hoist       bool   `json:"hoist"`
+	Position    int    `json:"position"`
+	Permissions int64  `json:"permissions,string"`
+	Managed     bool   `json:"managed"`
+	Mentionable bool   `json:"mentionable"`
+}
+
+// Channel is a (possibly partial) channel.
+type Channel struct {
+	ID       string      `json:"id"`
+	GuildID  string      `json:"guild_id"`
+	Name     string      `json:"name"`
+	Type     ChannelType `json:"type"`
+	Topic    string      `json:"topic"`
+	NSFW     bool        `json:"nsfw"`
+	ParentID string      `json:"parent_id"`
+}
+
+// MessageAttachment is a file attached to a message.
+type MessageAttachment struct {
+	ID          string  `json:"id"`
+	Filename    string  `json:"filename"`
+	Title       string  `json:"title,omitempty"`
+	Description string  `json:"description,omitempty"`
+	ContentType string  `json:"content_type,omitempty"`
+	Size        int     `json:"size,omitempty"`
+	URL         string  `json:"url,omitempty"`
+	ProxyURL    string  `json:"proxy_url,omitempty"`
+	Width       int     `json:"width,omitempty"`
+	Height      int     `json:"height,omitempty"`
+	Ephemeral   bool    `json:"ephemeral,omitempty"`
+	Duration    float64 `json:"duration_secs,omitempty"`
+	Waveform    string  `json:"waveform,omitempty"`
+	Flags       int     `json:"flags,omitempty"`
+}
+
+// File is a file to upload with a message.
+type File struct {
+	Name        string
+	ContentType string
+	Reader      io.Reader
+}
+
+// MessageEmbed is a rich embed.
+type MessageEmbed struct {
+	URL         string                 `json:"url,omitempty"`
+	Type        string                 `json:"type,omitempty"`
+	Title       string                 `json:"title,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Timestamp   string                 `json:"timestamp,omitempty"`
+	Color       int                    `json:"color,omitempty"`
+	Footer      *MessageEmbedFooter    `json:"footer,omitempty"`
+	Image       *MessageEmbedImage     `json:"image,omitempty"`
+	Thumbnail   *MessageEmbedThumbnail `json:"thumbnail,omitempty"`
+	Video       *MessageEmbedVideo     `json:"video,omitempty"`
+	Provider    *MessageEmbedProvider  `json:"provider,omitempty"`
+	Author      *MessageEmbedAuthor    `json:"author,omitempty"`
+	Fields      []*MessageEmbedField   `json:"fields,omitempty"`
+}
+
+type MessageEmbedFooter struct {
+	Text         string `json:"text,omitempty"`
+	IconURL      string `json:"icon_url,omitempty"`
+	ProxyIconURL string `json:"proxy_icon_url,omitempty"`
+}
+
+type MessageEmbedImage struct {
+	URL      string `json:"url"`
+	ProxyURL string `json:"proxy_url,omitempty"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
+}
+
+type MessageEmbedThumbnail struct {
+	URL      string `json:"url"`
+	ProxyURL string `json:"proxy_url,omitempty"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
+}
+
+type MessageEmbedVideo struct {
+	URL    string `json:"url,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+}
+
+type MessageEmbedProvider struct {
+	URL  string `json:"url,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+type MessageEmbedAuthor struct {
+	URL          string `json:"url,omitempty"`
+	Name         string `json:"name,omitempty"`
+	IconURL      string `json:"icon_url,omitempty"`
+	ProxyIconURL string `json:"proxy_icon_url,omitempty"`
+}
+
+type MessageEmbedField struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Inline bool   `json:"inline,omitempty"`
+}
+
+// AllowedMentionType is a category accepted by MessageAllowedMentions.Parse.
+type AllowedMentionType string
+
+const (
+	AllowedMentionTypeRoles    AllowedMentionType = "roles"
+	AllowedMentionTypeUsers    AllowedMentionType = "users"
+	AllowedMentionTypeEveryone AllowedMentionType = "everyone"
+)
+
+// MessageAllowedMentions controls which mentions in a message notify anyone.
+// An empty Parse suppresses all mentions not listed in Roles or Users.
+type MessageAllowedMentions struct {
+	Parse       []AllowedMentionType `json:"parse"`
+	Roles       []string             `json:"roles,omitempty"`
+	Users       []string             `json:"users,omitempty"`
+	RepliedUser bool                 `json:"replied_user,omitempty"`
+}
+
+// MessageReference points at the message being replied to.
+type MessageReference struct {
+	MessageID       string `json:"message_id,omitempty"`
+	ChannelID       string `json:"channel_id,omitempty"`
+	GuildID         string `json:"guild_id,omitempty"`
+	FailIfNotExists *bool  `json:"fail_if_not_exists,omitempty"`
+}
+
+// Message is a message in a channel.
+type Message struct {
+	ID                string               `json:"id"`
+	ChannelID         string               `json:"channel_id"`
+	GuildID           string               `json:"guild_id"`
+	Author            *User                `json:"author"`
+	Member            *Member              `json:"member"`
+	Content           string               `json:"content"`
+	Timestamp         time.Time            `json:"timestamp"`
+	EditedTimestamp   *time.Time           `json:"edited_timestamp"`
+	TTS               bool                 `json:"tts"`
+	MentionEveryone   bool                 `json:"mention_everyone"`
+	Mentions          []*User              `json:"mentions"`
+	MentionRoles      []string             `json:"mention_roles"`
+	Attachments       []*MessageAttachment `json:"attachments"`
+	Embeds            []*MessageEmbed      `json:"embeds"`
+	Components        ComponentList        `json:"components"`
+	Pinned            bool                 `json:"pinned"`
+	WebhookID         string               `json:"webhook_id"`
+	Type              int                  `json:"type"`
+	Flags             MessageFlags         `json:"flags"`
+	MessageReference  *MessageReference    `json:"message_reference"`
+	ReferencedMessage *Message             `json:"referenced_message"`
+}
+
+// MessageSend is the body of a Create Message request.
+type MessageSend struct {
+	Content         string                  `json:"content,omitempty"`
+	Embeds          []*MessageEmbed         `json:"embeds,omitempty"`
+	TTS             bool                    `json:"tts,omitempty"`
+	Components      []MessageComponent      `json:"components,omitempty"`
+	AllowedMentions *MessageAllowedMentions `json:"allowed_mentions,omitempty"`
+	Reference       *MessageReference       `json:"message_reference,omitempty"`
+	StickerIDs      []string                `json:"sticker_ids,omitempty"`
+	Flags           MessageFlags            `json:"flags,omitempty"`
+	Files           []*File                 `json:"-"`
+}
+
+// UnavailableGuild is a guild that has been announced but not yet delivered.
+type UnavailableGuild struct {
+	ID          string `json:"id"`
+	Unavailable bool   `json:"unavailable"`
+}
+
+// Application is the partial application object sent in READY.
+type Application struct {
+	ID    string `json:"id"`
+	Flags int    `json:"flags"`
+}
+
+// Ready is the READY gateway event.
+type Ready struct {
+	Version          int                 `json:"v"`
+	User             *User               `json:"user"`
+	Guilds           []*UnavailableGuild `json:"guilds"`
+	SessionID        string              `json:"session_id"`
+	ResumeGatewayURL string              `json:"resume_gateway_url"`
+	Shard            *[2]int             `json:"shard"`
+	Application      *Application        `json:"application"`
+}
+
+// MessageCreate is the MESSAGE_CREATE gateway event.
+type MessageCreate struct {
+	*Message
+}
+
+// InteractionCreate is the INTERACTION_CREATE gateway event.
+type InteractionCreate struct {
+	*Interaction
+}
+
+// jsonNull reports whether raw is absent or a JSON null.
+func jsonNull(raw json.RawMessage) bool {
+	return len(raw) == 0 || string(raw) == "null"
+}
