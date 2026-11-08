@@ -1,11 +1,14 @@
 package minidis
 
 import (
-	"github.com/bwmarrin/discordgo"
+	"sync"
+
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 type Minidis struct {
-	Session *discordgo.Session
+	Session *client.Session
 
 	Commands        map[string]*SlashCommandProps
 	MessageCommands map[string]*MessageCommandProps
@@ -20,20 +23,22 @@ type Minidis struct {
 	Token string
 	AppID string
 
-	MessageCreateHandler   func(*discordgo.Session, *discordgo.MessageCreate)
+	MessageCreateHandler   func(*client.Session, *discord.MessageCreate)
 	ChannelMessageHandlers map[string]func(*ChannelMessageContext) error
+
+	ErrorHandler               func(*SlashContext, error)
+	ChannelMessageErrorHandler func(*ChannelMessageContext, error)
+
+	middleware      []Middleware
+	componentRoutes customIDRouter
+	modalRoutes     customIDRouter
+	registerOnce    sync.Once
 }
 
 // Create a new Minidis instance.
 func New(token string) *Minidis {
-	s, err := discordgo.New("Bot " + token)
-	if err != nil {
-		// FIXME: do not use panic
-		panic(err)
-	}
-
 	return &Minidis{
-		Session:                  s,
+		Session:                  client.New("Bot " + token),
 		Commands:                 map[string]*SlashCommandProps{},
 		MessageCommands:          map[string]*MessageCommandProps{},
 		UserCommands:             map[string]*UserCommandProps{},

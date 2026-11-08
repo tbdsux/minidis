@@ -1,24 +1,22 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/tbdsux/minidis/discord"
+)
 
+// MessageCommandContext is passed to message context menu commands. The embedded
+// SlashContext describes the user who ran the command and provides the reply
+// methods.
 type MessageCommandContext struct {
-	Interaction *discordgo.Interaction
-	Session     *discordgo.Session
-	Message     *discordgo.Message
+	*SlashContext
+	Message *discord.Message // the message the command was used on
 }
 
+// UserCommandContext is passed to user context menu commands. Member and User
+// are the target of the command; the embedded SlashContext describes the user
+// who ran it (c.Author, c.SlashContext.Member) and provides the reply methods.
 type UserCommandContext struct {
-	Interaction *discordgo.Interaction
-	Session     *discordgo.Session
-	Member      *discordgo.Member
-	User        *discordgo.User
-}
-
-func (m *MessageCommandContext) ReplyC(reply ReplyProps) error {
-	return replyFunc(m.Session, m.Interaction, reply)
-}
-
-func (m *UserCommandContext) ReplyC(reply ReplyProps) error {
-	return replyFunc(m.Session, m.Interaction, reply)
+	*SlashContext
+	Member *discord.Member
+	User   *discord.User
 }

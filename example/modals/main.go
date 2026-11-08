@@ -8,8 +8,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 var (
@@ -20,26 +21,27 @@ func main() {
 	guilds := strings.Split(os.Getenv("GUILD"), ",")
 	bot := minidis.New(os.Getenv("TOKEN"))
 
-	bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+	bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 
-	bot.AddCustomModalSubmitHandler(func(s *minidis.SlashContext, c *minidis.ModalSubmitContext) error {
-		s.ReplyString("Thank you for taking your time to fill the survey")
+	// {user} is captured from the custom ID into c.Params
+	bot.AddModalSubmitHandler(&minidis.ModalInteractionProps{
+		ID: "modals_survey:{user}",
+		Execute: func(s *minidis.SlashContext, c *minidis.ModalSubmitContext) error {
+			if err := s.ReplyString("Thank you for taking your time to fill the survey"); err != nil {
+				return err
+			}
 
-		if !strings.HasPrefix(c.Data.CustomID, "modals_survey") {
-			return nil
-		}
+			_, err := s.Session.ChannelMessageSend(ResultsChannel, fmt.Sprintf(
+				"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s",
+				c.Params["user"],
+				c.Data.Components[0].(*discord.Label).Component.(*discord.TextInput).Value,
+				c.Data.Components[1].(*discord.Label).Component.(*discord.TextInput).Value,
+			))
 
-		userid := strings.Split(c.Data.CustomID, "_")[2]
-		_, err := s.Session.ChannelMessageSend(ResultsChannel, fmt.Sprintf(
-			"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s",
-			userid,
-			c.Data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value,
-			c.Data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value,
-		))
-
-		return err
+			return err
+		},
 	})
 
 	// simple command
@@ -49,30 +51,26 @@ func main() {
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyModal(minidis.ReplyModalProps{
 				Title:    "Modals survey",
-				CustomID: "modals_survey_" + c.Interaction.Member.User.ID,
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{
-						Components: []discordgo.MessageComponent{
-							discordgo.TextInput{
-								CustomID:    "opinion",
-								Label:       "What is your opinion on them?",
-								Style:       discordgo.TextInputShort,
-								Placeholder: "Don't be shy, share your opinion with us",
-								Required:    true,
-								MaxLength:   300,
-								MinLength:   10,
-							},
+				CustomID: "modals_survey:" + c.Author.ID,
+				Components: []discord.MessageComponent{
+					discord.Label{
+						Label: "What is your opinion on them?",
+						Component: discord.TextInput{
+							CustomID:    "opinion",
+							Style:       discord.TextInputShort,
+							Placeholder: "Don't be shy, share your opinion with us",
+							Required:    discord.Bool(true),
+							MaxLength:   300,
+							MinLength:   10,
 						},
 					},
-					discordgo.ActionsRow{
-						Components: []discordgo.MessageComponent{
-							discordgo.TextInput{
-								CustomID:  "suggestions",
-								Label:     "What would you suggest to improve them?",
-								Style:     discordgo.TextInputParagraph,
-								Required:  false,
-								MaxLength: 2000,
-							},
+					discord.Label{
+						Label: "What would you suggest to improve them?",
+						Component: discord.TextInput{
+							CustomID:  "suggestions",
+							Style:     discord.TextInputParagraph,
+							Required:  discord.Bool(false),
+							MaxLength: 2000,
 						},
 					},
 				},
@@ -86,18 +84,11 @@ func main() {
 		return
 	}
 
-	// Re-sync commands
-	if err := bot.ClearCommands(guilds...); err != nil {
-		log.Fatalln("Failed to clear commands:", err)
-		return
-	}
+	// Register the commands. This replaces any registered before.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
 		return
 	}
-
-	// Run the bot
-	bot.Run()
 
 	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")

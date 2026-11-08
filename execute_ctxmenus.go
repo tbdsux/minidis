@@ -1,32 +1,36 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"fmt"
 
-func (m *Minidis) executeMessage(s *discordgo.Session, i *discordgo.Interaction) (error, bool) {
-	command := i.ApplicationCommandData().Name
+	"github.com/tbdsux/minidis/discord"
+)
 
-	if handler, ok := m.MessageCommands[command]; ok {
-		return handler.Execute(&MessageCommandContext{
-			Session:     s,
-			Interaction: i,
-			Message:     i.ApplicationCommandData().Resolved.Messages[i.ApplicationCommandData().TargetID],
-		}), true
+func (m *Minidis) routeMessage(data discord.ApplicationCommandInteractionData) HandlerFunc {
+	cmd, ok := m.MessageCommands[data.Name]
+	if !ok || cmd.Execute == nil {
+		return failWith(fmt.Errorf("%w: message command %q", ErrNoHandler, data.Name))
 	}
 
-	return nil, false
+	return func(c *SlashContext) error {
+		return cmd.Execute(&MessageCommandContext{
+			SlashContext: c,
+			Message:      data.Resolved.Messages[data.TargetID],
+		})
+	}
 }
 
-func (m *Minidis) executeUser(s *discordgo.Session, i *discordgo.Interaction) (error, bool) {
-	command := i.ApplicationCommandData().Name
-
-	if handler, ok := m.UserCommands[command]; ok {
-		return handler.Execute(&UserCommandContext{
-			Session:     s,
-			Interaction: i,
-			Member:      i.ApplicationCommandData().Resolved.Members[i.ApplicationCommandData().TargetID],
-			User:        i.ApplicationCommandData().Resolved.Users[i.ApplicationCommandData().TargetID],
-		}), true
+func (m *Minidis) routeUser(data discord.ApplicationCommandInteractionData) HandlerFunc {
+	cmd, ok := m.UserCommands[data.Name]
+	if !ok || cmd.Execute == nil {
+		return failWith(fmt.Errorf("%w: user command %q", ErrNoHandler, data.Name))
 	}
 
-	return nil, false
+	return func(c *SlashContext) error {
+		return cmd.Execute(&UserCommandContext{
+			SlashContext: c,
+			Member:       data.Resolved.Members[data.TargetID],
+			User:         data.Resolved.Users[data.TargetID],
+		})
+	}
 }

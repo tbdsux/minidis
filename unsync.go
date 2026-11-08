@@ -1,30 +1,15 @@
 package minidis
 
-// ClearCommands removes the application commands from the guild.
-// If there are no guilds specified using `SyncToGuilds()`, global commands will be removed.
+// ClearCommands removes the application commands from the given guilds.
+// If no guilds are given, the global commands are removed instead.
 func (m *Minidis) ClearCommands(guildIDs ...string) error {
-	for _, v := range guildIDs {
-		// get application commands
-		guildCommands, err := m.Session.ApplicationCommands(m.AppID, v)
-		if err != nil {
-			return err
-		}
-
-		for _, cmd := range guildCommands {
-			if err = m.Session.ApplicationCommandDelete(m.AppID, v, cmd.ID); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Remove global commands
-	globalCommands, err := m.Session.ApplicationCommands(m.AppID, "")
-	if err != nil {
+	if len(guildIDs) == 0 {
+		_, err := m.Session.ApplicationCommandBulkOverwrite(m.AppID, "", nil)
 		return err
 	}
 
-	for _, cmd := range globalCommands {
-		if err = m.Session.ApplicationCommandDelete(m.AppID, "", cmd.ID); err != nil {
+	for _, v := range guildIDs {
+		if _, err := m.Session.ApplicationCommandBulkOverwrite(m.AppID, v, nil); err != nil {
 			return err
 		}
 	}

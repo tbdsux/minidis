@@ -1,9 +1,9 @@
 package minidis
 
 import (
-	"errors"
+	"fmt"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
 )
 
 type ModalInteractionProps struct {
@@ -12,8 +12,10 @@ type ModalInteractionProps struct {
 }
 
 // AddModalSubmitHandler adds a new modal submit interaction handler for a specific custom id.
+// The id can contain captures, as described on AddComponentHandler.
 func (m *Minidis) AddModalSubmitHandler(mi *ModalInteractionProps) {
 	m.ModalSubmitHandlers[mi.ID] = mi
+	m.modalRoutes.add(mi.ID)
 }
 
 // AddCustomModalSubmitHandler is a fallback handler for AddModalSubmitHandler.
@@ -24,28 +26,36 @@ func (m *Minidis) AddCustomModalSubmitHandler(handler func(s *SlashContext, c *M
 }
 
 type ModalSubmitContext struct {
-	Data discordgo.ModalSubmitInteractionData
+	Data discord.ModalSubmitInteractionData
+
+	// Params holds the captures of a handler ID such as "feedback:{id}".
+	Params map[string]string
 }
 
-func (m *Minidis) NewModalContext(data discordgo.ModalSubmitInteractionData) *ModalSubmitContext {
+func (m *Minidis) NewModalContext(data discord.ModalSubmitInteractionData) *ModalSubmitContext {
 	return &ModalSubmitContext{
 		Data: data,
 	}
 }
 
-func (m *Minidis) executeModalSubmit(session *discordgo.Session, event *discordgo.Interaction) error {
-	data := event.ModalSubmitData()
+func (m *Minidis) routeModalSubmit(c *SlashContext) HandlerFunc {
+	modalContext := m.NewModalContext(c.Interaction.ModalSubmitData())
+	customID := modalContext.Data.CustomID
 
-	slashContext := m.NewSlashContext(session, event, false)
-	modalContext := m.NewModalContext(data)
+	execute := m.CustomModalSubmitHandler
 
-	if handler, ok := m.ModalSubmitHandlers[data.CustomID]; ok {
-		return handler.Execute(slashContext, modalContext)
+	if handler, ok := m.ModalSubmitHandlers[customID]; ok {
+		execute = handler.Execute
+	} else if id, params, ok := m.modalRoutes.match(customID); ok {
+		execute = m.ModalSubmitHandlers[id].Execute
+		modalContext.Params = params
 	}
 
-	if m.CustomModalSubmitHandler != nil {
-		return m.CustomModalSubmitHandler(slashContext, modalContext)
+	if execute == nil {
+		return failWith(fmt.Errorf("%w: modal %q", ErrNoHandler, customID))
 	}
 
-	return errors.New("no modal submit handler defined for custom id: " + data.CustomID)
+	return func(c *SlashContext) error {
+		return execute(c, modalContext)
+	}
 }

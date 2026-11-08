@@ -1,30 +1,46 @@
 package minidis
 
 import (
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
 )
 
 type SlashCommandProps struct {
 	Name        string // Name of the command
 	Description string // Description of the command
 
-	NameLocalizations        *map[discordgo.Locale]string
-	DescriptionLocalizations *map[discordgo.Locale]string
+	NameLocalizations        *map[discord.Locale]string
+	DescriptionLocalizations *map[discord.Locale]string
 
-	DefaultMemberPermissions int64
+	// DefaultMemberPermissions is the permission bits a member needs. Nil lets
+	// everyone use the command; discord.Int64(0) makes it admin-only.
+	DefaultMemberPermissions *int64
 	DmPermission             bool
 
-	Options          []*discordgo.ApplicationCommandOption
-	Execute          func(c *SlashContext) error
+	// Contexts says where a global command can be used, and overrides
+	// DmPermission when set. IntegrationTypes says how the app must be installed;
+	// add discord.ApplicationIntegrationUserInstall for a user-installable
+	// command. Discord only accepts both on global commands, so they are not
+	// sent when syncing to guilds.
+	Contexts         []discord.InteractionContextType
+	IntegrationTypes []discord.ApplicationIntegrationType
+
+	Options []*discord.ApplicationCommandOption
+	Execute func(c *SlashContext) error
+
+	// Autocomplete suggests values for options declared with Autocomplete: true.
+	// Middleware does not run for it, and it must respond within 3 seconds.
+	Autocomplete func(c *AutocompleteContext) error
+
 	subcommandGroups map[string]*SlashSubcommandGroupProps
 	subcommands      map[string]*SlashSubcommandProps
 }
 
 type SlashSubcommandProps struct {
-	Name        string
-	Description string
-	Options     []*discordgo.ApplicationCommandOption
-	Execute     func(c *SlashContext) error
+	Name         string
+	Description  string
+	Options      []*discord.ApplicationCommandOption
+	Execute      func(c *SlashContext) error
+	Autocomplete func(c *AutocompleteContext) error // see SlashCommandProps.Autocomplete
 }
 
 type SlashSubcommandGroupProps struct {
@@ -46,6 +62,11 @@ func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
 type MessageCommandProps struct {
 	Name    string
 	Execute func(c *MessageCommandContext) error
+
+	// See SlashCommandProps for these. Unset Contexts leaves Discord's default.
+	DefaultMemberPermissions *int64
+	Contexts                 []discord.InteractionContextType
+	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
 // AddMessageCommand adds a new message command.
@@ -54,13 +75,18 @@ func (m *Minidis) AddMessageCommand(cmd *MessageCommandProps) {
 }
 
 type UserCommandProps struct {
-	Command string
+	Name    string
 	Execute func(c *UserCommandContext) error
+
+	// See SlashCommandProps for these. Unset Contexts leaves Discord's default.
+	DefaultMemberPermissions *int64
+	Contexts                 []discord.InteractionContextType
+	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
 // AddUserCommand adds a new user command.
 func (m *Minidis) AddUserCommand(cmd *UserCommandProps) {
-	m.UserCommands[cmd.Command] = cmd
+	m.UserCommands[cmd.Name] = cmd
 }
 
 // RegisterCommands is used for adding multiple already defined commands.

@@ -23,18 +23,11 @@ func main() {
 		return
 	}
 
-	// Re-sync commands
-	if err := commands.Bot.ClearCommands(guilds...); err != nil {
-		log.Fatalln("Failed to clear commands:", err)
-		return
-	}
-	if err := commands.Bot.SyncCommands(guilds...); err != nil {
+	// Register the commands. This replaces any registered before.
+	if err := commands.Bot.SyncCommands(lib.GUILDS...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
 		return
 	}
-
-	// Run the bot
-	commands.Bot.Run()
 
 	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
@@ -56,7 +49,8 @@ import (
 	"log"
 
 	"github.com/tbdsux/minidis"
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 
 	"{{ .PkgName }}/lib"
 )
@@ -66,7 +60,7 @@ var Bot *minidis.Minidis
 func init() {
 	Bot = minidis.New(lib.TOKEN)
 
-	Bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+	Bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 

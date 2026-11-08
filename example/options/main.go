@@ -8,17 +8,18 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 func main() {
 	guilds := strings.Split(os.Getenv("GUILD"), ",")
 	bot := minidis.New(os.Getenv("TOKEN"))
 
-	bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
+	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
-	bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+	bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 
@@ -26,16 +27,16 @@ func main() {
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Name:        "options",
 		Description: "Simple command with options.",
-		Options: []*discordgo.ApplicationCommandOption{
+		Options: []*discord.ApplicationCommandOption{
 			{
-				Type:        discordgo.ApplicationCommandOptionString,
+				Type:        discord.ApplicationCommandOptionString,
 				Name:        "name",
 				Description: "Your name,",
 				Required:    true,
 			},
 		},
 		Execute: func(c *minidis.SlashContext) error {
-			name := c.Options["name"].StringValue()
+			name := c.String("name")
 
 			return c.ReplyString(fmt.Sprintf("Your name is **%s**?", name))
 		},
@@ -47,18 +48,11 @@ func main() {
 		return
 	}
 
-	// Re-sync commands
-	if err := bot.ClearCommands(guilds...); err != nil {
-		log.Fatalln("Failed to clear commands:", err)
-		return
-	}
+	// Register the commands. This replaces any registered before.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
 		return
 	}
-
-	// Run the bot
-	bot.Run()
 
 	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")

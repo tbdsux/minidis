@@ -1,27 +1,25 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+// routeComponent returns the handler for a component interaction, or nil if
+// none is set.
+func (m *Minidis) routeComponent(c *SlashContext) HandlerFunc {
+	componentContext := m.NewComponentContext(c.Session, c.Interaction)
+	customID := componentContext.Data.CustomID
 
-func (m *Minidis) executeComponentHandler(session *discordgo.Session, event *discordgo.Interaction) error {
-	data := event.MessageComponentData()
+	execute := m.CustomComponentHandler
 
-	slashContext := m.NewSlashContext(session, event, false)
-	componentContext := m.NewComponentContext(event)
-
-	if handler, ok := m.ComponentHandlers[data.CustomID]; ok {
-		return handler.Execute(
-			slashContext,
-			componentContext,
-		)
+	if handler, ok := m.ComponentHandlers[customID]; ok {
+		execute = handler.Execute
+	} else if id, params, ok := m.componentRoutes.match(customID); ok {
+		execute = m.ComponentHandlers[id].Execute
+		componentContext.Params = params
 	}
 
-	// nil means it is not set
-	if m.CustomComponentHandler != nil {
-		return m.CustomComponentHandler(
-			slashContext,
-			componentContext,
-		)
+	if execute == nil {
+		return nil
 	}
 
-	return nil
+	return func(c *SlashContext) error {
+		return execute(c, componentContext)
+	}
 }
