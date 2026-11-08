@@ -8,8 +8,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 var (
@@ -20,7 +21,7 @@ func main() {
 	guilds := strings.Split(os.Getenv("GUILD"), ",")
 	bot := minidis.New(os.Getenv("TOKEN"))
 
-	bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+	bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 
@@ -35,8 +36,8 @@ func main() {
 		_, err := s.Session.ChannelMessageSend(ResultsChannel, fmt.Sprintf(
 			"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s",
 			userid,
-			c.Data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value,
-			c.Data.Components[1].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value,
+			c.Data.Components[0].(*discord.Label).Component.(*discord.TextInput).Value,
+			c.Data.Components[1].(*discord.Label).Component.(*discord.TextInput).Value,
 		))
 
 		return err
@@ -50,29 +51,25 @@ func main() {
 			return c.ReplyModal(minidis.ReplyModalProps{
 				Title:    "Modals survey",
 				CustomID: "modals_survey_" + c.Interaction.Member.User.ID,
-				Components: []discordgo.MessageComponent{
-					discordgo.ActionsRow{
-						Components: []discordgo.MessageComponent{
-							discordgo.TextInput{
-								CustomID:    "opinion",
-								Label:       "What is your opinion on them?",
-								Style:       discordgo.TextInputShort,
-								Placeholder: "Don't be shy, share your opinion with us",
-								Required:    true,
-								MaxLength:   300,
-								MinLength:   10,
-							},
+				Components: []discord.MessageComponent{
+					discord.Label{
+						Label: "What is your opinion on them?",
+						Component: discord.TextInput{
+							CustomID:    "opinion",
+							Style:       discord.TextInputShort,
+							Placeholder: "Don't be shy, share your opinion with us",
+							Required:    discord.Bool(true),
+							MaxLength:   300,
+							MinLength:   10,
 						},
 					},
-					discordgo.ActionsRow{
-						Components: []discordgo.MessageComponent{
-							discordgo.TextInput{
-								CustomID:  "suggestions",
-								Label:     "What would you suggest to improve them?",
-								Style:     discordgo.TextInputParagraph,
-								Required:  false,
-								MaxLength: 2000,
-							},
+					discord.Label{
+						Label: "What would you suggest to improve them?",
+						Component: discord.TextInput{
+							CustomID:  "suggestions",
+							Style:     discord.TextInputParagraph,
+							Required:  discord.Bool(false),
+							MaxLength: 2000,
 						},
 					},
 				},

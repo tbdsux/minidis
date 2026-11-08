@@ -8,17 +8,18 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 func main() {
 	guilds := strings.Split(os.Getenv("GUILD"), ",")
 	bot := minidis.New(os.Getenv("TOKEN"))
 
-	bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
+	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
-	bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+	bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 
@@ -26,37 +27,37 @@ func main() {
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Name:        "buttons",
 		Description: "Show buttons component.",
-		Options:     []*discordgo.ApplicationCommandOption{},
+		Options:     []*discord.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyC(
 				minidis.ReplyProps{
 					Content: "Are you cool?",
-					Components: []discordgo.MessageComponent{
-						discordgo.ActionsRow{
-							Components: []discordgo.MessageComponent{
-								discordgo.Button{
+					Components: []discord.MessageComponent{
+						discord.ActionsRow{
+							Components: []discord.MessageComponent{
+								discord.Button{
 									// Label is what the user will see on the button.
 									Label: "Yes",
 									// Style provides coloring of the button. There are not so many styles tho.
-									Style: discordgo.SuccessButton,
+									Style: discord.SuccessButton,
 									// Disabled allows bot to disable some buttons for users.
 									Disabled: false,
 									// CustomID is a thing telling Discord which data to send when this button will be pressed.
 									CustomID: "fd_yes",
 								},
-								discordgo.Button{
+								discord.Button{
 									Label:    "No",
-									Style:    discordgo.DangerButton,
+									Style:    discord.DangerButton,
 									Disabled: false,
 									CustomID: "fd_no",
 								},
-								discordgo.Button{
+								discord.Button{
 									Label:    "I don't know",
-									Style:    discordgo.LinkButton,
+									Style:    discord.LinkButton,
 									Disabled: false,
 									// Link buttons don't require CustomID and do not trigger the gateway/HTTP event
 									URL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-									Emoji: &discordgo.ComponentEmoji{
+									Emoji: &discord.ComponentEmoji{
 										Name: "🤷",
 									},
 								},
@@ -75,20 +76,20 @@ func main() {
 			return c.ReplyC(
 				minidis.ReplyProps{
 					Content: "What is your favourite programming language?",
-					Components: []discordgo.MessageComponent{
-						discordgo.ActionsRow{
-							Components: []discordgo.MessageComponent{
-								discordgo.SelectMenu{
+					Components: []discord.MessageComponent{
+						discord.ActionsRow{
+							Components: []discord.MessageComponent{
+								discord.SelectMenu{
 									// Select menu, as other components, must have a customID, so we set it to this value.
 									CustomID:    "select",
 									Placeholder: "Choose your favorite programming language 👇",
-									Options: []discordgo.SelectMenuOption{
+									Options: []discord.SelectMenuOption{
 										{
 											Label: "Go",
 											// As with components, this things must have their own unique "id" to identify which is which.
 											// In this case such id is Value field.
 											Value: "go",
-											Emoji: &discordgo.ComponentEmoji{
+											Emoji: &discord.ComponentEmoji{
 												Name: "🦦",
 											},
 											// You can also make it a default option, but in this case we won't.
@@ -98,7 +99,7 @@ func main() {
 										{
 											Label: "JS",
 											Value: "js",
-											Emoji: &discordgo.ComponentEmoji{
+											Emoji: &discord.ComponentEmoji{
 												Name: "🟨",
 											},
 											Description: "JavaScript programming language",
@@ -106,7 +107,7 @@ func main() {
 										{
 											Label: "Python",
 											Value: "py",
-											Emoji: &discordgo.ComponentEmoji{
+											Emoji: &discord.ComponentEmoji{
 												Name: "🐍",
 											},
 											Description: "Python programming language",

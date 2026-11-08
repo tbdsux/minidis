@@ -1,8 +1,11 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
+)
 
-func (m *Minidis) executeComponentHandler(session *discordgo.Session, event *discordgo.Interaction) error {
+func (m *Minidis) executeComponentHandler(session *client.Session, event *discord.Interaction) error {
 	data := event.MessageComponentData()
 
 	slashContext := m.NewSlashContext(session, event, false)

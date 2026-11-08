@@ -1,12 +1,12 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import "github.com/tbdsux/minidis/discord"
 
 type ComponentContext struct {
-	Data discordgo.MessageComponentInteractionData
+	Data discord.MessageComponentInteractionData
 }
 
-func (m *Minidis) NewComponentContext(event *discordgo.Interaction) *ComponentContext {
+func (m *Minidis) NewComponentContext(event *discord.Interaction) *ComponentContext {
 	return &ComponentContext{
 		Data: event.MessageComponentData(),
 	}

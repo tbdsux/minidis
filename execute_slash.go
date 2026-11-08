@@ -1,10 +1,11 @@
 package minidis
 
 import (
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
-func (m *Minidis) executeSlash(s *discordgo.Session, i *discordgo.Interaction) (error, bool) {
+func (m *Minidis) executeSlash(s *client.Session, i *discord.Interaction) (error, bool) {
 	if cmd, ok := m.Commands[i.ApplicationCommandData().Name]; ok {
 		context := m.NewSlashContext(s, i, true)
 
@@ -12,11 +13,12 @@ func (m *Minidis) executeSlash(s *discordgo.Session, i *discordgo.Interaction) (
 			scmd := i.ApplicationCommandData().Options[0]
 
 			switch scmd.Type {
-			case discordgo.ApplicationCommandOptionSubCommandGroup:
+			case discord.ApplicationCommandOptionSubCommandGroup:
 				{
 					if len(scmd.Options) > 0 {
 						if subgroup, ok := cmd.subcommandGroups[scmd.Name]; ok {
 							if subgroupCmd, ok := subgroup.subcommands[scmd.Options[0].Name]; ok {
+								context.setOptions(scmd.Options[0].Options)
 
 								return subgroupCmd.Execute(context), true
 							}
@@ -26,10 +28,12 @@ func (m *Minidis) executeSlash(s *discordgo.Session, i *discordgo.Interaction) (
 					// it is a subcommand group break it here
 					break
 				}
-			case discordgo.ApplicationCommandOptionSubCommand:
+			case discord.ApplicationCommandOptionSubCommand:
 				{
-					if scmd, ok := cmd.subcommands[scmd.Name]; ok {
-						return scmd.Execute(context), true
+					if subcmd, ok := cmd.subcommands[scmd.Name]; ok {
+						context.setOptions(scmd.Options)
+
+						return subcmd.Execute(context), true
 					}
 
 					// it is a subcommand break it here

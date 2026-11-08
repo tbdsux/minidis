@@ -1,8 +1,8 @@
 # minidis
 
-Simple discord bot framework wrapper for [discordgo](https://github.com/bwmarrin/discordgo)
+Simple Discord bot framework for Go, built directly on the [Discord API](https://docs.discord.com/developers/intro).
 
-This just wraps functions and is based from the examples provided by [discordgo](https://github.com/bwmarrin/discordgo) and this is made in order to make its api more readable and easier to maintain.
+The `discord/client` package is its REST and Gateway client and `discord` holds the API types. Use `Session.Request` for endpoints without a typed method and `Session.OnRawEvent` for gateway events without a typed handler.
 
 ## Install
 
@@ -31,7 +31,8 @@ import (
     "os"
 
     "github.com/tbdsux/minidis"
-    "github.com/bwmarrin/discordgo"
+    "github.com/tbdsux/minidis/discord"
+    "github.com/tbdsux/minidis/discord/client"
 )
 
 func main() {
@@ -39,9 +40,9 @@ func main() {
     bot := minidis.New(os.Getenv("TOKEN"))
 
     // Set intents (not required when doing only slash commands)
-    bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
+    bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
-    bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+    bot.OnReady(func(s *client.Session, i *discord.Ready) {
         log.Println("Bot is ready!")
     })
 

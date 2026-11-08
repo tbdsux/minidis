@@ -8,17 +8,18 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 func main() {
 	guilds := strings.Split(os.Getenv("GUILD"), ",")
 	bot := minidis.New(os.Getenv("TOKEN"))
 
-	bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
+	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
-	bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+	bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 
@@ -26,9 +27,9 @@ func main() {
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Name:        "options",
 		Description: "Simple command with options.",
-		Options: []*discordgo.ApplicationCommandOption{
+		Options: []*discord.ApplicationCommandOption{
 			{
-				Type:        discordgo.ApplicationCommandOptionString,
+				Type:        discord.ApplicationCommandOptionString,
 				Name:        "name",
 				Description: "Your name,",
 				Required:    true,

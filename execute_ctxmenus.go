@@ -1,8 +1,11 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
+)
 
-func (m *Minidis) executeMessage(s *discordgo.Session, i *discordgo.Interaction) (error, bool) {
+func (m *Minidis) executeMessage(s *client.Session, i *discord.Interaction) (error, bool) {
 	command := i.ApplicationCommandData().Name
 
 	if handler, ok := m.MessageCommands[command]; ok {
@@ -16,7 +19,7 @@ func (m *Minidis) executeMessage(s *discordgo.Session, i *discordgo.Interaction)
 	return nil, false
 }
 
-func (m *Minidis) executeUser(s *discordgo.Session, i *discordgo.Interaction) (error, bool) {
+func (m *Minidis) executeUser(s *client.Session, i *discord.Interaction) (error, bool) {
 	command := i.ApplicationCommandData().Name
 
 	if handler, ok := m.UserCommands[command]; ok {

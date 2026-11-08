@@ -1,18 +1,21 @@
 package minidis
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
+)
 
 type MessageCommandContext struct {
-	Interaction *discordgo.Interaction
-	Session     *discordgo.Session
-	Message     *discordgo.Message
+	Interaction *discord.Interaction
+	Session     *client.Session
+	Message     *discord.Message
 }
 
 type UserCommandContext struct {
-	Interaction *discordgo.Interaction
-	Session     *discordgo.Session
-	Member      *discordgo.Member
-	User        *discordgo.User
+	Interaction *discord.Interaction
+	Session     *client.Session
+	Member      *discord.Member
+	User        *discord.User
 }
 
 func (m *MessageCommandContext) ReplyC(reply ReplyProps) error {

@@ -1,20 +1,20 @@
 package minidis
 
 import (
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
 )
 
 type SlashCommandProps struct {
 	Name        string // Name of the command
 	Description string // Description of the command
 
-	NameLocalizations        *map[discordgo.Locale]string
-	DescriptionLocalizations *map[discordgo.Locale]string
+	NameLocalizations        *map[discord.Locale]string
+	DescriptionLocalizations *map[discord.Locale]string
 
 	DefaultMemberPermissions int64
 	DmPermission             bool
 
-	Options          []*discordgo.ApplicationCommandOption
+	Options          []*discord.ApplicationCommandOption
 	Execute          func(c *SlashContext) error
 	subcommandGroups map[string]*SlashSubcommandGroupProps
 	subcommands      map[string]*SlashSubcommandProps
@@ -23,7 +23,7 @@ type SlashCommandProps struct {
 type SlashSubcommandProps struct {
 	Name        string
 	Description string
-	Options     []*discordgo.ApplicationCommandOption
+	Options     []*discord.ApplicationCommandOption
 	Execute     func(c *SlashContext) error
 }
 

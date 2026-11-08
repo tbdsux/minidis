@@ -3,7 +3,8 @@ package minidis
 import (
 	"errors"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 type ModalInteractionProps struct {
@@ -24,16 +25,16 @@ func (m *Minidis) AddCustomModalSubmitHandler(handler func(s *SlashContext, c *M
 }
 
 type ModalSubmitContext struct {
-	Data discordgo.ModalSubmitInteractionData
+	Data discord.ModalSubmitInteractionData
 }
 
-func (m *Minidis) NewModalContext(data discordgo.ModalSubmitInteractionData) *ModalSubmitContext {
+func (m *Minidis) NewModalContext(data discord.ModalSubmitInteractionData) *ModalSubmitContext {
 	return &ModalSubmitContext{
 		Data: data,
 	}
 }
 
-func (m *Minidis) executeModalSubmit(session *discordgo.Session, event *discordgo.Interaction) error {
+func (m *Minidis) executeModalSubmit(session *client.Session, event *discord.Interaction) error {
 	data := event.ModalSubmitData()
 
 	slashContext := m.NewSlashContext(session, event, false)

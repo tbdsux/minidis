@@ -9,8 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 func main() {
@@ -18,9 +19,9 @@ func main() {
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	// Set Intents
-	bot.SetIntents(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
+	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
-	bot.OnReady(func(s *discordgo.Session, i *discordgo.Ready) {
+	bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 
@@ -29,7 +30,7 @@ func main() {
 		Name:                     "ping",
 		Description:              "Simple ping command.",
 		DefaultMemberPermissions: 1 << 31,
-		Options:                  []*discordgo.ApplicationCommandOption{},
+		Options:                  []*discord.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyString(fmt.Sprintf("Hello **%s**, pong? Guild: %s", c.Author.Username, c.GuildId))
 		},
@@ -53,7 +54,7 @@ func main() {
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Name:        "responses",
 		Description: "Responses management.",
-		Options:     []*discordgo.ApplicationCommandOption{},
+		Options:     []*discord.ApplicationCommandOption{},
 		Execute: func(s *minidis.SlashContext) error {
 			if err := s.ReplyString("Hello! this message will be modified after 5 seconds..."); err != nil {
 				_, err = s.Followup("A problem has occured")

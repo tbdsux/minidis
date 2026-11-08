@@ -1,13 +1,14 @@
 package minidis
 
 import (
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 type FollowupContext struct {
-	message     *discordgo.Message
-	Interaction *discordgo.Interaction
-	Session     *discordgo.Session
+	message     *discord.Message
+	Interaction *discord.Interaction
+	Session     *client.Session
 	AppID       string
 }
 
@@ -20,7 +21,7 @@ func (f *FollowupContext) Edit(content string) error {
 
 // EditC is the full edit interaction component structure.
 func (f *FollowupContext) EditC(reply EditProps) error {
-	res := &discordgo.WebhookEdit{
+	res := &discord.WebhookEdit{
 		Content: &reply.Content,
 	}
 

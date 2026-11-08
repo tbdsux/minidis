@@ -1,38 +1,40 @@
 package minidis
 
 import (
-	"github.com/bwmarrin/discordgo"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 type SlashContext struct {
-	Interaction *discordgo.Interaction
-	Session     *discordgo.Session
+	Interaction *discord.Interaction
+	Session     *client.Session
 
 	AppID  string
-	Author *discordgo.User
-	Member *discordgo.Member // only filled when called in a guild
+	Author *discord.User
+	Member *discord.Member // only filled when called in a guild
 	IsDM   bool
-	Bot    *discordgo.User // this is the bot user
+	Bot    *discord.User // this is the bot user
 
 	Id          string
 	GuildId     string
-	GuildLocale *discordgo.Locale
-	Local       discordgo.Locale
+	GuildLocale *discord.Locale
+	Local       discord.Locale
 	ChannelId   string
 
-	// NOTE: this is empty if component is called
-	Options map[string]*discordgo.ApplicationCommandInteractionDataOption
+	// NOTE: this is empty if component is called.
+	// When a subcommand is called, these are the options of that subcommand.
+	Options map[string]*discord.ApplicationCommandInteractionDataOption
 }
 
 // Creates a new slash context for slash command interaction. This is called internally.
-func (m *Minidis) NewSlashContext(session *discordgo.Session, inter *discordgo.Interaction, isSlash bool) *SlashContext {
+func (m *Minidis) NewSlashContext(session *client.Session, inter *discord.Interaction, isSlash bool) *SlashContext {
 	context := &SlashContext{
 		Interaction: inter,
 		Session:     session,
 
-		AppID:   session.State.User.ID,
-		Options: map[string]*discordgo.ApplicationCommandInteractionDataOption{},
-		Bot:     session.State.User,
+		AppID:   inter.AppID,
+		Options: map[string]*discord.ApplicationCommandInteractionDataOption{},
+		Bot:     session.User(),
 
 		Id:          inter.ID,
 		GuildId:     inter.GuildID,
@@ -42,10 +44,7 @@ func (m *Minidis) NewSlashContext(session *discordgo.Session, inter *discordgo.I
 	}
 
 	if isSlash {
-		// parse options into a map for better accessibility
-		for _, v := range inter.ApplicationCommandData().Options {
-			context.Options[v.Name] = v
-		}
+		context.setOptions(inter.ApplicationCommandData().Options)
 	}
 
 	if inter.GuildID == "" {
@@ -61,6 +60,14 @@ func (m *Minidis) NewSlashContext(session *discordgo.Session, inter *discordgo.I
 	return context
 }
 
+// setOptions indexes options by name for better accessibility.
+func (s *SlashContext) setOptions(options []*discord.ApplicationCommandInteractionDataOption) {
+	s.Options = make(map[string]*discord.ApplicationCommandInteractionDataOption, len(options))
+	for _, v := range options {
+		s.Options[v.Name] = v
+	}
+}
+
 // SendText sends a string text as interaction response.
 func (s *SlashContext) ReplyString(content string) error {
 	// return errors.New("sample")
@@ -71,7 +78,7 @@ func (s *SlashContext) ReplyString(content string) error {
 }
 
 // Reply sends a string content with embeds if there is.
-func (s *SlashContext) Reply(content string, embeds ...*discordgo.MessageEmbed) error {
+func (s *SlashContext) Reply(content string, embeds ...*discord.MessageEmbed) error {
 	return s.ReplyC(ReplyProps{
 		Content: content,
 		Embeds:  embeds,
@@ -80,7 +87,7 @@ func (s *SlashContext) Reply(content string, embeds ...*discordgo.MessageEmbed) 
 
 // Reply sends a string content with embeds if there is. `Ephemeral` - the response message will only be seen
 // by the user who called it.
-func (s *SlashContext) ReplyEphemeral(content string, embeds ...*discordgo.MessageEmbed) error {
+func (s *SlashContext) ReplyEphemeral(content string, embeds ...*discord.MessageEmbed) error {
 	return s.ReplyC(ReplyProps{
 		Content:     content,
 		Embeds:      embeds,
@@ -90,11 +97,11 @@ func (s *SlashContext) ReplyEphemeral(content string, embeds ...*discordgo.Messa
 
 type ReplyProps struct {
 	Content         string
-	Embeds          []*discordgo.MessageEmbed
-	Components      []discordgo.MessageComponent
+	Embeds          []*discord.MessageEmbed
+	Components      []discord.MessageComponent
 	IsEphemeral     bool
-	Attachments     []*discordgo.File
-	AllowedMentions *discordgo.MessageAllowedMentions
+	Attachments     []*discord.File
+	AllowedMentions *discord.MessageAllowedMentions
 }
 
 // ReplyC is the full reply component structure.
@@ -107,13 +114,13 @@ func (s *SlashContext) ReplyC(reply ReplyProps) error {
 // This is considered as an interaction response, so you should not use the `Reply*` functions after.
 // - `ephemeral` -> only the user sees the loading state
 func (s *SlashContext) DeferReply(ephemeral bool) error {
-	res := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{},
+	res := &discord.InteractionResponse{
+		Type: discord.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discord.InteractionResponseData{},
 	}
 
 	if ephemeral {
-		res.Data.Flags = 1 << 6
+		res.Data.Flags = discord.MessageFlagsEphemeral
 	}
 
 	return s.Session.InteractionRespond(s.Interaction, res)
@@ -128,15 +135,15 @@ func (s *SlashContext) Edit(content string) error {
 
 type EditProps struct {
 	Content         string
-	Embeds          []*discordgo.MessageEmbed
-	Components      []discordgo.MessageComponent
-	Attachments     []*discordgo.File
-	AllowedMentions *discordgo.MessageAllowedMentions
+	Embeds          []*discord.MessageEmbed
+	Components      []discord.MessageComponent
+	Attachments     []*discord.File
+	AllowedMentions *discord.MessageAllowedMentions
 }
 
 // EditC is the full edit interaction component structure.
 func (s *SlashContext) EditC(reply EditProps) error {
-	res := &discordgo.WebhookEdit{
+	res := &discord.WebhookEdit{
 		Content: &reply.Content,
 	}
 
@@ -178,7 +185,7 @@ type FollowupProps ReplyProps
 
 // FollowupC is the full followup component structure.
 func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) {
-	res := &discordgo.WebhookParams{
+	res := &discord.WebhookParams{
 		Content: reply.Content,
 	}
 
@@ -195,7 +202,7 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	}
 
 	if reply.IsEphemeral {
-		res.Flags = 1 << 6
+		res.Flags = discord.MessageFlagsEphemeral
 	}
 
 	if reply.AllowedMentions != nil {
@@ -203,7 +210,7 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 	}
 
 	// send follup
-	message, err := s.Session.FollowupMessageCreate(s.Interaction, true, res)
+	message, err := s.Session.FollowupMessageCreate(s.Interaction, res)
 	if err != nil {
 		return nil, err
 	}
@@ -218,10 +225,10 @@ func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) 
 }
 
 // general function for sending replies back
-func replyFunc(session *discordgo.Session, interaction *discordgo.Interaction, reply ReplyProps) error {
-	res := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
+func replyFunc(session *client.Session, interaction *discord.Interaction, reply ReplyProps) error {
+	res := &discord.InteractionResponse{
+		Type: discord.InteractionResponseChannelMessageWithSource,
+		Data: &discord.InteractionResponseData{
 			Content: reply.Content,
 		},
 	}
@@ -239,7 +246,7 @@ func replyFunc(session *discordgo.Session, interaction *discordgo.Interaction, r
 	}
 
 	if reply.IsEphemeral {
-		res.Data.Flags = 1 << 6
+		res.Data.Flags = discord.MessageFlagsEphemeral
 	}
 
 	if reply.AllowedMentions != nil {
@@ -253,14 +260,14 @@ func replyFunc(session *discordgo.Session, interaction *discordgo.Interaction, r
 type ReplyModalProps struct {
 	Title      string
 	CustomID   string
-	Components []discordgo.MessageComponent
+	Components []discord.MessageComponent
 }
 
 // ReplyModal returns a modal component as InteractionResponse
 func (s *SlashContext) ReplyModal(reply ReplyModalProps) error {
-	res := &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseModal,
-		Data: &discordgo.InteractionResponseData{
+	res := &discord.InteractionResponse{
+		Type: discord.InteractionResponseModal,
+		Data: &discord.InteractionResponseData{
 			Title:      reply.Title,
 			CustomID:   reply.CustomID,
 			Components: reply.Components,
