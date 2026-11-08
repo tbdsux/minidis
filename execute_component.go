@@ -3,7 +3,7 @@ package minidis
 // routeComponent returns the handler for a component interaction, or nil if
 // none is set.
 func (m *Minidis) routeComponent(c *SlashContext) HandlerFunc {
-	componentContext := m.NewComponentContext(c.Interaction)
+	componentContext := m.NewComponentContext(c.Session, c.Interaction)
 	customID := componentContext.Data.CustomID
 
 	execute := m.CustomComponentHandler

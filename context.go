@@ -132,6 +132,8 @@ func (s *SlashContext) Edit(content string) error {
 	})
 }
 
+// EditProps changes a message. Nil Embeds or Components are left unchanged; an
+// empty non-nil slice clears them.
 type EditProps struct {
 	Content         string
 	Embeds          []*discord.MessageEmbed
@@ -140,30 +142,27 @@ type EditProps struct {
 	AllowedMentions *discord.MessageAllowedMentions
 }
 
+func (p EditProps) webhookEdit() *discord.WebhookEdit {
+	res := &discord.WebhookEdit{
+		Content:         &p.Content,
+		Files:           p.Attachments,
+		AllowedMentions: p.AllowedMentions,
+	}
+
+	if p.Embeds != nil {
+		res.Embeds = &p.Embeds
+	}
+
+	if p.Components != nil {
+		res.Components = &p.Components
+	}
+
+	return res
+}
+
 // EditC is the full edit interaction component structure.
 func (s *SlashContext) EditC(reply EditProps) error {
-	res := &discord.WebhookEdit{
-		Content: &reply.Content,
-	}
-
-	if len(reply.Embeds) > 0 {
-		res.Embeds = &reply.Embeds
-	}
-
-	if len(reply.Components) > 0 {
-		res.Components = &reply.Components
-	}
-
-	if len(reply.Attachments) > 0 {
-		res.Files = reply.Attachments
-	}
-
-	if reply.AllowedMentions != nil {
-		res.AllowedMentions = reply.AllowedMentions
-	}
-
-	// edit interaction response
-	_, err := s.Session.InteractionResponseEdit(s.Interaction, res)
+	_, err := s.Session.InteractionResponseEdit(s.Interaction, reply.webhookEdit())
 
 	return err
 }
