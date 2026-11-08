@@ -38,7 +38,7 @@ func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 	// parse user commands
 	for _, v := range m.UserCommands {
 		cmd := &discord.ApplicationCommand{
-			Name: v.Command,
+			Name: v.Name,
 			Type: discord.UserApplicationCommand,
 		}
 

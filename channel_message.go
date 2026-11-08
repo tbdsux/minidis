@@ -1,7 +1,7 @@
 package minidis
 
 import (
-	"log"
+	"runtime/debug"
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
@@ -30,16 +30,24 @@ func (m *Minidis) handleOnMessageCreate(s *client.Session, i *discord.MessageCre
 			Message:   i,
 		}
 
-		// Call the handler
-		if err := handler(ctx); err != nil {
-			// TODO: add extra error handler
-			log.Printf("failed to execute channel message handler for %s: %v\n", i.ChannelID, err)
-		}
+		m.runChannelHandler(ctx, handler)
 		return
 	}
 
 	if m.MessageCreateHandler != nil {
 		m.MessageCreateHandler(s, i)
+	}
+}
+
+func (m *Minidis) runChannelHandler(c *ChannelMessageContext, handler func(*ChannelMessageContext) error) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.handleChannelError(c, &PanicError{Value: r, Stack: debug.Stack()})
+		}
+	}()
+
+	if err := handler(c); err != nil {
+		m.handleChannelError(c, err)
 	}
 }
 

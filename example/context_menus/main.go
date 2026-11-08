@@ -36,7 +36,7 @@ func main() {
 
 	// User command
 	bot.AddUserCommand(&minidis.UserCommandProps{
-		Command: "get-user",
+		Name: "get-user",
 		Execute: func(c *minidis.UserCommandContext) error {
 
 			fmt.Println(c.Member)

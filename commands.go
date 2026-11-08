@@ -56,13 +56,13 @@ func (m *Minidis) AddMessageCommand(cmd *MessageCommandProps) {
 }
 
 type UserCommandProps struct {
-	Command string
+	Name    string
 	Execute func(c *UserCommandContext) error
 }
 
 // AddUserCommand adds a new user command.
 func (m *Minidis) AddUserCommand(cmd *UserCommandProps) {
-	m.UserCommands[cmd.Command] = cmd
+	m.UserCommands[cmd.Name] = cmd
 }
 
 // RegisterCommands is used for adding multiple already defined commands.

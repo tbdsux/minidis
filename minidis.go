@@ -1,6 +1,8 @@
 package minidis
 
 import (
+	"sync"
+
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
 )
@@ -23,6 +25,12 @@ type Minidis struct {
 
 	MessageCreateHandler   func(*client.Session, *discord.MessageCreate)
 	ChannelMessageHandlers map[string]func(*ChannelMessageContext) error
+
+	ErrorHandler               func(*SlashContext, error)
+	ChannelMessageErrorHandler func(*ChannelMessageContext, error)
+
+	middleware   []Middleware
+	registerOnce sync.Once
 }
 
 // Create a new Minidis instance.

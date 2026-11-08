@@ -153,7 +153,7 @@ func TestContextMenuCommands(t *testing.T) {
 		gotMessage = c.Message.Content
 		return nil
 	}})
-	bot.AddUserCommand(&UserCommandProps{Command: "u", Execute: func(c *UserCommandContext) error {
+	bot.AddUserCommand(&UserCommandProps{Name: "u", Execute: func(c *UserCommandContext) error {
 		gotUser = c.User.Username + "/" + c.Member.Nick
 		return nil
 	}})
@@ -289,7 +289,7 @@ func registerAll(bot *Minidis) {
 		AddSubcommand(&SlashSubcommandProps{Name: "nested", Description: "n"})
 
 	bot.AddMessageCommand(&MessageCommandProps{Name: "msg"})
-	bot.AddUserCommand(&UserCommandProps{Command: "usr"})
+	bot.AddUserCommand(&UserCommandProps{Name: "usr"})
 }
 
 func TestSyncGlobalCommands(t *testing.T) {
@@ -480,6 +480,11 @@ func TestEndToEnd(t *testing.T) {
 	bot := New("token")
 	bot.Session.BaseURL = srv.URL
 
+	// Repeated registration must not run handlers twice; the check for an extra
+	// request at the end of this test would catch it.
+	bot.Run()
+	bot.Run()
+
 	bot.AddCommand(&SlashCommandProps{Name: "ping", Execute: func(c *SlashContext) error {
 		if c.Bot.ID != "bot" {
 			t.Errorf("bot user = %+v", c.Bot)
@@ -500,7 +505,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("AppID = %q", bot.AppID)
 	}
 
-	bot.Run()
 	close(release)
 
 	got := map[string]map[string]any{}

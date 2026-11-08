@@ -1,10 +1,9 @@
 package minidis
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/tbdsux/minidis/discord"
-	"github.com/tbdsux/minidis/discord/client"
 )
 
 type ModalInteractionProps struct {
@@ -34,19 +33,21 @@ func (m *Minidis) NewModalContext(data discord.ModalSubmitInteractionData) *Moda
 	}
 }
 
-func (m *Minidis) executeModalSubmit(session *client.Session, event *discord.Interaction) error {
-	data := event.ModalSubmitData()
+func (m *Minidis) routeModalSubmit(c *SlashContext) HandlerFunc {
+	modalContext := m.NewModalContext(c.Interaction.ModalSubmitData())
+	customID := modalContext.Data.CustomID
 
-	slashContext := m.NewSlashContext(session, event, false)
-	modalContext := m.NewModalContext(data)
+	execute := m.CustomModalSubmitHandler
 
-	if handler, ok := m.ModalSubmitHandlers[data.CustomID]; ok {
-		return handler.Execute(slashContext, modalContext)
+	if handler, ok := m.ModalSubmitHandlers[customID]; ok {
+		execute = handler.Execute
 	}
 
-	if m.CustomModalSubmitHandler != nil {
-		return m.CustomModalSubmitHandler(slashContext, modalContext)
+	if execute == nil {
+		return failWith(fmt.Errorf("%w: modal %q", ErrNoHandler, customID))
 	}
 
-	return errors.New("no modal submit handler defined for custom id: " + data.CustomID)
+	return func(c *SlashContext) error {
+		return execute(c, modalContext)
+	}
 }

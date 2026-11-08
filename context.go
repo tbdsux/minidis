@@ -43,18 +43,17 @@ func (m *Minidis) NewSlashContext(session *client.Session, inter *discord.Intera
 		ChannelId:   inter.ChannelID,
 	}
 
-	if isSlash {
-		context.setOptions(inter.ApplicationCommandData().Options)
+	if data, ok := inter.Data.(discord.ApplicationCommandInteractionData); ok && isSlash {
+		context.setOptions(data.Options)
 	}
 
-	if inter.GuildID == "" {
-		// if dm
-		context.IsDM = true
-		context.Author = inter.User
-	} else {
-		context.IsDM = false
+	context.IsDM = inter.GuildID == ""
+	context.Member = inter.Member
+
+	if inter.Member != nil {
 		context.Author = inter.Member.User
-		context.Member = inter.Member
+	} else {
+		context.Author = inter.User
 	}
 
 	return context
