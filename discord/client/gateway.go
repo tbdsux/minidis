@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ const (
 	opDispatch       = 0
 	opHeartbeat      = 1
 	opIdentify       = 2
+	opPresenceUpdate = 3
 	opResume         = 6
 	opReconnect      = 7
 	opInvalidSession = 9
@@ -38,6 +40,7 @@ var (
 	identifyInterval   = 5 * time.Second // one Identify per 5s at max_concurrency 1
 	minReconnectDelay  = time.Second
 	maxReconnectDelay  = time.Minute
+	closeDrainTimeout  = 10 * time.Second
 )
 
 // ErrAlreadyOpen is returned by Open if the session has not been closed.
@@ -96,6 +99,7 @@ func (s *Session) Open() error {
 	}
 
 	s.gatewayURL = info.URL
+	s.running = &sync.WaitGroup{}
 
 	opened := make(chan error, 1)
 	done := make(chan struct{})
@@ -118,8 +122,20 @@ func (s *Session) Open() error {
 	return nil
 }
 
-// Close disconnects from the Gateway and ends the session.
+// Close disconnects from the Gateway, ends the session, and gives running
+// handlers up to 10 seconds to finish. Use Shutdown to choose how long to wait.
 func (s *Session) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), closeDrainTimeout)
+	defer cancel()
+
+	return s.Shutdown(ctx)
+}
+
+// Shutdown disconnects from the Gateway, ends the session, and waits for
+// running handlers to finish or for ctx to end, returning ctx's error in that
+// case. Calling it from a handler waits for that handler too, so it would use
+// up the whole of ctx.
+func (s *Session) Shutdown(ctx context.Context) error {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 
@@ -133,6 +149,50 @@ func (s *Session) Close() error {
 	s.cancel, s.done = nil, nil
 	s.resetSession()
 
+	// No new handlers can start now that the gateway goroutine has stopped.
+	// yagni: this goroutine outlives ctx until a stuck handler returns.
+	drained := make(chan struct{})
+	go func(running *sync.WaitGroup) {
+		running.Wait()
+		close(drained)
+	}(s.running)
+
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("discord: handlers still running: %w", ctx.Err())
+	}
+}
+
+// UpdatePresence sets the bot's status and activities. It may be called at any
+// time; before the connection is ready, and after a reconnect, the presence is
+// applied as soon as the session is ready.
+func (s *Session) UpdatePresence(p *discord.PresenceUpdate) error {
+	update := *p
+	if update.Status == "" {
+		update.Status = discord.StatusOnline
+	}
+	if update.Activities == nil {
+		update.Activities = []*discord.Activity{} // Discord requires an array
+	}
+
+	s.presence.Store(&update)
+
+	if c := s.conn.Load(); c != nil {
+		return c.send(opPresenceUpdate, &update)
+	}
+	return nil
+}
+
+// markConnected makes c available to UpdatePresence and applies the presence,
+// which covers any update made while there was no connection.
+func (s *Session) markConnected(c *gatewayConn) error {
+	s.conn.Store(c)
+
+	if p := s.presence.Load(); p != nil {
+		return c.send(opPresenceUpdate, p)
+	}
 	return nil
 }
 
@@ -373,6 +433,7 @@ func (s *Session) runConnection(ctx context.Context, onReady func()) (connOutcom
 
 	conn := &gatewayConn{ws: ws}
 	conn.acked.Store(true)
+	defer s.conn.Store(nil)
 
 	connCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -462,8 +523,14 @@ func (s *Session) runConnection(ctx context.Context, onReady func()) (connOutcom
 					s.appID.Store(&id)
 				}
 
+				if err := s.markConnected(conn); err != nil {
+					return reconnect, err
+				}
 				onReady()
 			case "RESUMED":
+				if err := s.markConnected(conn); err != nil {
+					return reconnect, err
+				}
 				onReady()
 			}
 
@@ -497,40 +564,69 @@ func (s *Session) dispatch(event string, data json.RawMessage) {
 	defer s.handlersMu.RUnlock()
 
 	for _, h := range s.onRawEvents {
-		go h(s, event, data)
+		s.spawn(event, func() { h(s, event, data) })
 	}
 
 	switch event {
 	case "READY":
-		if len(s.onReady) > 0 {
-			ready := &discord.Ready{}
-			if decodeEvent(event, data, ready) {
-				for _, h := range s.onReady {
-					go h(s, ready)
-				}
-			}
-		}
-
+		deliver(s, event, data, s.onReady)
 	case "MESSAGE_CREATE":
-		if len(s.onMessage) > 0 {
-			message := &discord.Message{}
-			if decodeEvent(event, data, message) {
-				for _, h := range s.onMessage {
-					go h(s, &discord.MessageCreate{Message: message})
-				}
-			}
-		}
+		deliver(s, event, data, s.onMessage)
+	case "MESSAGE_UPDATE":
+		deliver(s, event, data, s.onMessageUpdate)
+	case "MESSAGE_DELETE":
+		deliver(s, event, data, s.onMessageDelete)
+	case "MESSAGE_REACTION_ADD":
+		deliver(s, event, data, s.onReactionAdd)
+	case "GUILD_CREATE":
+		deliver(s, event, data, s.onGuildCreate)
+	case "GUILD_MEMBER_ADD":
+		deliver(s, event, data, s.onGuildMemberAdd)
+	case "GUILD_MEMBER_REMOVE":
+		deliver(s, event, data, s.onGuildMemberGone)
 
 	case "INTERACTION_CREATE":
+		// InteractionCreate would promote the UnmarshalJSON of its nil embedded
+		// pointer, so the Interaction is decoded on its own.
 		if len(s.onInteract) > 0 {
 			interaction := &discord.Interaction{}
 			if decodeEvent(event, data, interaction) {
 				for _, h := range s.onInteract {
-					go h(s, &discord.InteractionCreate{Interaction: interaction})
+					s.spawn(event, func() { h(s, &discord.InteractionCreate{Interaction: interaction}) })
 				}
 			}
 		}
 	}
+}
+
+// deliver decodes an event into a T and starts its handlers.
+func deliver[T any](s *Session, event string, data json.RawMessage, handlers []func(*Session, *T)) {
+	if len(handlers) == 0 {
+		return
+	}
+
+	v := new(T)
+	if !decodeEvent(event, data, v) {
+		return
+	}
+
+	for _, h := range handlers {
+		s.spawn(event, func() { h(s, v) })
+	}
+}
+
+// spawn runs a handler in its own goroutine, tracked for Shutdown. A panic stops
+// only that handler. This is the single place handler goroutines start, so it
+// covers handlers registered directly on the Session as well as the framework's.
+func (s *Session) spawn(event string, h func()) {
+	s.running.Go(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("discord: panic in %s handler: %v\n%s", event, r, debug.Stack())
+			}
+		}()
+		h()
+	})
 }
 
 func decodeEvent(event string, data json.RawMessage, v any) bool {

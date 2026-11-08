@@ -1,13 +1,222 @@
 package client
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tbdsux/minidis/discord"
 )
+
+func messageEvent(id string) map[string]any {
+	return map[string]any{"id": id, "channel_id": "c1", "content": id, "author": map[string]string{"id": "7"}}
+}
+
+func TestHandlerPanicDoesNotStopTheSession(t *testing.T) {
+	survived := make(chan struct{})
+
+	s, _ := newFakeGateway(t, func(c *fakeConn) {
+		c.hello(60000)
+		c.read(opIdentify)
+		c.ready(1)
+		c.send(opDispatch, messageEvent("boom"), 2, "MESSAGE_CREATE")
+		c.send(opDispatch, messageEvent("fine"), 3, "MESSAGE_CREATE")
+		c.waitClosed()
+	})
+
+	s.OnMessageCreate(func(_ *Session, m *discord.MessageCreate) {
+		if m.Content == "boom" {
+			panic("handler bug")
+		}
+		close(survived)
+	})
+
+	if err := s.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	waitFor(t, survived, "the event after the panic")
+}
+
+func TestShutdownWaitsForHandlers(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+
+	s, _ := newFakeGateway(t, func(c *fakeConn) {
+		c.hello(60000)
+		c.read(opIdentify)
+		c.ready(1)
+		c.send(opDispatch, messageEvent("slow"), 2, "MESSAGE_CREATE")
+		c.waitClosed()
+		close(release) // the disconnect happens before the drain
+	})
+
+	var finished atomic.Bool
+	s.OnMessageCreate(func(*Session, *discord.MessageCreate) {
+		close(started)
+		<-release
+		finished.Store(true)
+	})
+
+	if err := s.Open(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, started, "the handler")
+
+	if err := s.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !finished.Load() {
+		t.Error("Shutdown returned before the handler finished")
+	}
+}
+
+func TestShutdownStopsWaitingWhenContextEnds(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+
+	s, _ := newFakeGateway(t, func(c *fakeConn) {
+		c.hello(60000)
+		c.read(opIdentify)
+		c.ready(1)
+		c.send(opDispatch, messageEvent("stuck"), 2, "MESSAGE_CREATE")
+		c.waitClosed()
+	})
+
+	s.OnMessageCreate(func(*Session, *discord.MessageCreate) {
+		close(started)
+		<-release
+	})
+
+	if err := s.Open(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, started, "the handler")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := s.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("Shutdown = %v", err)
+	}
+}
+
+func decodePresence(t *testing.T, p gatewayPayload) discord.PresenceUpdate {
+	t.Helper()
+
+	var got discord.PresenceUpdate
+	if err := json.Unmarshal(p.D, &got); err != nil {
+		t.Errorf("presence %s: %v", p.D, err)
+	}
+	return got
+}
+
+func TestPresenceIsSentAndSurvivesReconnect(t *testing.T) {
+	updated, resumed := make(chan struct{}), make(chan struct{})
+
+	s, _ := newFakeGateway(t,
+		func(c *fakeConn) {
+			c.hello(60000)
+			c.read(opIdentify)
+			c.ready(1)
+
+			if got := decodePresence(t, c.read(opPresenceUpdate)); got.Status != discord.StatusDND || got.Activities[0].Name != "chess" {
+				t.Errorf("initial presence = %+v", got)
+			}
+
+			p := c.read(opPresenceUpdate)
+			if got := decodePresence(t, p); got.Status != discord.StatusOnline || got.Activities == nil {
+				t.Errorf("updated presence = %s (activities must be an array)", p.D)
+			}
+			close(updated)
+
+			c.closeWith(4000)
+		},
+		func(c *fakeConn) {
+			c.hello(60000)
+			c.read(opResume)
+			c.send(opDispatch, map[string]any{}, 2, "RESUMED")
+
+			if got := decodePresence(t, c.read(opPresenceUpdate)); got.Status != discord.StatusOnline {
+				t.Errorf("presence after resume = %+v", got)
+			}
+			close(resumed)
+			c.waitClosed()
+		},
+	)
+
+	err := s.UpdatePresence(&discord.PresenceUpdate{
+		Status:     discord.StatusDND,
+		Activities: []*discord.Activity{{Name: "chess", Type: discord.ActivityPlaying}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.UpdatePresence(&discord.PresenceUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, updated, "the presence update")
+	waitFor(t, resumed, "the presence after resuming")
+}
+
+func TestTypedEvents(t *testing.T) {
+	seen := make(chan string, 6)
+
+	s, _ := newFakeGateway(t, func(c *fakeConn) {
+		c.hello(60000)
+		c.read(opIdentify)
+		c.ready(1)
+		c.send(opDispatch, map[string]any{"id": "m1", "channel_id": "c1", "content": "new"}, 2, "MESSAGE_UPDATE")
+		c.send(opDispatch, map[string]any{"id": "m2", "channel_id": "c1"}, 3, "MESSAGE_DELETE")
+		c.send(opDispatch, map[string]any{"user_id": "u1", "channel_id": "c1", "message_id": "m3", "emoji": map[string]any{"id": nil, "name": "ok"}}, 4, "MESSAGE_REACTION_ADD")
+		c.send(opDispatch, map[string]any{"id": "g1", "name": "guild", "member_count": 3, "joined_at": nil}, 5, "GUILD_CREATE")
+		c.send(opDispatch, map[string]any{"guild_id": "g1", "nick": "n", "user": map[string]string{"id": "u1"}}, 6, "GUILD_MEMBER_ADD")
+		c.send(opDispatch, map[string]any{"guild_id": "g1", "user": map[string]string{"id": "u2"}}, 7, "GUILD_MEMBER_REMOVE")
+		c.waitClosed()
+	})
+
+	s.OnMessageUpdate(func(_ *Session, e *discord.MessageUpdate) { seen <- "update " + e.Content })
+	s.OnMessageDelete(func(_ *Session, e *discord.MessageDelete) { seen <- "delete " + e.ID })
+	s.OnMessageReactionAdd(func(_ *Session, e *discord.MessageReactionAdd) { seen <- "react " + e.Emoji.Name })
+	s.OnGuildCreate(func(_ *Session, e *discord.GuildCreate) { seen <- "guild " + e.Name })
+	s.OnGuildMemberAdd(func(_ *Session, e *discord.GuildMemberAdd) {
+		seen <- "join " + e.GuildID + " " + e.User.ID + " " + e.Nick
+	})
+	s.OnGuildMemberRemove(func(_ *Session, e *discord.GuildMemberRemove) { seen <- "leave " + e.User.ID })
+
+	if err := s.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	done := make(chan struct{})
+	got := map[string]bool{}
+	go func() {
+		defer close(done)
+		for range 6 {
+			got[<-seen] = true
+		}
+	}()
+	waitFor(t, done, "typed events")
+
+	for _, want := range []string{"update new", "delete m2", "react ok", "guild guild", "join g1 u1 n", "leave u2"} {
+		if !got[want] {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+}
 
 func TestResourceEndpoints(t *testing.T) {
 	tests := []struct {

@@ -400,6 +400,44 @@ type GuildBan struct {
 	User   *User  `json:"user"`
 }
 
+// Status is a bot's online status.
+type Status string
+
+const (
+	StatusOnline    Status = "online"
+	StatusIdle      Status = "idle"
+	StatusDND       Status = "dnd"
+	StatusInvisible Status = "invisible"
+)
+
+// ActivityType is the kind of an Activity.
+type ActivityType int
+
+const (
+	ActivityPlaying   ActivityType = 0
+	ActivityStreaming ActivityType = 1
+	ActivityListening ActivityType = 2
+	ActivityWatching  ActivityType = 3
+	ActivityCustom    ActivityType = 4 // set the text in State
+	ActivityCompeting ActivityType = 5
+)
+
+// Activity is what a bot is shown to be doing.
+type Activity struct {
+	Name  string       `json:"name"`
+	Type  ActivityType `json:"type"`
+	URL   string       `json:"url,omitempty"`   // streaming only
+	State string       `json:"state,omitempty"` // the text of a custom status
+}
+
+// PresenceUpdate is the body of the gateway's Update Presence command.
+type PresenceUpdate struct {
+	Since      *int64      `json:"since"`
+	Activities []*Activity `json:"activities"`
+	Status     Status      `json:"status"`
+	AFK        bool        `json:"afk"`
+}
+
 // UnavailableGuild is a guild that has been announced but not yet delivered.
 type UnavailableGuild struct {
 	ID          string `json:"id"`
@@ -431,6 +469,49 @@ type MessageCreate struct {
 // InteractionCreate is the INTERACTION_CREATE gateway event.
 type InteractionCreate struct {
 	*Interaction
+}
+
+// GuildCreate is the GUILD_CREATE gateway event.
+type GuildCreate struct {
+	*Guild
+}
+
+// GuildMemberAdd is the GUILD_MEMBER_ADD gateway event. It needs the privileged
+// IntentsGuildMembers intent.
+type GuildMemberAdd struct {
+	*Member
+	GuildID string `json:"guild_id"`
+}
+
+// GuildMemberRemove is the GUILD_MEMBER_REMOVE gateway event. It needs the
+// privileged IntentsGuildMembers intent.
+type GuildMemberRemove struct {
+	GuildID string `json:"guild_id"`
+	User    *User  `json:"user"`
+}
+
+// MessageUpdate is the MESSAGE_UPDATE gateway event.
+type MessageUpdate struct {
+	*Message
+}
+
+// MessageDelete is the MESSAGE_DELETE gateway event.
+type MessageDelete struct {
+	ID        string `json:"id"`
+	ChannelID string `json:"channel_id"`
+	GuildID   string `json:"guild_id"`
+}
+
+// MessageReactionAdd is the MESSAGE_REACTION_ADD gateway event. Member is only
+// set in guilds.
+type MessageReactionAdd struct {
+	UserID          string  `json:"user_id"`
+	ChannelID       string  `json:"channel_id"`
+	MessageID       string  `json:"message_id"`
+	GuildID         string  `json:"guild_id"`
+	MessageAuthorID string  `json:"message_author_id"`
+	Member          *Member `json:"member"`
+	Emoji           *Emoji  `json:"emoji"`
 }
 
 // jsonNull reports whether raw is absent or a JSON null.

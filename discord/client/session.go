@@ -43,18 +43,31 @@ type Session struct {
 
 	limiter *rateLimiter
 
-	handlersMu  sync.RWMutex
-	onReady     []func(*Session, *discord.Ready)
-	onMessage   []func(*Session, *discord.MessageCreate)
-	onInteract  []func(*Session, *discord.InteractionCreate)
-	onRawEvents []func(*Session, string, json.RawMessage)
+	handlersMu        sync.RWMutex
+	onReady           []func(*Session, *discord.Ready)
+	onMessage         []func(*Session, *discord.MessageCreate)
+	onMessageUpdate   []func(*Session, *discord.MessageUpdate)
+	onMessageDelete   []func(*Session, *discord.MessageDelete)
+	onReactionAdd     []func(*Session, *discord.MessageReactionAdd)
+	onGuildCreate     []func(*Session, *discord.GuildCreate)
+	onGuildMemberAdd  []func(*Session, *discord.GuildMemberAdd)
+	onGuildMemberGone []func(*Session, *discord.GuildMemberRemove)
+	onInteract        []func(*Session, *discord.InteractionCreate)
+	onRawEvents       []func(*Session, string, json.RawMessage)
 
 	user  atomic.Pointer[discord.User]
 	appID atomic.Pointer[string]
 
-	lifecycle sync.Mutex // serializes Open and Close
+	conn     atomic.Pointer[gatewayConn] // nil until READY or RESUMED
+	presence atomic.Pointer[discord.PresenceUpdate]
+
+	lifecycle sync.Mutex // serializes Open, Close and Shutdown
 	cancel    context.CancelFunc
 	done      chan struct{}
+
+	// running tracks the handlers started since the last Open. It is replaced
+	// by Open, before the gateway goroutine that uses it starts.
+	running *sync.WaitGroup
 
 	// Owned by the gateway goroutine while it runs.
 	gatewayURL   string
@@ -75,6 +88,7 @@ func New(token string) *Session {
 		UserAgent:  fmt.Sprintf("DiscordBot (%s, %s)", libraryURL, LibraryVersion),
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 		limiter:    newRateLimiter(),
+		running:    &sync.WaitGroup{},
 	}
 }
 
@@ -91,34 +105,66 @@ func (s *Session) ApplicationID() string {
 	return ""
 }
 
+// addHandler appends h to one of the session's handler lists.
+func addHandler[H any](s *Session, list *[]H, h H) {
+	s.handlersMu.Lock()
+	defer s.handlersMu.Unlock()
+	*list = append(*list, h)
+}
+
 // Handlers each run in their own goroutine, so a slow handler does not block
-// the gateway, and they may run concurrently.
+// the gateway, and they may run concurrently. A handler that panics is logged
+// and does not stop the bot.
 
 // OnReady registers a handler for the READY event.
 func (s *Session) OnReady(h func(*Session, *discord.Ready)) {
-	s.handlersMu.Lock()
-	defer s.handlersMu.Unlock()
-	s.onReady = append(s.onReady, h)
+	addHandler(s, &s.onReady, h)
 }
 
 // OnMessageCreate registers a handler for the MESSAGE_CREATE event.
 func (s *Session) OnMessageCreate(h func(*Session, *discord.MessageCreate)) {
-	s.handlersMu.Lock()
-	defer s.handlersMu.Unlock()
-	s.onMessage = append(s.onMessage, h)
+	addHandler(s, &s.onMessage, h)
+}
+
+// OnMessageUpdate registers a handler for the MESSAGE_UPDATE event.
+func (s *Session) OnMessageUpdate(h func(*Session, *discord.MessageUpdate)) {
+	addHandler(s, &s.onMessageUpdate, h)
+}
+
+// OnMessageDelete registers a handler for the MESSAGE_DELETE event.
+func (s *Session) OnMessageDelete(h func(*Session, *discord.MessageDelete)) {
+	addHandler(s, &s.onMessageDelete, h)
+}
+
+// OnMessageReactionAdd registers a handler for the MESSAGE_REACTION_ADD event.
+func (s *Session) OnMessageReactionAdd(h func(*Session, *discord.MessageReactionAdd)) {
+	addHandler(s, &s.onReactionAdd, h)
+}
+
+// OnGuildCreate registers a handler for the GUILD_CREATE event.
+func (s *Session) OnGuildCreate(h func(*Session, *discord.GuildCreate)) {
+	addHandler(s, &s.onGuildCreate, h)
+}
+
+// OnGuildMemberAdd registers a handler for the GUILD_MEMBER_ADD event, which
+// needs the privileged IntentsGuildMembers intent.
+func (s *Session) OnGuildMemberAdd(h func(*Session, *discord.GuildMemberAdd)) {
+	addHandler(s, &s.onGuildMemberAdd, h)
+}
+
+// OnGuildMemberRemove registers a handler for the GUILD_MEMBER_REMOVE event,
+// which needs the privileged IntentsGuildMembers intent.
+func (s *Session) OnGuildMemberRemove(h func(*Session, *discord.GuildMemberRemove)) {
+	addHandler(s, &s.onGuildMemberGone, h)
 }
 
 // OnInteractionCreate registers a handler for the INTERACTION_CREATE event.
 func (s *Session) OnInteractionCreate(h func(*Session, *discord.InteractionCreate)) {
-	s.handlersMu.Lock()
-	defer s.handlersMu.Unlock()
-	s.onInteract = append(s.onInteract, h)
+	addHandler(s, &s.onInteract, h)
 }
 
 // OnRawEvent registers a handler that receives every dispatch event as its
 // name, such as "GUILD_CREATE", and undecoded JSON payload.
 func (s *Session) OnRawEvent(h func(s *Session, event string, data json.RawMessage)) {
-	s.handlersMu.Lock()
-	defer s.handlersMu.Unlock()
-	s.onRawEvents = append(s.onRawEvents, h)
+	addHandler(s, &s.onRawEvents, h)
 }
