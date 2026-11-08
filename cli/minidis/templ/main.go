@@ -23,18 +23,11 @@ func main() {
 		return
 	}
 
-	// Re-sync commands
-	if err := commands.Bot.ClearCommands(lib.GUILDS...); err != nil {
-		log.Fatalln("Failed to clear commands:", err)
-		return
-	}
+	// Register the commands. This replaces any registered before.
 	if err := commands.Bot.SyncCommands(lib.GUILDS...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
 		return
 	}
-
-	// Run the bot
-	commands.Bot.Run()
 
 	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")

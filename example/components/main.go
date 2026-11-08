@@ -128,11 +128,11 @@ func main() {
 			switch c.Data.Values[0] {
 			case "go":
 				{
-					return s.ReplyString("This is the way.")
+					return c.Update("This is the way.")
 				}
 			default:
 				{
-					return s.ReplyString("It is not the way to go.")
+					return c.Update("It is not the way to go.")
 				}
 
 			}
@@ -142,14 +142,22 @@ func main() {
 	bot.AddComponentHandler(&minidis.ComponentInteractionProps{
 		ID: "fd_yes",
 		Execute: func(s *minidis.SlashContext, c *minidis.ComponentContext) error {
-			return s.ReplyString("Wow Nice!")
+			// An empty, non-nil slice removes the buttons from the message
+			return c.UpdateC(minidis.EditProps{
+				Content:    "Wow Nice!",
+				Components: []discord.MessageComponent{},
+			})
 		},
 	})
 
 	bot.AddComponentHandler(&minidis.ComponentInteractionProps{
 		ID: "fd_no",
 		Execute: func(s *minidis.SlashContext, c *minidis.ComponentContext) error {
-			return s.Reply("Ohhh why???")
+			// An empty, non-nil slice removes the buttons from the message
+			return c.UpdateC(minidis.EditProps{
+				Content:    "Ohhh why???",
+				Components: []discord.MessageComponent{},
+			})
 		},
 	})
 
@@ -159,18 +167,11 @@ func main() {
 		return
 	}
 
-	// Re-sync commands
-	if err := bot.ClearCommands(guilds...); err != nil {
-		log.Fatalln("Failed to clear commands:", err)
-		return
-	}
+	// Register the commands. This replaces any registered before.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
 		return
 	}
-
-	// Run the bot
-	bot.Run()
 
 	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
