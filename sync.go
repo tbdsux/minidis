@@ -52,7 +52,7 @@ func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 			Description:              v.Description,
 			NameLocalizations:        v.NameLocalizations,
 			DescriptionLocalizations: v.DescriptionLocalizations,
-			DefaultMemberPermissions: &v.DefaultMemberPermissions,
+			DefaultMemberPermissions: v.DefaultMemberPermissions,
 			Options:                  v.Options,
 		}
 

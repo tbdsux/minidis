@@ -11,7 +11,9 @@ type SlashCommandProps struct {
 	NameLocalizations        *map[discord.Locale]string
 	DescriptionLocalizations *map[discord.Locale]string
 
-	DefaultMemberPermissions int64
+	// DefaultMemberPermissions is the permission bits a member needs. Nil lets
+	// everyone use the command; discord.Int64(0) makes it admin-only.
+	DefaultMemberPermissions *int64
 	DmPermission             bool
 
 	Options          []*discord.ApplicationCommandOption

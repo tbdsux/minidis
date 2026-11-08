@@ -279,8 +279,9 @@ func commandByName(t *testing.T, raw []byte) map[string]map[string]any {
 func registerAll(bot *Minidis) {
 	exec := func(*SlashContext) error { return nil }
 
-	bot.AddCommand(&SlashCommandProps{Name: "admin", Description: "d", Execute: exec})
-	bot.AddCommand(&SlashCommandProps{Name: "open", Description: "d", DefaultMemberPermissions: 1 << 31, DmPermission: true, Execute: exec})
+	bot.AddCommand(&SlashCommandProps{Name: "admin", Description: "d", DefaultMemberPermissions: discord.Int64(0), Execute: exec})
+	bot.AddCommand(&SlashCommandProps{Name: "open", Description: "d", DefaultMemberPermissions: discord.Int64(1 << 31), DmPermission: true, Execute: exec})
+	bot.AddCommand(&SlashCommandProps{Name: "everyone", Description: "d", Execute: exec})
 
 	parent := bot.AddCommand(&SlashCommandProps{Name: "parent", Description: "d"})
 	parent.AddSubcommand(&SlashSubcommandProps{Name: "sub", Description: "s"})
@@ -311,6 +312,9 @@ func TestSyncGlobalCommands(t *testing.T) {
 	}
 	if c := cmds["open"]; c["default_member_permissions"] != "2147483648" || len(c["contexts"].([]any)) != 2 {
 		t.Errorf("open = %v", c)
+	}
+	if _, sent := cmds["everyone"]["default_member_permissions"]; sent {
+		t.Errorf("unset permissions must be left out, or the command is admin-only: %v", cmds["everyone"])
 	}
 	if _, deprecated := cmds["open"]["dm_permission"]; deprecated {
 		t.Error("dm_permission is deprecated and should not be sent")

@@ -29,7 +29,7 @@ func main() {
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Name:                     "ping",
 		Description:              "Simple ping command.",
-		DefaultMemberPermissions: 1 << 31,
+		DefaultMemberPermissions: discord.Int64(1 << 31),
 		Options:                  []*discord.ApplicationCommandOption{},
 		Execute: func(c *minidis.SlashContext) error {
 			return c.ReplyString(fmt.Sprintf("Hello **%s**, pong? Guild: %s", c.Author.Username, c.GuildId))
@@ -40,7 +40,7 @@ func main() {
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Name:                     "defer",
 		Description:              "Deferred reply.",
-		DefaultMemberPermissions: 1 << 31,
+		DefaultMemberPermissions: discord.Int64(1 << 31),
 		Execute: func(c *minidis.SlashContext) error {
 			c.DeferReply(true)
 
@@ -76,7 +76,7 @@ func main() {
 	bot.AddCommand(&minidis.SlashCommandProps{
 		Name:                     "admin-only",
 		Description:              "Admin only command",
-		DefaultMemberPermissions: 0, // 0 = admin only command
+		DefaultMemberPermissions: discord.Int64(0), // 0 = admin only command
 		Execute: func(s *minidis.SlashContext) error {
 			return s.ReplyString("You should only see this reply if you are an admin!")
 		},
