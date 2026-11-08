@@ -12,8 +12,10 @@ type ModalInteractionProps struct {
 }
 
 // AddModalSubmitHandler adds a new modal submit interaction handler for a specific custom id.
+// The id can contain captures, as described on AddComponentHandler.
 func (m *Minidis) AddModalSubmitHandler(mi *ModalInteractionProps) {
 	m.ModalSubmitHandlers[mi.ID] = mi
+	m.modalRoutes.add(mi.ID)
 }
 
 // AddCustomModalSubmitHandler is a fallback handler for AddModalSubmitHandler.
@@ -25,6 +27,9 @@ func (m *Minidis) AddCustomModalSubmitHandler(handler func(s *SlashContext, c *M
 
 type ModalSubmitContext struct {
 	Data discord.ModalSubmitInteractionData
+
+	// Params holds the captures of a handler ID such as "feedback:{id}".
+	Params map[string]string
 }
 
 func (m *Minidis) NewModalContext(data discord.ModalSubmitInteractionData) *ModalSubmitContext {
@@ -41,6 +46,9 @@ func (m *Minidis) routeModalSubmit(c *SlashContext) HandlerFunc {
 
 	if handler, ok := m.ModalSubmitHandlers[customID]; ok {
 		execute = handler.Execute
+	} else if id, params, ok := m.modalRoutes.match(customID); ok {
+		execute = m.ModalSubmitHandlers[id].Execute
+		modalContext.Params = params
 	}
 
 	if execute == nil {

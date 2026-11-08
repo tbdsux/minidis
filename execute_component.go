@@ -10,6 +10,9 @@ func (m *Minidis) routeComponent(c *SlashContext) HandlerFunc {
 
 	if handler, ok := m.ComponentHandlers[customID]; ok {
 		execute = handler.Execute
+	} else if id, params, ok := m.componentRoutes.match(customID); ok {
+		execute = m.ComponentHandlers[id].Execute
+		componentContext.Params = params
 	}
 
 	if execute == nil {

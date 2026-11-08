@@ -29,8 +29,10 @@ type Minidis struct {
 	ErrorHandler               func(*SlashContext, error)
 	ChannelMessageErrorHandler func(*ChannelMessageContext, error)
 
-	middleware   []Middleware
-	registerOnce sync.Once
+	middleware      []Middleware
+	componentRoutes customIDRouter
+	modalRoutes     customIDRouter
+	registerOnce    sync.Once
 }
 
 // Create a new Minidis instance.
