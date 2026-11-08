@@ -14,6 +14,10 @@ func Bool(v bool) *bool { return &v }
 // Int returns a pointer to v, for optional integer fields.
 func Int(v int) *int { return &v }
 
+// Int64 returns a pointer to v, for optional fields such as
+// DefaultMemberPermissions.
+func Int64(v int64) *int64 { return &v }
+
 // Locale is a language code supported by Discord.
 type Locale string
 
@@ -165,6 +169,26 @@ type Role struct {
 	Permissions int64  `json:"permissions,string"`
 	Managed     bool   `json:"managed"`
 	Mentionable bool   `json:"mentionable"`
+
+	Colors *RoleColors `json:"colors"`
+}
+
+// RoleColors is a role's colors. Discord uses the secondary and tertiary colors
+// for gradient roles, and they are nil otherwise.
+type RoleColors struct {
+	Primary   int  `json:"primary_color"`
+	Secondary *int `json:"secondary_color"`
+	Tertiary  *int `json:"tertiary_color"`
+}
+
+// RoleParams is the body of a Create or Modify Guild Role request. A nil or
+// empty field keeps Discord's default on create and is left unchanged on modify.
+type RoleParams struct {
+	Name        string      `json:"name,omitempty"`
+	Permissions *int64      `json:"permissions,omitempty,string"`
+	Colors      *RoleColors `json:"colors,omitempty"`
+	Hoist       *bool       `json:"hoist,omitempty"`
+	Mentionable *bool       `json:"mentionable,omitempty"`
 }
 
 // Channel is a (possibly partial) channel.
@@ -326,6 +350,54 @@ type MessageSend struct {
 	StickerIDs      []string                `json:"sticker_ids,omitempty"`
 	Flags           MessageFlags            `json:"flags,omitempty"`
 	Files           []*File                 `json:"-"`
+}
+
+// MessageEdit is the body of an Edit Message request. A nil field is left
+// unchanged; a pointer to an empty value clears it.
+type MessageEdit = WebhookEdit
+
+// MessagePin is a pinned message and when it was pinned.
+type MessagePin struct {
+	PinnedAt time.Time `json:"pinned_at"`
+	Message  *Message  `json:"message"`
+}
+
+// ChannelPins is one page of a channel's pinned messages.
+type ChannelPins struct {
+	Items   []*MessagePin `json:"items"`
+	HasMore bool          `json:"has_more"`
+}
+
+// Emoji is an emoji in a reaction. ID is empty for a standard Unicode emoji.
+type Emoji struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Animated bool   `json:"animated"`
+}
+
+// Guild is a Discord server. Channels, MemberCount, JoinedAt, Large and
+// Unavailable are only sent in the GUILD_CREATE event.
+type Guild struct {
+	ID                     string     `json:"id"`
+	Name                   string     `json:"name"`
+	Icon                   string     `json:"icon"`
+	Description            string     `json:"description"`
+	OwnerID                string     `json:"owner_id"`
+	Roles                  []*Role    `json:"roles"`
+	Features               []string   `json:"features"`
+	PreferredLocale        Locale     `json:"preferred_locale"`
+	ApproximateMemberCount int        `json:"approximate_member_count"`
+	Channels               []*Channel `json:"channels"`
+	MemberCount            int        `json:"member_count"`
+	JoinedAt               *time.Time `json:"joined_at"`
+	Large                  bool       `json:"large"`
+	Unavailable            bool       `json:"unavailable"`
+}
+
+// GuildBan is a user's ban from a guild.
+type GuildBan struct {
+	Reason string `json:"reason"`
+	User   *User  `json:"user"`
 }
 
 // UnavailableGuild is a guild that has been announced but not yet delivered.
