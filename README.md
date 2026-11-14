@@ -205,7 +205,7 @@ bot.SetPresence(discord.StatusIdle, &discord.Activity{Name: "the logs", Type: di
 
 ### Client
 
-`bot.Session` has typed methods for messages, pins, reactions, channels, guilds, members, roles and bans, and handlers such as `OnMessageUpdate`, `OnMessageDelete`, `OnMessageReactionAdd`, `OnGuildCreate`, `OnGuildMemberAdd` and `OnGuildMemberRemove`. The member events need the privileged `discord.IntentsGuildMembers` intent.
+`bot.Session` has typed methods for messages, pins, reactions, channels, guilds, members, roles, bans, application commands and their permissions, and interaction responses, and handlers such as `OnMessageUpdate`, `OnMessageDelete`, `OnMessageReactionAdd`, `OnGuildCreate`, `OnGuildMemberAdd` and `OnGuildMemberRemove`. The member events need the privileged `discord.IntentsGuildMembers` intent.
 
 ##
 

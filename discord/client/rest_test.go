@@ -297,6 +297,34 @@ func TestEndpointPaths(t *testing.T) {
 			return err
 		}},
 		{"delete command", "DELETE /applications/APP/commands/C", func(s *Session) error { return s.ApplicationCommandDelete("APP", "", "C") }},
+		{"get original", "GET /webhooks/APP/TOK/messages/@original", func(s *Session) error {
+			_, err := s.InteractionResponse(i)
+			return err
+		}},
+		{"get followup", "GET /webhooks/APP/TOK/messages/M", func(s *Session) error {
+			_, err := s.FollowupMessage(i, "M")
+			return err
+		}},
+		{"get command", "GET /applications/APP/guilds/G/commands/C", func(s *Session) error {
+			_, err := s.ApplicationCommand("APP", "G", "C")
+			return err
+		}},
+		{"create command", "POST /applications/APP/commands", func(s *Session) error {
+			_, err := s.ApplicationCommandCreate("APP", "", &discord.ApplicationCommand{Name: "x"})
+			return err
+		}},
+		{"edit command", "PATCH /applications/APP/commands/C", func(s *Session) error {
+			_, err := s.ApplicationCommandEdit("APP", "", "C", &discord.ApplicationCommand{Name: "x"})
+			return err
+		}},
+		{"guild permissions", "GET /applications/APP/guilds/G/commands/permissions", func(s *Session) error {
+			_, err := s.GuildApplicationCommandsPermissions("APP", "G")
+			return err
+		}},
+		{"command permissions", "GET /applications/APP/guilds/G/commands/C/permissions", func(s *Session) error {
+			_, err := s.ApplicationCommandPermissions("APP", "G", "C")
+			return err
+		}},
 	}
 
 	for _, tt := range tests {
@@ -340,5 +368,28 @@ func TestLimiterEvictsExpiredBuckets(t *testing.T) {
 	}
 	if n := len(l.buckets); n > maxTrackedBuckets {
 		t.Errorf("tracked buckets = %d", n)
+	}
+}
+
+func TestInteractionRespondWithResponse(t *testing.T) {
+	var got string
+	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method + " " + r.URL.Path + "?" + r.URL.RawQuery
+		io.WriteString(w, `{"interaction":{"id":"IID","type":2,"response_message_id":"M","response_message_ephemeral":true},
+			"resource":{"type":4,"message":{"id":"M","content":"hi"}}}`)
+	})
+
+	i := &discord.Interaction{ID: "IID", AppID: "APP", Token: "TOK"}
+	res, err := s.InteractionRespondWithResponse(i, &discord.InteractionResponse{Type: discord.InteractionResponseChannelMessageWithSource})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got != "POST /interactions/IID/TOK/callback?with_response=true" {
+		t.Errorf("request = %q", got)
+	}
+	if res.Interaction.ResponseMessageID != "M" || !res.Interaction.ResponseMessageEphemeral ||
+		res.Resource.Type != discord.InteractionResponseChannelMessageWithSource || res.Resource.Message.Content != "hi" {
+		t.Errorf("response = %+v %+v", res.Interaction, res.Resource)
 	}
 }

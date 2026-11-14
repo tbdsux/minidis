@@ -282,6 +282,55 @@ func (s *Session) ApplicationCommands(appID, guildID string) ([]*discord.Applica
 	return out, err
 }
 
+// ApplicationCommand fetches one command. An empty guildID means a global command.
+func (s *Session) ApplicationCommand(appID, guildID, commandID string) (*discord.ApplicationCommand, error) {
+	out := &discord.ApplicationCommand{}
+	if err := s.Request(context.Background(), http.MethodGet, commandsPath(appID, guildID)+"/"+commandID, nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ApplicationCommandCreate creates a command, or replaces the one with the same
+// name and type. An empty guildID means a global command.
+func (s *Session) ApplicationCommandCreate(appID, guildID string, cmd *discord.ApplicationCommand) (*discord.ApplicationCommand, error) {
+	out := &discord.ApplicationCommand{}
+	if err := s.Request(context.Background(), http.MethodPost, commandsPath(appID, guildID), cmd, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ApplicationCommandEdit changes a command; fields left empty in cmd are kept.
+// An empty guildID means a global command.
+func (s *Session) ApplicationCommandEdit(appID, guildID, commandID string, cmd *discord.ApplicationCommand) (*discord.ApplicationCommand, error) {
+	out := &discord.ApplicationCommand{}
+	if err := s.Request(context.Background(), http.MethodPatch, commandsPath(appID, guildID)+"/"+commandID, cmd, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GuildApplicationCommandsPermissions lists the permission overwrites of an
+// app's commands in a guild. Editing them needs a user's Bearer token with the
+// applications.commands.permissions.update scope, which a bot token cannot
+// provide, so it has no typed method; use Request with such a Session.
+func (s *Session) GuildApplicationCommandsPermissions(appID, guildID string) ([]*discord.GuildApplicationCommandPermissions, error) {
+	var out []*discord.GuildApplicationCommandPermissions
+	err := s.Request(context.Background(), http.MethodGet, commandsPath(appID, guildID)+"/permissions", nil, &out)
+	return out, err
+}
+
+// ApplicationCommandPermissions returns the permission overwrites of one
+// command in a guild. See GuildApplicationCommandsPermissions about editing.
+func (s *Session) ApplicationCommandPermissions(appID, guildID, commandID string) (*discord.GuildApplicationCommandPermissions, error) {
+	out := &discord.GuildApplicationCommandPermissions{}
+	if err := s.Request(context.Background(), http.MethodGet, commandsPath(appID, guildID)+"/"+commandID+"/permissions", nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ApplicationCommandDelete deletes a command. An empty guildID means a global command.
 func (s *Session) ApplicationCommandDelete(appID, guildID, commandID string) error {
 	return s.Request(context.Background(), http.MethodDelete, commandsPath(appID, guildID)+"/"+commandID, nil, nil)
@@ -306,8 +355,40 @@ func (s *Session) InteractionRespond(i *discord.Interaction, res *discord.Intera
 		files = res.Data.Files
 	}
 
-	path := "/interactions/" + i.ID + "/" + i.Token + "/callback"
-	return s.requestWithFiles(context.Background(), http.MethodPost, path, res, files, nil)
+	return s.requestWithFiles(context.Background(), http.MethodPost, callbackPath(i), res, files, nil)
+}
+
+// InteractionRespondWithResponse is InteractionRespond, returning what the
+// response created, such as the message sent.
+func (s *Session) InteractionRespondWithResponse(i *discord.Interaction, res *discord.InteractionResponse) (*discord.InteractionCallbackResponse, error) {
+	var files []*discord.File
+	if res.Data != nil {
+		files = res.Data.Files
+	}
+
+	out := &discord.InteractionCallbackResponse{}
+	if err := s.requestWithFiles(context.Background(), http.MethodPost, callbackPath(i)+"?with_response=true", res, files, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func callbackPath(i *discord.Interaction) string {
+	return "/interactions/" + i.ID + "/" + i.Token + "/callback"
+}
+
+// InteractionResponse fetches the original interaction response.
+func (s *Session) InteractionResponse(i *discord.Interaction) (*discord.Message, error) {
+	return s.FollowupMessage(i, "@original")
+}
+
+// FollowupMessage fetches a followup message.
+func (s *Session) FollowupMessage(i *discord.Interaction, messageID string) (*discord.Message, error) {
+	out := &discord.Message{}
+	if err := s.Request(context.Background(), http.MethodGet, webhookMessagePath(i, messageID), nil, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func webhookMessagePath(i *discord.Interaction, messageID string) string {
