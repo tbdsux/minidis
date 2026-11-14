@@ -28,7 +28,7 @@ const (
 	EntryPointHandlerApp EntryPointHandlerType = 1
 
 	// EntryPointHandlerDiscordLaunchActivity has Discord launch the Activity
-	// and notify the app.
+	// itself. The app receives no interaction.
 	EntryPointHandlerDiscordLaunchActivity EntryPointHandlerType = 2
 )
 
@@ -56,7 +56,7 @@ type ApplicationCommand struct {
 	GuildID                  string                        `json:"guild_id,omitempty"`
 	Version                  string                        `json:"version,omitempty"`
 	Type                     ApplicationCommandType        `json:"type,omitempty"`
-	Name                     string                        `json:"name"`
+	Name                     string                        `json:"name,omitempty"` // omitted so that edits can leave it unchanged
 	NameLocalizations        *map[Locale]string            `json:"name_localizations,omitempty"`
 	Description              string                        `json:"description,omitempty"`
 	DescriptionLocalizations *map[Locale]string            `json:"description_localizations,omitempty"`
@@ -157,7 +157,7 @@ type Interaction struct {
 	AppID          string                 `json:"application_id"`
 	Type           InteractionType        `json:"type"`
 	Data           any                    `json:"-"`
-	Guild          *Guild                 `json:"guild"` // partial: ID, Features and PreferredLocale
+	Guild          *Guild                 `json:"guild"` // partial: ID, Features and Locale
 	GuildID        string                 `json:"guild_id"`
 	Channel        *Channel               `json:"channel"` // partial
 	ChannelID      string                 `json:"channel_id"`
@@ -409,6 +409,22 @@ type InteractionResponseData struct {
 	Files           []*File                           `json:"-"`
 }
 
+// MarshalJSON implements json.Marshaler. With MessageFlagsIsComponentsV2 set,
+// an unset Content or Poll is sent as null, which Discord requires to turn an
+// existing message into a Components V2 one.
+func (d InteractionResponseData) MarshalJSON() ([]byte, error) {
+	type alias InteractionResponseData
+	if d.Flags&MessageFlagsIsComponentsV2 == 0 {
+		return json.Marshal(alias(d))
+	}
+	// Content and Poll without omitempty shadow those of alias, so nil is null.
+	return json.Marshal(struct {
+		alias
+		Content *string            `json:"content"`
+		Poll    *PollCreateRequest `json:"poll"`
+	}{alias(d), d.Content, d.Poll})
+}
+
 // InteractionCallbackResponse is returned by an interaction response sent with
 // with_response=true.
 type InteractionCallbackResponse struct {
@@ -454,16 +470,32 @@ type WebhookParams struct {
 // WebhookEdit is the body of an edit request. A nil field is left unchanged;
 // a pointer to an empty value clears it.
 //
-// Flags may only hold MessageFlagsSuppressEmbeds and MessageFlagsIsComponentsV2.
-// Components V2 can be turned on but not off, and only once Content, Embeds and
-// Poll are empty. A Poll can only be added to a deferred interaction response.
+// Flags may only hold MessageFlagsSuppressEmbeds and MessageFlagsIsComponentsV2;
+// nil leaves them unchanged, and a pointer to 0 clears SuppressEmbeds.
+// Components V2 can be turned on but not off. Turning it on sends an unset
+// Content and Poll as null, as Discord requires; clear Embeds with an empty
+// slice. A Poll can only be added to a deferred interaction response.
 type WebhookEdit struct {
 	Content         *string                 `json:"content,omitempty"`
 	Embeds          *[]*MessageEmbed        `json:"embeds,omitempty"`
 	Components      *[]MessageComponent     `json:"components,omitempty"`
 	Attachments     *[]*MessageAttachment   `json:"attachments,omitempty"`
 	AllowedMentions *MessageAllowedMentions `json:"allowed_mentions,omitempty"`
-	Flags           MessageFlags            `json:"flags,omitempty"`
+	Flags           *MessageFlags           `json:"flags,omitempty"`
 	Poll            *PollCreateRequest      `json:"poll,omitempty"`
 	Files           []*File                 `json:"-"`
+}
+
+// MarshalJSON implements json.Marshaler; see the Flags field.
+func (e WebhookEdit) MarshalJSON() ([]byte, error) {
+	type alias WebhookEdit
+	if e.Flags == nil || *e.Flags&MessageFlagsIsComponentsV2 == 0 {
+		return json.Marshal(alias(e))
+	}
+	// Content and Poll without omitempty shadow those of alias, so nil is null.
+	return json.Marshal(struct {
+		alias
+		Content *string            `json:"content"`
+		Poll    *PollCreateRequest `json:"poll"`
+	}{alias(e), e.Content, e.Poll})
 }

@@ -25,10 +25,18 @@ func findSubcommand(subs []*Subcommand, name string) *Subcommand {
 	return nil
 }
 
-// resolve finds what the given options select. It falls back to the command
-// itself when no subcommand matches.
+func (cmd *Command) hasSubcommands() bool {
+	return len(cmd.Subcommands) > 0 || len(cmd.Groups) > 0
+}
+
+// resolve finds what the given options select. A command without subcommands
+// selects itself; with them, a name that matches none selects nothing.
 func (cmd *Command) resolve(given []*discord.ApplicationCommandInteractionDataOption) commandTarget {
 	root := commandTarget{execute: cmd.Execute, autocomplete: cmd.Autocomplete, options: given}
+	if cmd.hasSubcommands() {
+		// Discord only runs the subcommands, so anything else is stale.
+		root = commandTarget{}
+	}
 	if len(given) == 0 {
 		return root
 	}

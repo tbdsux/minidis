@@ -28,13 +28,13 @@ func TestModalValueHelpers(t *testing.T) {
 
 		values := map[string]string{"legacy": "old style", "name": "Ann", "size": "large", "none": "", "nope": ""}
 		for id, want := range values {
-			if got := c.Value(id); got != want {
-				t.Errorf("Value(%q) = %q, want %q", id, got, want)
+			if got := c.Text(id); got != want {
+				t.Errorf("Text(%q) = %q, want %q", id, got, want)
 			}
 		}
 
-		if fmt.Sprint(c.Values("toppings")) != "[a b]" || fmt.Sprint(c.Values("lang")) != "[go]" || c.Values("name") != nil {
-			t.Errorf("Values = %v %v %v", c.Values("toppings"), c.Values("lang"), c.Values("name"))
+		if fmt.Sprint(c.Selected("toppings")) != "[a b]" || fmt.Sprint(c.Selected("lang")) != "[go]" || c.Selected("name") != nil {
+			t.Errorf("Selected = %v %v %v", c.Selected("toppings"), c.Selected("lang"), c.Selected("name"))
 		}
 		if !c.Checked("agree") || c.Checked("name") || c.Checked("nope") {
 			t.Error("Checked is wrong")

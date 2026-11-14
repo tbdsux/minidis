@@ -61,12 +61,22 @@ type Session struct {
 	conn     atomic.Pointer[gatewayConn] // nil until READY or RESUMED
 	presence atomic.Pointer[discord.PresenceUpdate]
 
-	lifecycle sync.Mutex // serializes Open, Close and Shutdown
-	cancel    context.CancelFunc
-	done      chan struct{}
+	lifecycle sync.Mutex                 // serializes Open, Close and Shutdown
+	run       atomic.Pointer[gatewayRun] // the last Open; nil before it and after Shutdown
 
-	// running tracks the handlers started since the last Open. It is replaced
-	// by Open, before the gateway goroutine that uses it starts.
+	// drain holds the handlers of every run since the last Shutdown, which
+	// waits for them. Guarded by lifecycle.
+	drain []*sync.WaitGroup
+
+	// openingMu guards the cancel func of an Open in progress, so that
+	// Shutdown can cancel it without waiting for the lifecycle lock, and the
+	// count of Shutdowns waiting, which keeps a racing Open from starting.
+	openingMu        sync.Mutex
+	opening          context.CancelFunc
+	pendingShutdowns int
+
+	// running tracks the handlers of the current run. It is replaced by Open,
+	// before the gateway goroutine that uses it starts.
 	running *sync.WaitGroup
 
 	// Owned by the gateway goroutine while it runs.

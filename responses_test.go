@@ -54,8 +54,8 @@ func TestDeferredReplyBecomesComponentsV2(t *testing.T) {
 	if edit.Method != http.MethodPatch || edit.Body["flags"] != float64(discord.MessageFlagsIsComponentsV2) {
 		t.Errorf("edit = %s %s %s", edit.Method, edit.Path, edit.Raw)
 	}
-	if _, sent := edit.Body["content"]; sent {
-		t.Errorf("content must be left out of a Components V2 edit: %s", edit.Raw)
+	if content, sent := edit.Body["content"]; !sent || content != nil {
+		t.Errorf("content must be null to turn a message into Components V2: %s", edit.Raw)
 	}
 }
 

@@ -24,9 +24,7 @@ func main() {
 		log.Println("Bot is ready!")
 	})
 
-	channels := strings.Split(os.Getenv("CHANNELS"), ",")
-
-	bot.OnChannelMessageCreate(func(c *minidis.ChannelMessageContext) error {
+	greet := func(c *minidis.ChannelMessageContext) error {
 		message, err := c.Reply("Hello! This is a message from the bot.")
 		if err != nil {
 			return err
@@ -35,16 +33,23 @@ func main() {
 		fmt.Println(message.Content)
 
 		return nil
-	}, channels...)
-
-	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
 	}
 
-	// Run until CTRL+C
+	// CHANNELS is a comma-separated list of the channels to answer in.
+	for _, channel := range strings.Split(os.Getenv("CHANNELS"), ",") {
+		if channel != "" {
+			bot.HandleChannelMessage(channel, greet)
+		}
+	}
+
+	// Stop on CTRL+C
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Register the commands. This replaces any registered before.
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
+		log.Fatalln("Failed to sync commands:", err)
+	}
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
 	if err := bot.Run(ctx); err != nil {

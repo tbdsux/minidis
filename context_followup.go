@@ -1,14 +1,18 @@
 package minidis
 
 import (
+	"context"
+
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
 )
 
-// FollowupMessage is a message sent with Context.Followup.
+// FollowupMessage is a message sent with Context.Followup. Its methods use the
+// context of the handler that sent it.
 type FollowupMessage struct {
 	Message *discord.Message
 
+	ctx         context.Context
 	session     *client.Session
 	interaction *discord.Interaction
 }
@@ -20,11 +24,11 @@ func (f *FollowupMessage) Edit(content string) error {
 
 // EditWith changes the followup message.
 func (f *FollowupMessage) EditWith(edit MessageEdit) error {
-	_, err := f.session.FollowupMessageEdit(f.interaction, f.Message.ID, edit.webhookEdit())
+	_, err := f.session.FollowupMessageEdit(f.ctx, f.interaction, f.Message.ID, edit.webhookEdit())
 	return err
 }
 
 // Delete deletes the followup message.
 func (f *FollowupMessage) Delete() error {
-	return f.session.FollowupMessageDelete(f.interaction, f.Message.ID)
+	return f.session.FollowupMessageDelete(f.ctx, f.interaction, f.Message.ID)
 }

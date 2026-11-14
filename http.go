@@ -1,12 +1,15 @@
 package minidis
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,11 +17,13 @@ import (
 )
 
 const (
-	// maxInteractionBody bounds the request body HTTPHandler reads.
-	maxInteractionBody = 4 << 20
+	// maxInteractionBody bounds the request body HTTPHandler reads. Real
+	// interactions are far smaller.
+	maxInteractionBody = 1 << 20
 
-	// initialResponseWindow is how long Discord waits for the first response.
-	initialResponseWindow = 3 * time.Second
+	// signatureMaxAge is how far the signed timestamp may be from now. A
+	// replay inside it is caught by the interaction ID instead.
+	signatureMaxAge = 5 * time.Minute
 )
 
 // HTTPHandler returns an http.Handler for the app's Interactions Endpoint URL,
@@ -26,25 +31,39 @@ const (
 // the app's public key, in hex, from the General Information page of the
 // Developer Portal. Serve it over HTTPS at the URL set on the same page.
 //
-// Requests are verified with the public key and Discord's PING is answered.
-// Other interactions run through the same handlers and middleware as gateway
-// interactions, which respond through the API. The request is answered once
-// the handler has responded or returned, or after 3 seconds.
+// Requests are verified with the public key, replays are rejected, and
+// Discord's PING is answered. Other interactions run through the same handlers
+// and middleware as gateway interactions, which respond through the API. The
+// request is answered once the handler has responded or returned, or after 3
+// seconds.
 //
-// The gateway is not needed, so Open can be skipped; then c.Bot is nil. Close
-// waits for running handlers, and requests that arrive afterwards get 503.
-func (m *Minidis) HTTPHandler(publicKey string) (http.Handler, error) {
+// HTTPHandler looks up the bot's user, for Context.Bot, using ctx. Use either
+// the gateway or HTTP, not both, as Discord sends interactions to only one.
+// Close waits for running handlers, and requests that arrive afterwards get
+// 503.
+func (m *Minidis) HTTPHandler(ctx context.Context, publicKey string) (http.Handler, error) {
 	key, err := hex.DecodeString(publicKey)
 	if err != nil || len(key) != ed25519.PublicKeySize {
 		return nil, errors.New("minidis: the public key must be 64 hex characters")
 	}
 
-	return &httpHandler{m: m, key: ed25519.PublicKey(key)}, nil
+	if m.Session.User() == nil && m.httpBot.Load() == nil {
+		bot := &discord.User{}
+		if err := m.Session.Request(ctx, http.MethodGet, "/users/@me", nil, bot); err != nil {
+			return nil, fmt.Errorf("minidis: looking up the bot user: %w", err)
+		}
+		m.httpBot.Store(bot)
+	}
+
+	return &httpHandler{m: m, key: ed25519.PublicKey(key), seen: map[string]time.Time{}}, nil
 }
 
 type httpHandler struct {
 	m   *Minidis
 	key ed25519.PublicKey
+
+	mu   sync.Mutex
+	seen map[string]time.Time // interaction IDs received within signatureMaxAge
 }
 
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,11 +81,16 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Discord signs the timestamp followed by the body, and sends invalid
 	// signatures on purpose to check that they are rejected.
-	// yagni: no replay window; a replayed interaction's token is already used.
 	timestamp := r.Header.Get("X-Signature-Timestamp")
 	signature, err := hex.DecodeString(r.Header.Get("X-Signature-Ed25519"))
 	if err != nil || timestamp == "" || !ed25519.Verify(h.key, append([]byte(timestamp), body...), signature) {
 		http.Error(w, "invalid request signature", http.StatusUnauthorized)
+		return
+	}
+
+	now := time.Now()
+	if !fresh(timestamp, now) {
+		http.Error(w, "stale request signature", http.StatusUnauthorized)
 		return
 	}
 
@@ -82,6 +106,11 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.firstSight(i.ID, now) {
+		http.Error(w, "interaction already received", http.StatusConflict)
+		return
+	}
+
 	responded, ok := h.m.startHTTPInteraction(i)
 	if !ok {
 		http.Error(w, "shutting down", http.StatusServiceUnavailable)
@@ -90,13 +119,48 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case <-responded:
-	case <-time.After(initialResponseWindow):
+	case <-time.After(responseWindow):
 	case <-r.Context().Done():
 	}
 
 	// The response went through the API, which Discord asks to acknowledge
 	// with 202 and no body.
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// fresh reports whether the Unix timestamp is within signatureMaxAge of now.
+func fresh(timestamp string, now time.Time) bool {
+	seconds, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(time.Unix(seconds, 0))
+	return age < signatureMaxAge && age > -signatureMaxAge
+}
+
+// firstSight records an interaction ID and reports whether it is new. IDs are
+// kept as long as their signatures stay fresh, so a replay is caught either
+// way.
+func (h *httpHandler) firstSight(id string, now time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if _, ok := h.seen[id]; ok {
+		return false
+	}
+
+	// Forget IDs whose requests would now be rejected as stale anyway. The
+	// sweep runs when the map has doubled, so it costs O(1) per request.
+	if len(h.seen) >= 1024 && len(h.seen)&(len(h.seen)-1) == 0 {
+		for seenID, at := range h.seen {
+			if now.Sub(at) > 2*signatureMaxAge {
+				delete(h.seen, seenID)
+			}
+		}
+	}
+
+	h.seen[id] = now
+	return true
 }
 
 // startHTTPInteraction runs the handler for i in the background. The returned

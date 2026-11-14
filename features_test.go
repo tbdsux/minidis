@@ -17,7 +17,7 @@ func TestPanicReachesErrorHandler(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	var got error
-	bot.OnError(func(c *Context, err error) {
+	bot.HandleError(func(c *Context, err error) {
 		if c.Author.ID != "u1" {
 			t.Errorf("context = %+v", c)
 		}
@@ -38,7 +38,7 @@ func TestReturnedErrorReachesErrorHandler(t *testing.T) {
 
 	want := errors.New("nope")
 	var got error
-	bot.OnError(func(_ *Context, err error) { got = err })
+	bot.HandleError(func(_ *Context, err error) { got = err })
 	bot.AddCommand(&Command{Name: "fail", Execute: func(*Context) error { return want }})
 
 	bot.handleInteraction(bot.Session, interaction(t, slashPayload("fail", "")))
@@ -52,13 +52,13 @@ func TestChannelMessagePanicReachesItsErrorHandler(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	var got error
-	bot.OnChannelMessageError(func(c *ChannelMessageContext, err error) {
+	bot.HandleChannelMessageError(func(c *ChannelMessageContext, err error) {
 		if c.ChannelID != "c1" {
 			t.Errorf("context = %+v", c)
 		}
 		got = err
 	})
-	bot.OnChannelMessageCreate(func(*ChannelMessageContext) error { panic("kaput") }, "c1")
+	bot.HandleChannelMessage("c1", func(*ChannelMessageContext) error { panic("kaput") })
 
 	bot.handleChannelMessage(bot.Session, &discord.MessageCreate{Message: &discord.Message{ChannelID: "c1", Author: &discord.User{ID: "other"}}})
 
@@ -88,7 +88,7 @@ func TestStaleCommandsReportNoHandler(t *testing.T) {
 			bot, _ := newTestBot(t)
 
 			var got error
-			bot.OnError(func(_ *Context, err error) { got = err })
+			bot.HandleError(func(_ *Context, err error) { got = err })
 
 			bot.AddCommand(&Command{Name: "parent", Subcommands: []*Subcommand{{Name: "sub"}}})
 
@@ -101,12 +101,17 @@ func TestStaleCommandsReportNoHandler(t *testing.T) {
 	}
 }
 
-func TestUnhandledComponentIsIgnored(t *testing.T) {
+func TestUnhandledComponentReportsNoHandler(t *testing.T) {
 	bot, _ := newTestBot(t)
 
-	bot.OnError(func(_ *Context, err error) { t.Errorf("err = %v", err) })
+	var got error
+	bot.HandleError(func(_ *Context, err error) { got = err })
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"nope","component_type":2}}`))
+
+	if !errors.Is(got, ErrNoHandler) {
+		t.Errorf("err = %v", got)
+	}
 }
 
 func autocompletePayload(options string) string {
@@ -302,7 +307,7 @@ func TestPanicInMiddlewareIsRecovered(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	var got error
-	bot.OnError(func(_ *Context, err error) { got = err })
+	bot.HandleError(func(_ *Context, err error) { got = err })
 	bot.Use(func(HandlerFunc) HandlerFunc {
 		return func(*Context) error { panic("mw") }
 	})
@@ -320,7 +325,7 @@ func componentRespond(t *testing.T, respond func(*ComponentContext) error) recor
 	t.Helper()
 
 	bot, requests := newTestBot(t)
-	bot.OnError(func(_ *Context, err error) { t.Error(err) })
+	bot.HandleError(func(_ *Context, err error) { t.Error(err) })
 	bot.HandleComponent("b", func(c *ComponentContext) error {
 		return respond(c)
 	})
@@ -519,7 +524,7 @@ func TestOptionGetters(t *testing.T) {
 	resolved := `"resolved":{"users":{"10":{"id":"10"}},"members":{"10":{"nick":"n","permissions":"0"}},"channels":{"20":{"id":"20"}},"roles":{"30":{"id":"30","permissions":"0"}},"attachments":{"40":{"id":"40"}}}`
 
 	called := false
-	bot.OnError(func(_ *Context, err error) { t.Error(err) })
+	bot.HandleError(func(_ *Context, err error) { t.Error(err) })
 	bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
 		called = true
 
@@ -568,10 +573,10 @@ func TestContextsAndIntegrationTypes(t *testing.T) {
 	bot.AddUserCommand(&UserCommand{Name: "u", Contexts: contexts, IntegrationTypes: types})
 	bot.AddMessageCommand(&MessageCommand{Name: "plain"})
 
-	if err := bot.SyncCommands(); err != nil {
+	if err := bot.SyncCommands(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := bot.SyncCommands("g"); err != nil {
+	if err := bot.SyncCommands(t.Context(), "g"); err != nil {
 		t.Fatal(err)
 	}
 

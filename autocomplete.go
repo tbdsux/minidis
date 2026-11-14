@@ -12,6 +12,9 @@ const maxAutocompleteChoices = 25
 
 // AutocompleteContext is passed to a command's Autocomplete handler while a user
 // types into an option declared with Autocomplete: true.
+//
+// Respond is the only valid response: the reply, modal and edit methods of
+// the embedded Context fail during autocomplete.
 type AutocompleteContext struct {
 	*Context
 

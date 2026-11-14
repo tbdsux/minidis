@@ -52,7 +52,7 @@ func TestRequestSendsHeadersAndDecodes(t *testing.T) {
 		io.WriteString(w, `{"id":"m1","content":"hello","edited_timestamp":null,"components":[]}`)
 	})
 
-	m, err := s.ChannelMessageSend("1", "hello")
+	m, err := s.ChannelMessageSend(context.Background(), "1", "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestRequestErrorIsDecoded(t *testing.T) {
 		io.WriteString(w, `{"message":"Missing Access","code":50001}`)
 	})
 
-	_, err := s.ChannelMessageSend("1", "x")
+	_, err := s.ChannelMessageSend(context.Background(), "1", "x")
 
 	var restErr *RESTError
 	if !errors.As(err, &restErr) {
@@ -86,16 +86,16 @@ func TestTokensNeverAppearInErrors(t *testing.T) {
 		io.WriteString(w, `{"message":"Unknown Webhook","code":10015}`)
 	})
 
-	if err := s.InteractionRespond(i, &discord.InteractionResponse{Type: discord.InteractionResponsePong}); err == nil || strings.Contains(err.Error(), "SECRETTOKEN") {
+	if err := s.InteractionRespond(context.Background(), i, &discord.InteractionResponse{Type: discord.InteractionResponsePong}); err == nil || strings.Contains(err.Error(), "SECRETTOKEN") {
 		t.Errorf("respond err = %v", err)
 	}
-	if err := s.InteractionResponseDelete(i); err == nil || strings.Contains(err.Error(), "SECRETTOKEN") {
+	if err := s.InteractionResponseDelete(context.Background(), i); err == nil || strings.Contains(err.Error(), "SECRETTOKEN") {
 		t.Errorf("delete err = %v", err)
 	}
 
 	// Transport errors from net/http include the full URL unless it is stripped.
 	s.BaseURL = "http://127.0.0.1:1"
-	if err := s.InteractionResponseDelete(i); err == nil || strings.Contains(err.Error(), "SECRETTOKEN") {
+	if err := s.InteractionResponseDelete(context.Background(), i); err == nil || strings.Contains(err.Error(), "SECRETTOKEN") {
 		t.Errorf("transport err = %v", err)
 	}
 }
@@ -113,7 +113,7 @@ func TestRateLimited429IsRetried(t *testing.T) {
 	})
 
 	start := time.Now()
-	if _, err := s.ApplicationCommands("1", ""); err != nil {
+	if _, err := s.ApplicationCommands(context.Background(), "1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 2 {
@@ -134,7 +134,7 @@ func TestPersistent429ReturnsError(t *testing.T) {
 	})
 
 	var restErr *RESTError
-	if _, err := s.ApplicationCommands("1", ""); !errors.As(err, &restErr) || restErr.StatusCode != 429 {
+	if _, err := s.ApplicationCommands(context.Background(), "1", ""); !errors.As(err, &restErr) || restErr.StatusCode != 429 {
 		t.Fatalf("err = %v", err)
 	}
 	if calls.Load() != maxRateLimitRetries+1 {
@@ -154,12 +154,12 @@ func TestBucketExhaustionDelaysNextRequest(t *testing.T) {
 		io.WriteString(w, `[]`)
 	})
 
-	if _, err := s.ApplicationCommands("1", ""); err != nil {
+	if _, err := s.ApplicationCommands(context.Background(), "1", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	start := time.Now()
-	if _, err := s.ApplicationCommands("1", ""); err != nil {
+	if _, err := s.ApplicationCommands(context.Background(), "1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) < 80*time.Millisecond {
@@ -175,7 +175,7 @@ func TestInteractionCallbacksSkipExhaustedBuckets(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- s.InteractionRespond(&discord.Interaction{ID: "1", Token: "t"}, &discord.InteractionResponse{Type: discord.InteractionResponsePong})
+		done <- s.InteractionRespond(context.Background(), &discord.Interaction{ID: "1", Token: "t"}, &discord.InteractionResponse{Type: discord.InteractionResponsePong})
 	}()
 
 	select {
@@ -200,7 +200,7 @@ func TestBadGatewayIsRetried(t *testing.T) {
 		io.WriteString(w, `[]`)
 	})
 
-	if _, err := s.ApplicationCommands("1", ""); err != nil {
+	if _, err := s.ApplicationCommands(context.Background(), "1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 2 {
@@ -254,7 +254,7 @@ func TestMultipartUpload(t *testing.T) {
 		io.WriteString(w, `{"id":"m"}`)
 	})
 
-	_, err := s.ChannelMessageSendComplex("1", &discord.MessageSend{
+	_, err := s.ChannelMessageSendComplex(context.Background(), "1", &discord.MessageSend{
 		Content: "see file",
 		Files:   []*discord.File{{Name: "a.txt", ContentType: "text/plain", Reader: strings.NewReader("file body")}},
 	})
@@ -272,57 +272,57 @@ func TestEndpointPaths(t *testing.T) {
 		call func(s *Session) error
 	}{
 		{"callback", "POST /interactions/IID/TOK/callback", func(s *Session) error {
-			return s.InteractionRespond(i, &discord.InteractionResponse{Type: discord.InteractionResponseChannelMessageWithSource})
+			return s.InteractionRespond(context.Background(), i, &discord.InteractionResponse{Type: discord.InteractionResponseChannelMessageWithSource})
 		}},
 		{"edit original", "PATCH /webhooks/APP/TOK/messages/@original", func(s *Session) error {
-			_, err := s.InteractionResponseEdit(i, &discord.WebhookEdit{})
+			_, err := s.InteractionResponseEdit(context.Background(), i, &discord.WebhookEdit{})
 			return err
 		}},
-		{"delete original", "DELETE /webhooks/APP/TOK/messages/@original", func(s *Session) error { return s.InteractionResponseDelete(i) }},
+		{"delete original", "DELETE /webhooks/APP/TOK/messages/@original", func(s *Session) error { return s.InteractionResponseDelete(context.Background(), i) }},
 		{"followup", "POST /webhooks/APP/TOK", func(s *Session) error {
-			_, err := s.FollowupMessageCreate(i, &discord.WebhookParams{Content: "x"})
+			_, err := s.FollowupMessageCreate(context.Background(), i, &discord.WebhookParams{Content: "x"})
 			return err
 		}},
 		{"edit followup", "PATCH /webhooks/APP/TOK/messages/M", func(s *Session) error {
-			_, err := s.FollowupMessageEdit(i, "M", &discord.WebhookEdit{})
+			_, err := s.FollowupMessageEdit(context.Background(), i, "M", &discord.WebhookEdit{})
 			return err
 		}},
-		{"delete followup", "DELETE /webhooks/APP/TOK/messages/M", func(s *Session) error { return s.FollowupMessageDelete(i, "M") }},
+		{"delete followup", "DELETE /webhooks/APP/TOK/messages/M", func(s *Session) error { return s.FollowupMessageDelete(context.Background(), i, "M") }},
 		{"global commands", "GET /applications/APP/commands", func(s *Session) error {
-			_, err := s.ApplicationCommands("APP", "")
+			_, err := s.ApplicationCommands(context.Background(), "APP", "")
 			return err
 		}},
 		{"guild commands", "PUT /applications/APP/guilds/G/commands", func(s *Session) error {
-			_, err := s.ApplicationCommandBulkOverwrite("APP", "G", nil)
+			_, err := s.ApplicationCommandBulkOverwrite(context.Background(), "APP", "G", nil)
 			return err
 		}},
-		{"delete command", "DELETE /applications/APP/commands/C", func(s *Session) error { return s.ApplicationCommandDelete("APP", "", "C") }},
+		{"delete command", "DELETE /applications/APP/commands/C", func(s *Session) error { return s.ApplicationCommandDelete(context.Background(), "APP", "", "C") }},
 		{"get original", "GET /webhooks/APP/TOK/messages/@original", func(s *Session) error {
-			_, err := s.InteractionResponse(i)
+			_, err := s.InteractionResponse(context.Background(), i)
 			return err
 		}},
 		{"get followup", "GET /webhooks/APP/TOK/messages/M", func(s *Session) error {
-			_, err := s.FollowupMessage(i, "M")
+			_, err := s.FollowupMessage(context.Background(), i, "M")
 			return err
 		}},
 		{"get command", "GET /applications/APP/guilds/G/commands/C", func(s *Session) error {
-			_, err := s.ApplicationCommand("APP", "G", "C")
+			_, err := s.ApplicationCommand(context.Background(), "APP", "G", "C")
 			return err
 		}},
 		{"create command", "POST /applications/APP/commands", func(s *Session) error {
-			_, err := s.ApplicationCommandCreate("APP", "", &discord.ApplicationCommand{Name: "x"})
+			_, err := s.ApplicationCommandCreate(context.Background(), "APP", "", &discord.ApplicationCommand{Name: "x"})
 			return err
 		}},
 		{"edit command", "PATCH /applications/APP/commands/C", func(s *Session) error {
-			_, err := s.ApplicationCommandEdit("APP", "", "C", &discord.ApplicationCommand{Name: "x"})
+			_, err := s.ApplicationCommandEdit(context.Background(), "APP", "", "C", &discord.ApplicationCommand{Name: "x"})
 			return err
 		}},
 		{"guild permissions", "GET /applications/APP/guilds/G/commands/permissions", func(s *Session) error {
-			_, err := s.GuildApplicationCommandsPermissions("APP", "G")
+			_, err := s.GuildApplicationCommandsPermissions(context.Background(), "APP", "G")
 			return err
 		}},
 		{"command permissions", "GET /applications/APP/guilds/G/commands/C/permissions", func(s *Session) error {
-			_, err := s.ApplicationCommandPermissions("APP", "G", "C")
+			_, err := s.ApplicationCommandPermissions(context.Background(), "APP", "G", "C")
 			return err
 		}},
 	}
@@ -342,6 +342,19 @@ func TestEndpointPaths(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCommandPermissionsNeedAGuild(t *testing.T) {
+	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("sent %s %s", r.Method, r.URL.Path)
+	})
+
+	if _, err := s.GuildApplicationCommandsPermissions(context.Background(), "APP", ""); err == nil {
+		t.Error("guild permissions without a guild were requested")
+	}
+	if _, err := s.ApplicationCommandPermissions(context.Background(), "APP", "", "C"); err == nil {
+		t.Error("command permissions without a guild were requested")
 	}
 }
 
@@ -380,7 +393,7 @@ func TestInteractionRespondWithResponse(t *testing.T) {
 	})
 
 	i := &discord.Interaction{ID: "IID", AppID: "APP", Token: "TOK"}
-	res, err := s.InteractionRespondWithResponse(i, &discord.InteractionResponse{Type: discord.InteractionResponseChannelMessageWithSource})
+	res, err := s.InteractionRespondWithResponse(context.Background(), i, &discord.InteractionResponse{Type: discord.InteractionResponseChannelMessageWithSource})
 	if err != nil {
 		t.Fatal(err)
 	}

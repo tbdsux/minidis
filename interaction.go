@@ -9,8 +9,14 @@ import (
 	"github.com/tbdsux/minidis/discord/client"
 )
 
-// interactionLifetime is how long Discord accepts responses to an interaction.
-const interactionLifetime = 15 * time.Minute
+const (
+	// interactionLifetime is how long Discord accepts responses to an
+	// interaction.
+	interactionLifetime = 15 * time.Minute
+
+	// responseWindow is how long Discord waits for the initial response.
+	responseWindow = 3 * time.Second
+)
 
 func (m *Minidis) handleInteraction(s *client.Session, i *discord.InteractionCreate) {
 	m.runInteraction(m.current().ctx, s, i.Interaction, nil)
@@ -22,8 +28,20 @@ func (m *Minidis) runInteraction(parent context.Context, s *client.Session, i *d
 	ctx, cancel := context.WithTimeout(parent, interactionLifetime)
 	defer cancel()
 
-	c := newContext(ctx, s, i)
-	c.ack = ack
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	defer cancelCause(nil)
+
+	c := newContext(ctx, s, i, m.botUser(s))
+	c.reply.ack = ack
+
+	// Discord drops an interaction that is not responded to in time, so stop
+	// the handler's work rather than let it respond in vain.
+	cutoff := time.AfterFunc(responseWindow, func() {
+		if !c.reply.responded.Load() {
+			cancelCause(ErrNoResponse)
+		}
+	})
+	defer cutoff.Stop()
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -44,6 +62,15 @@ func (m *Minidis) runInteraction(parent context.Context, s *client.Session, i *d
 	if err := handler(c); err != nil {
 		m.handleError(c, err)
 	}
+}
+
+// botUser returns the bot's user: from the gateway session when it is open,
+// otherwise as looked up by HTTPHandler.
+func (m *Minidis) botUser(s *client.Session) *discord.User {
+	if u := s.User(); u != nil {
+		return u
+	}
+	return m.httpBot.Load()
 }
 
 // route finds the handler for an interaction, or nil if there is nothing to do.

@@ -27,7 +27,7 @@ func entryPointServer(t *testing.T) (*Minidis, func() [][]map[string]any) {
 			if r.URL.Query().Get("with_localizations") != "true" {
 				t.Errorf("entry point lookup must keep localizations: %s", r.URL)
 			}
-			io.WriteString(w, `[{"id":"ep","type":4,"name":"launch","description":"Launch","handler":2,"name_localizations":{"fr":"lancer"}},{"id":"x","type":1,"name":"old","description":"d"}]`)
+			io.WriteString(w, `[{"id":"ep","application_id":"app","version":"9","type":4,"name":"launch","description":"Launch","handler":2,"name_localizations":{"fr":"lancer"}},{"id":"x","type":1,"name":"old","description":"d"}]`)
 		case r.Method == http.MethodPut:
 			var cmds []map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&cmds)
@@ -56,13 +56,13 @@ func TestGlobalOverwritesKeepTheEntryPoint(t *testing.T) {
 	bot, puts := entryPointServer(t)
 	bot.AddCommand(&Command{Name: "ping", Description: "d"})
 
-	if err := bot.SyncCommands(); err != nil {
+	if err := bot.SyncCommands(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := bot.ClearCommands(); err != nil {
+	if err := bot.ClearCommands(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := bot.SyncCommands("g"); err != nil { // guilds have no entry point
+	if err := bot.SyncCommands(t.Context(), "g"); err != nil { // guilds have no entry point
 		t.Fatal(err)
 	}
 
@@ -95,7 +95,7 @@ func TestSetEntryPoint(t *testing.T) {
 		Execute: func(c *Context) error { ran = true; return nil },
 	})
 
-	if err := bot.SyncCommands(); err != nil {
+	if err := bot.SyncCommands(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,12 +103,56 @@ func TestSetEntryPoint(t *testing.T) {
 	if len(got) != 1 || len(got[0]) != 1 {
 		t.Fatalf("puts = %v", got)
 	}
-	if ep := got[0][0]; ep["name"] != "play" || ep["type"] != float64(4) || ep["handler"] != float64(1) {
+	// It replaces Discord's "launch" in place, as an app has only one.
+	ep := got[0][0]
+	if ep["id"] != "ep" || ep["name"] != "play" || ep["type"] != float64(4) || ep["handler"] != float64(1) {
 		t.Errorf("entry point = %v", ep)
+	}
+	if _, sent := ep["contexts"]; sent {
+		t.Errorf("unset contexts must keep Discord's default for entry points: %v", ep)
 	}
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"play","type":4}}`))
 	if !ran {
 		t.Error("entry point handler did not run")
+	}
+}
+
+func TestEntryPointHandlerDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		execute func(*Context) error
+		want    float64
+	}{
+		{"with Execute the app handles it", func(*Context) error { return nil }, float64(discord.EntryPointHandlerApp)},
+		{"without Execute Discord launches it", nil, float64(discord.EntryPointHandlerDiscordLaunchActivity)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot, puts := entryPointServer(t)
+			bot.SetEntryPoint(&EntryPointCommand{Name: "play", Description: "Play", Execute: tt.execute})
+
+			if err := bot.SyncCommands(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := puts()[0][0]["handler"]; got != tt.want {
+				t.Errorf("handler = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPreservedEntryPointCarriesNoReadOnlyFields(t *testing.T) {
+	bot, puts := entryPointServer(t)
+
+	if err := bot.ClearCommands(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, field := range []string{"application_id", "version", "guild_id"} {
+		if _, sent := puts()[0][0][field]; sent {
+			t.Errorf("%s was sent back: %v", field, puts()[0][0])
+		}
 	}
 }

@@ -1,6 +1,8 @@
 package minidis
 
 import (
+	"fmt"
+
 	"github.com/tbdsux/minidis/discord"
 )
 
@@ -17,7 +19,8 @@ type ComponentContext struct {
 //
 // The id can capture parts of a custom ID: segments are separated by ":", and
 // one written as "{name}" matches anything, so "vote:{poll}" handles "vote:42"
-// with c.Params["poll"] set to "42". An exact id takes priority over a pattern.
+// with c.Params["poll"] set to "42". A capture is one segment, so the value
+// put there must not contain ":". An exact id takes priority over a pattern.
 func (m *Minidis) HandleComponent(id string, h func(c *ComponentContext) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -26,7 +29,8 @@ func (m *Minidis) HandleComponent(id string, h func(c *ComponentContext) error) 
 }
 
 // HandleComponentFallback sets the handler for components that no
-// HandleComponent id matches. Without one, such components are ignored.
+// HandleComponent id matches. Without one, they reach the error handler as
+// ErrNoHandler.
 func (m *Minidis) HandleComponentFallback(h func(c *ComponentContext) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -34,8 +38,6 @@ func (m *Minidis) HandleComponentFallback(h func(c *ComponentContext) error) {
 	m.componentFallback = h
 }
 
-// routeComponent returns the handler for a component interaction, or nil if
-// none is set.
 func (m *Minidis) routeComponent(c *Context) HandlerFunc {
 	data := c.Interaction.MessageComponentData()
 
@@ -44,7 +46,7 @@ func (m *Minidis) routeComponent(c *Context) HandlerFunc {
 		h = m.componentFallback
 	}
 	if h == nil {
-		return nil
+		return failWith(fmt.Errorf("%w: component %q", ErrNoHandler, data.CustomID))
 	}
 
 	return func(c *Context) error {
@@ -54,21 +56,16 @@ func (m *Minidis) routeComponent(c *Context) HandlerFunc {
 
 // Update responds by replacing the text of the message the component is on.
 func (c *ComponentContext) Update(content string) error {
-	return c.UpdateWith(MessageEdit{Content: &content})
+	return c.update(MessageEdit{Content: &content})
 }
 
 // UpdateWith responds by changing the message the component is on.
 func (c *ComponentContext) UpdateWith(edit MessageEdit) error {
-	return c.respond(&discord.InteractionResponse{
-		Type: discord.InteractionResponseUpdateMessage,
-		Data: edit.responseData(),
-	})
+	return c.update(edit)
 }
 
 // DeferUpdate acknowledges the interaction without changing the message yet.
 // Change it within 15 minutes using Edit.
 func (c *ComponentContext) DeferUpdate() error {
-	return c.respond(&discord.InteractionResponse{
-		Type: discord.InteractionResponseDeferredMessageUpdate,
-	})
+	return c.deferUpdate()
 }

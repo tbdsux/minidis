@@ -59,22 +59,23 @@ func main() {
 		},
 	})
 
-	// Register the commands. With no guilds they are registered globally.
-	if err := bot.SyncCommands(guilds...); err != nil {
+	// Stop on CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Register the commands. With no guilds (GUILD unset) they are registered globally.
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
 	}
 
 	// Run until CTRL+C, then close, giving running handlers time to finish
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	if err := bot.Run(ctx); err != nil {
 		log.Fatalln("Bot stopped with an error:", err)
 	}
 }
 ```
 
-Use `bot.Open` and `bot.Close` instead of `Run` to manage the connection yourself.
+Use `bot.Open(ctx)` and `bot.Close` instead of `Run` to manage the connection yourself. `Run` also returns if Discord ends the connection for good, such as for an invalid token. A handler that closes the bot should call `Close` in a new goroutine, as `Close` waits for running handlers.
 
 More [examples...](./example/)
 
@@ -85,11 +86,11 @@ More [examples...](./example/)
 A command is usable by everyone unless `DefaultMemberPermissions` is set.
 
 ```go
-DefaultMemberPermissions: discord.Int64(0),     // admins only
-DefaultMemberPermissions: discord.Int64(1 << 5), // members who can manage the server
+DefaultMemberPermissions: discord.Int64(0),                             // admins only
+DefaultMemberPermissions: discord.Int64(discord.PermissionManageGuild), // members who can manage the server
 ```
 
-Global commands are usable in guilds only, unless `Contexts` says otherwise. For user-installable commands, also set `IntegrationTypes`, and sync the command globally.
+Global commands are usable in guilds only, where member permissions apply, unless `Contexts` says otherwise. User-installable commands, whose `IntegrationTypes` include `discord.ApplicationIntegrationUserInstall`, and the entry point command keep Discord's default of everywhere instead. Sync user-installable commands globally.
 
 ```go
 Contexts: []discord.InteractionContextType{discord.InteractionContextGuild, discord.InteractionContextBotDM},
@@ -112,6 +113,8 @@ bot.AddCommand(&minidis.Command{
 })
 ```
 
+A command with subcommands only runs them, so it cannot have `Options` or an `Execute` of its own; `SyncCommands` reports such a command.
+
 ### Responding
 
 ```go
@@ -130,11 +133,14 @@ In a `MessageEdit`, a nil field is left unchanged and an empty one clears it.
 
 `Message` also takes a `Poll`, `TTS` and further `Flags`. Use `discord.MessageFlagsIsComponentsV2` to lay a message out with components such as `discord.Container`, `discord.Section` and `discord.TextDisplay`. A deferred reply becomes one through `c.EditWith(minidis.MessageEdit{Flags: discord.MessageFlagsIsComponentsV2, Components: ...})`. `c.Response()` fetches the message that was sent.
 
-Every handler context is also a `context.Context`. It is canceled when the handler returns, when the bot closes, and 15 minutes after the interaction arrived, when Discord stops accepting responses. Pass it to the calls the handler makes:
+Every handler context is also a `context.Context`, which the response methods use for their requests. It is canceled when the handler returns, when the bot closes, 15 minutes after the interaction arrived, when Discord stops accepting responses, and after 3 seconds if nothing responded by then, with `minidis.ErrNoResponse` as its cause. Pass it to the calls the handler makes, including those on `c.Session`:
 
 ```go
 rows, err := db.QueryContext(c, "SELECT ...")
+_, err = c.Session.ChannelMessageSend(c, logChannelID, "ran /ping")
 ```
+
+`c.Responded()` reports whether the interaction has been responded to, so that a message goes through `c.Followup` instead of `c.Reply` afterwards.
 
 ### Reading options
 
@@ -161,18 +167,25 @@ Autocomplete: func(c *minidis.AutocompleteContext) error {
 ```go
 bot.Use(func(next minidis.HandlerFunc) minidis.HandlerFunc {
 	return func(c *minidis.Context) error {
-		// runs around every command, component and modal handler
-		return next(c)
+		// runs around every command, component and modal handler;
+		// c.WithContext passes values on to the handler
+		return next(c.WithContext(context.WithValue(c, requestIDKey, newRequestID())))
 	}
 })
 
-bot.OnError(func(c *minidis.Context, err error) {
-	// err is a *minidis.PanicError if a handler panicked, and wraps
-	// minidis.ErrNoHandler for a command that is no longer registered
+bot.HandleError(func(c *minidis.Context, err error) {
+	// err is a *minidis.PanicError if a handler panicked (errors.Is and
+	// errors.As see through it), and wraps minidis.ErrNoHandler for a
+	// command or component that is no longer registered
+	if c.Responded() {
+		c.FollowupWith(minidis.Message{Content: "Something went wrong.", Ephemeral: true})
+	} else {
+		c.ReplyWith(minidis.Message{Content: "Something went wrong.", Ephemeral: true})
+	}
 })
 ```
 
-Without `OnError`, errors are logged. Channel message handlers have `OnChannelMessageError`.
+Without `HandleError`, errors are logged. A panic in the error handler is logged too. Channel message handlers have `HandleChannelMessageError`.
 
 ### Components and modals
 
@@ -188,23 +201,25 @@ bot.HandleModal("feedback", func(c *minidis.ModalSubmitContext) error {
 })
 ```
 
-Use `c.UpdateWith` for embeds and components, passing an empty non-nil slice to clear them, and `c.DeferUpdate` for slow work. `HandleComponentFallback` and `HandleModalFallback` receive the IDs that no handler matches.
+Use `c.UpdateWith` for embeds and components, passing an empty non-nil slice to clear them, and `c.DeferUpdate` for slow work. A modal opened from a component can update that component's message the same way. A capture is one segment, so a value put there must not contain `:`.
+
+`HandleComponentFallback` and `HandleModalFallback` receive the IDs that no handler matches. Without them, such interactions reach the error handler as `minidis.ErrNoHandler`.
 
 A submitted modal is read by the custom IDs of its components:
 
 ```go
-c.Value("name")       // a text input, or the choice of a discord.RadioGroup
-c.Values("toppings")  // a select menu, a discord.CheckboxGroup, or the IDs of a discord.FileUpload
-c.Checked("agree")    // a discord.Checkbox
+c.Text("name")         // a text input, or the choice of a discord.RadioGroup
+c.Selected("toppings") // a select menu, a discord.CheckboxGroup, or the IDs of a discord.FileUpload
+c.Checked("agree")     // a discord.Checkbox
 c.Attachments("files") // the files of a discord.FileUpload
 ```
 
 ### Receiving interactions over HTTP
 
-Instead of the gateway, Discord can send interactions to the app's Interactions Endpoint URL. `HTTPHandler` verifies them with the app's public key, answers Discord's PING, and runs the same handlers. `Open` is not needed then, and `Shutdown` waits for running handlers. See the [http example](./example/http/main.go).
+Instead of the gateway, Discord can send interactions to the app's Interactions Endpoint URL. Discord uses one or the other, so pick either `Open`/`Run` or HTTP. `HTTPHandler` verifies requests with the app's public key, rejects replayed and stale ones, answers Discord's PING, and runs the same handlers. It looks up the bot's user for `c.Bot`, since there is no gateway session. `Shutdown` waits for running handlers; after it, an HTTP-only bot cannot be started again, as `Open` would connect the gateway. See the [http example](./example/http/main.go).
 
 ```go
-handler, err := bot.HTTPHandler(os.Getenv("PUBLIC_KEY"))
+handler, err := bot.HTTPHandler(ctx, os.Getenv("PUBLIC_KEY"))
 mux.Handle("POST /interactions", handler)
 ```
 
@@ -215,11 +230,13 @@ mux.Handle("POST /interactions", handler)
 ### Channel messages
 
 ```go
-bot.OnChannelMessageCreate(func(c *minidis.ChannelMessageContext) error {
+bot.HandleChannelMessage(channelID, func(c *minidis.ChannelMessageContext) error {
 	_, err := c.Reply("hello") // or c.Send, which does not reply to the message
 	return err
-}, channelIDs...)
+})
 ```
+
+`SendWith` and `ReplyWith` take a `minidis.Message`. When the content repeats what users wrote, set `AllowedMentions` so that it cannot ping `@everyone`.
 
 ### Presence
 
@@ -229,7 +246,7 @@ bot.SetPresence(discord.StatusIdle, &discord.Activity{Name: "the logs", Type: di
 
 ### Client
 
-`bot.Session` has typed methods for messages, pins, reactions, channels, guilds, members, roles, bans, application commands and their permissions, and interaction responses, and handlers such as `OnMessageUpdate`, `OnMessageDelete`, `OnMessageReactionAdd`, `OnGuildCreate`, `OnGuildMemberAdd` and `OnGuildMemberRemove`. The member events need the privileged `discord.IntentsGuildMembers` intent.
+`bot.Session` has typed methods, each taking a `context.Context` first, for messages, pins, reactions, channels, guilds, members, roles, bans, application commands and their permissions, and interaction responses, and handlers such as `OnMessageUpdate`, `OnMessageDelete`, `OnMessageReactionAdd`, `OnGuildCreate`, `OnGuildMemberAdd` and `OnGuildMemberRemove`. The member events need the privileged `discord.IntentsGuildMembers` intent.
 
 ##
 

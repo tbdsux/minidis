@@ -146,14 +146,14 @@ func main() {
 		})
 	})
 
-	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
-	}
-
-	// Run until CTRL+C
+	// Stop on CTRL+C
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Register the commands. This replaces any registered before.
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
+		log.Fatalln("Failed to sync commands:", err)
+	}
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
 	if err := bot.Run(ctx); err != nil {

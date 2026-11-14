@@ -29,14 +29,18 @@ func main() {
 		},
 	})
 
-	if err := bot.SyncCommands(guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// PUBLIC_KEY is on the General Information page of the Developer Portal.
-	handler, err := bot.HTTPHandler(os.Getenv("PUBLIC_KEY"))
+	// The handler is created first, so that a bad key fails before syncing.
+	handler, err := bot.HTTPHandler(ctx, os.Getenv("PUBLIC_KEY"))
 	if err != nil {
 		log.Fatalln(err)
+	}
+
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
+		log.Fatalln("Failed to sync commands:", err)
 	}
 
 	mux := http.NewServeMux()
@@ -50,9 +54,6 @@ func main() {
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()

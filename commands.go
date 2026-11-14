@@ -6,8 +6,8 @@ import (
 
 // Command is a slash command.
 //
-// A command with Subcommands or Groups only runs those: its own Execute and
-// Options are not used by Discord.
+// A command with Subcommands or Groups only runs those: Discord rejects it
+// with Options of its own, and its Execute and Autocomplete are not used.
 type Command struct {
 	Name        string
 	Description string
@@ -22,8 +22,11 @@ type Command struct {
 	// NSFW commands are only shown in age-restricted channels.
 	NSFW bool
 
-	// Contexts says where a global command can be used. Nil means guilds only;
-	// add discord.InteractionContextBotDM to allow DMs with the bot.
+	// Contexts says where a global command can be used. Nil means guilds only,
+	// as member permissions do not apply elsewhere, except for commands with
+	// discord.ApplicationIntegrationUserInstall, where nil leaves Discord's
+	// default of everywhere. Add discord.InteractionContextBotDM to allow DMs
+	// with the bot.
 	// IntegrationTypes says how the app must be installed; add
 	// discord.ApplicationIntegrationUserInstall for a user-installable command.
 	// Discord only accepts both on global commands, so they are not sent when
@@ -135,20 +138,23 @@ type EntryPointCommand struct {
 	// Handler says who launches the Activity. With
 	// discord.EntryPointHandlerDiscordLaunchActivity, Discord launches it and
 	// Execute is not used. With discord.EntryPointHandlerApp, Execute runs and
-	// responds, usually with c.LaunchActivity.
+	// responds, usually with c.LaunchActivity. Zero picks the app when Execute
+	// is set and Discord otherwise.
 	Handler discord.EntryPointHandlerType
 	Execute func(c *Context) error
 
-	// See Command for these.
+	// See Command for these, except that nil Contexts leaves Discord's
+	// default of everywhere.
 	DefaultMemberPermissions *int64
 	NSFW                     bool
 	Contexts                 []discord.InteractionContextType
 	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
-// SetEntryPoint sets the app's entry point command, which is global only.
-// Without one, syncing global commands keeps the entry point Discord already
-// has, because Discord refuses to remove it in a bulk update.
+// SetEntryPoint sets the app's entry point command, which is global only. It
+// replaces the one Discord has, whatever its name. Without one, syncing global
+// commands keeps the entry point Discord already has, because Discord refuses
+// to remove it in a bulk update.
 func (m *Minidis) SetEntryPoint(cmd *EntryPointCommand) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

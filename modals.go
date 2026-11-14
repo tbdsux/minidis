@@ -6,7 +6,8 @@ import (
 	"github.com/tbdsux/minidis/discord"
 )
 
-// ModalSubmitContext is passed to the handler of a submitted modal.
+// ModalSubmitContext is passed to the handler of a submitted modal. Read the
+// values with Text, Selected and Checked.
 type ModalSubmitContext struct {
 	*Context
 	Data discord.ModalSubmitInteractionData
@@ -50,6 +51,24 @@ func (m *Minidis) routeModalSubmit(c *Context) HandlerFunc {
 	}
 }
 
+// Update responds by replacing the text of the message whose component opened
+// the modal. A modal opened by a command has no such message.
+func (c *ModalSubmitContext) Update(content string) error {
+	return c.update(MessageEdit{Content: &content})
+}
+
+// UpdateWith responds by changing the message whose component opened the
+// modal.
+func (c *ModalSubmitContext) UpdateWith(edit MessageEdit) error {
+	return c.update(edit)
+}
+
+// DeferUpdate acknowledges the submission without changing the message whose
+// component opened the modal yet. Change it within 15 minutes using Edit.
+func (c *ModalSubmitContext) DeferUpdate() error {
+	return c.deferUpdate()
+}
+
 // Component returns the submitted component with the custom ID, such as a
 // *discord.TextInput, or nil.
 func (c *ModalSubmitContext) Component(customID string) discord.MessageComponent {
@@ -90,9 +109,9 @@ func findComponent(list discord.ComponentList, customID string) discord.MessageC
 	return nil
 }
 
-// Value returns the text entered in a text input or the option chosen in a
+// Text returns the text entered in a text input or the option chosen in a
 // radio group, or "" if there is none.
-func (c *ModalSubmitContext) Value(customID string) string {
+func (c *ModalSubmitContext) Text(customID string) string {
 	switch v := c.Component(customID).(type) {
 	case *discord.TextInput:
 		return v.Value
@@ -104,10 +123,10 @@ func (c *ModalSubmitContext) Value(customID string) string {
 	return ""
 }
 
-// Values returns the values chosen in a select menu or checkbox group, or the
+// Selected returns the values chosen in a select menu or checkbox group, or the
 // attachment IDs of a file upload. For user, role, mentionable and channel
 // selects the values are IDs, whose objects are in c.Data.Resolved.
-func (c *ModalSubmitContext) Values(customID string) []string {
+func (c *ModalSubmitContext) Selected(customID string) []string {
 	switch v := c.Component(customID).(type) {
 	case *discord.SelectMenu:
 		return v.Values
@@ -127,7 +146,7 @@ func (c *ModalSubmitContext) Checked(customID string) bool {
 
 // Attachments returns the files uploaded to a file upload.
 func (c *ModalSubmitContext) Attachments(customID string) []*discord.MessageAttachment {
-	ids := c.Values(customID)
+	ids := c.Selected(customID)
 	if len(ids) == 0 || c.Data.Resolved == nil {
 		return nil
 	}

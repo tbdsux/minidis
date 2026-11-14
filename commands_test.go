@@ -20,7 +20,7 @@ func TestSyncSendsNSFWAndLocalizations(t *testing.T) {
 	bot.AddUserCommand(&UserCommand{Name: "u", NSFW: true, NameLocalizations: fr})
 	bot.AddMessageCommand(&MessageCommand{Name: "m", NameLocalizations: fr})
 
-	if err := bot.SyncCommands("g"); err != nil {
+	if err := bot.SyncCommands(t.Context(), "g"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -152,8 +152,9 @@ func TestSubcommandRouting(t *testing.T) {
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"root","type":1,"options":[{"name":"sub","type":1}]}}`))
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"root","type":1,"options":[{"name":"grp","type":2,"options":[{"name":"nested","type":1}]}]}}`))
 
-	want := []string{"root", "sub", "nested"}
-	if len(ran) != 3 || ran[0] != want[0] || ran[1] != want[1] || ran[2] != want[2] {
+	// The root of a command with subcommands never runs: Discord does not
+	// send it, so a bare root is a stale command.
+	if fmt.Sprint(ran) != "[sub nested]" {
 		t.Errorf("ran = %v", ran)
 	}
 }
@@ -312,7 +313,7 @@ func TestSyncGlobalCommands(t *testing.T) {
 	bot, requests := newTestBot(t)
 	registerAll(bot)
 
-	if err := bot.SyncCommands(); err != nil {
+	if err := bot.SyncCommands(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -352,7 +353,7 @@ func TestSyncGuildCommandsOmitContexts(t *testing.T) {
 	bot, requests := newTestBot(t)
 	registerAll(bot)
 
-	if err := bot.SyncCommands("g1", "g2"); err != nil {
+	if err := bot.SyncCommands(t.Context(), "g1", "g2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -388,7 +389,7 @@ func TestSubcommandOptionsAreRegisteredAndPassedToHandlers(t *testing.T) {
 		}}},
 	})
 
-	if err := bot.SyncCommands("g"); err != nil {
+	if err := bot.SyncCommands(t.Context(), "g"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -423,7 +424,7 @@ func TestClearCommandsScope(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bot, requests := newTestBot(t)
 
-			if err := bot.ClearCommands(tt.guilds...); err != nil {
+			if err := bot.ClearCommands(t.Context(), tt.guilds...); err != nil {
 				t.Fatal(err)
 			}
 
@@ -506,17 +507,17 @@ func TestEndToEnd(t *testing.T) {
 		}
 		return c.Reply("pong")
 	}})
-	bot.OnChannelMessageCreate(func(c *ChannelMessageContext) error {
+	bot.HandleChannelMessage("c1", func(c *ChannelMessageContext) error {
 		_, err := c.Reply("hello")
 		return err
-	}, "c1")
+	})
 
-	if err := bot.Open(); err != nil {
+	if err := bot.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer bot.Close()
 
-	if err := bot.Open(); !errors.Is(err, client.ErrAlreadyOpen) {
+	if err := bot.Open(t.Context()); !errors.Is(err, client.ErrAlreadyOpen) {
 		t.Errorf("second Open = %v", err)
 	}
 

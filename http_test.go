@@ -3,7 +3,9 @@ package minidis
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,7 +33,7 @@ func newHTTPHandler(t *testing.T, bot *Minidis) (http.Handler, ed25519.PrivateKe
 		t.Fatal(err)
 	}
 
-	h, err := bot.HTTPHandler(hex.EncodeToString(public))
+	h, err := bot.HTTPHandler(t.Context(), hex.EncodeToString(public))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestHTTPHandlerRejectsBadKeys(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	for _, key := range []string{"", "zz", strings.Repeat("ab", 31)} {
-		if _, err := bot.HTTPHandler(key); err == nil {
+		if _, err := bot.HTTPHandler(t.Context(), key); err == nil {
 			t.Errorf("key %q was accepted", key)
 		}
 	}
@@ -121,8 +123,9 @@ func TestHTTPHandlerRunsHandlers(t *testing.T) {
 	close(release)
 	<-finished
 
+	// The first request is HTTPHandler looking up the bot user.
 	reqs := requests()
-	if len(reqs) != 2 || reqs[0].Path != "/interactions/i1/tok/callback" || reqs[1].Path != "/webhooks/app/tok" {
+	if len(reqs) != 3 || reqs[0].Path != "/users/@me" || reqs[1].Path != "/interactions/i1/tok/callback" || reqs[2].Path != "/webhooks/app/tok" {
 		t.Errorf("requests = %+v", reqs)
 	}
 }
@@ -180,8 +183,88 @@ func TestCloseWaitsForHTTPHandlersAndRefusesNewOnes(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, signedRequest(t, key, slashPayload("slow", "")))
+	h.ServeHTTP(w, signedRequest(t, key, strings.Replace(slashPayload("slow", ""), `"id":"i1"`, `"id":"i2"`, 1)))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status after Close = %d", w.Code)
+	}
+}
+
+func TestHTTPHandlerRejectsReplays(t *testing.T) {
+	bot, _ := newTestBot(t)
+	h, key := newHTTPHandler(t, bot)
+
+	runs := 0
+	bot.AddCommand(&Command{Name: "once", Execute: func(c *Context) error {
+		runs++
+		return c.Reply("done")
+	}})
+
+	payload := slashPayload("once", "")
+	first := signedRequest(t, key, payload)
+	replay := first.Clone(t.Context())
+	replay.Body = io.NopCloser(strings.NewReader(payload))
+
+	for i, want := range []int{http.StatusAccepted, http.StatusConflict} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, []*http.Request{first, replay}[i])
+		if w.Code != want {
+			t.Errorf("request %d: status = %d, want %d", i, w.Code, want)
+		}
+	}
+
+	// A correctly signed request with an old timestamp is refused too.
+	stale := httptest.NewRequest(http.MethodPost, "/interactions", strings.NewReader(payload))
+	old := fmt.Sprint(time.Now().Add(-time.Hour).Unix())
+	stale.Header.Set("X-Signature-Timestamp", old)
+	stale.Header.Set("X-Signature-Ed25519", hex.EncodeToString(ed25519.Sign(key, []byte(old+payload))))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, stale)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("stale request: status = %d", w.Code)
+	}
+
+	if runs != 1 {
+		t.Errorf("handler ran %d times", runs)
+	}
+}
+
+func TestHTTPErrorHandlerPanicIsContained(t *testing.T) {
+	bot, _ := newTestBot(t)
+	h, key := newHTTPHandler(t, bot)
+
+	calls := 0
+	bot.HandleError(func(*Context, error) {
+		calls++
+		panic("error handler bug")
+	})
+	bot.AddCommand(&Command{Name: "fail", Execute: func(*Context) error { return errors.New("nope") }})
+
+	// Without containment the panic would end the test binary, as the handler
+	// runs in a goroutine of its own.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, signedRequest(t, key, slashPayload("fail", "")))
+
+	if w.Code != http.StatusAccepted || calls != 1 {
+		t.Errorf("status = %d, error handler calls = %d", w.Code, calls)
+	}
+}
+
+func TestHTTPHandlerFillsInTheBotUser(t *testing.T) {
+	bot, _ := newTestBot(t)
+	h, key := newHTTPHandler(t, bot)
+
+	var botID string
+	bot.AddCommand(&Command{Name: "who", Execute: func(c *Context) error {
+		if c.Bot != nil {
+			botID = c.Bot.ID
+		}
+		return c.Reply("me")
+	}})
+
+	h.ServeHTTP(httptest.NewRecorder(), signedRequest(t, key, slashPayload("who", "")))
+
+	if botID != "sent" { // the fake API answers every GET with {"id":"sent"}
+		t.Errorf("c.Bot.ID = %q", botID)
 	}
 }

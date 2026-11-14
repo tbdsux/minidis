@@ -276,16 +276,16 @@ func commandsPath(appID, guildID string) string {
 }
 
 // ApplicationCommands lists an app's commands. An empty guildID means global commands.
-func (s *Session) ApplicationCommands(appID, guildID string) ([]*discord.ApplicationCommand, error) {
+func (s *Session) ApplicationCommands(ctx context.Context, appID, guildID string) ([]*discord.ApplicationCommand, error) {
 	var out []*discord.ApplicationCommand
-	err := s.Request(context.Background(), http.MethodGet, commandsPath(appID, guildID), nil, &out)
+	err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID), nil, &out)
 	return out, err
 }
 
 // ApplicationCommand fetches one command. An empty guildID means a global command.
-func (s *Session) ApplicationCommand(appID, guildID, commandID string) (*discord.ApplicationCommand, error) {
+func (s *Session) ApplicationCommand(ctx context.Context, appID, guildID, commandID string) (*discord.ApplicationCommand, error) {
 	out := &discord.ApplicationCommand{}
-	if err := s.Request(context.Background(), http.MethodGet, commandsPath(appID, guildID)+"/"+commandID, nil, out); err != nil {
+	if err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID)+"/"+commandID, nil, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -293,9 +293,9 @@ func (s *Session) ApplicationCommand(appID, guildID, commandID string) (*discord
 
 // ApplicationCommandCreate creates a command, or replaces the one with the same
 // name and type. An empty guildID means a global command.
-func (s *Session) ApplicationCommandCreate(appID, guildID string, cmd *discord.ApplicationCommand) (*discord.ApplicationCommand, error) {
+func (s *Session) ApplicationCommandCreate(ctx context.Context, appID, guildID string, cmd *discord.ApplicationCommand) (*discord.ApplicationCommand, error) {
 	out := &discord.ApplicationCommand{}
-	if err := s.Request(context.Background(), http.MethodPost, commandsPath(appID, guildID), cmd, out); err != nil {
+	if err := s.Request(ctx, http.MethodPost, commandsPath(appID, guildID), cmd, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -303,9 +303,9 @@ func (s *Session) ApplicationCommandCreate(appID, guildID string, cmd *discord.A
 
 // ApplicationCommandEdit changes a command; fields left empty in cmd are kept.
 // An empty guildID means a global command.
-func (s *Session) ApplicationCommandEdit(appID, guildID, commandID string, cmd *discord.ApplicationCommand) (*discord.ApplicationCommand, error) {
+func (s *Session) ApplicationCommandEdit(ctx context.Context, appID, guildID, commandID string, cmd *discord.ApplicationCommand) (*discord.ApplicationCommand, error) {
 	out := &discord.ApplicationCommand{}
-	if err := s.Request(context.Background(), http.MethodPatch, commandsPath(appID, guildID)+"/"+commandID, cmd, out); err != nil {
+	if err := s.Request(ctx, http.MethodPatch, commandsPath(appID, guildID)+"/"+commandID, cmd, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -315,59 +315,71 @@ func (s *Session) ApplicationCommandEdit(appID, guildID, commandID string, cmd *
 // app's commands in a guild. Editing them needs a user's Bearer token with the
 // applications.commands.permissions.update scope, which a bot token cannot
 // provide, so it has no typed method; use Request with such a Session.
-func (s *Session) GuildApplicationCommandsPermissions(appID, guildID string) ([]*discord.GuildApplicationCommandPermissions, error) {
+func (s *Session) GuildApplicationCommandsPermissions(ctx context.Context, appID, guildID string) ([]*discord.GuildApplicationCommandPermissions, error) {
+	if guildID == "" {
+		return nil, errNoPermissionGuild
+	}
+
 	var out []*discord.GuildApplicationCommandPermissions
-	err := s.Request(context.Background(), http.MethodGet, commandsPath(appID, guildID)+"/permissions", nil, &out)
+	err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID)+"/permissions", nil, &out)
 	return out, err
 }
 
 // ApplicationCommandPermissions returns the permission overwrites of one
 // command in a guild. See GuildApplicationCommandsPermissions about editing.
-func (s *Session) ApplicationCommandPermissions(appID, guildID, commandID string) (*discord.GuildApplicationCommandPermissions, error) {
+func (s *Session) ApplicationCommandPermissions(ctx context.Context, appID, guildID, commandID string) (*discord.GuildApplicationCommandPermissions, error) {
+	if guildID == "" {
+		return nil, errNoPermissionGuild
+	}
+
 	out := &discord.GuildApplicationCommandPermissions{}
-	if err := s.Request(context.Background(), http.MethodGet, commandsPath(appID, guildID)+"/"+commandID+"/permissions", nil, out); err != nil {
+	if err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID)+"/"+commandID+"/permissions", nil, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
+// errNoPermissionGuild is returned for permissions without a guild: they only
+// exist per guild, and the global path would name a command "permissions".
+var errNoPermissionGuild = errors.New("discord: command permissions need a guild ID")
+
 // ApplicationCommandDelete deletes a command. An empty guildID means a global command.
-func (s *Session) ApplicationCommandDelete(appID, guildID, commandID string) error {
-	return s.Request(context.Background(), http.MethodDelete, commandsPath(appID, guildID)+"/"+commandID, nil, nil)
+func (s *Session) ApplicationCommandDelete(ctx context.Context, appID, guildID, commandID string) error {
+	return s.Request(ctx, http.MethodDelete, commandsPath(appID, guildID)+"/"+commandID, nil, nil)
 }
 
 // ApplicationCommandBulkOverwrite replaces all of an app's commands in one call.
 // An empty guildID means global commands.
-func (s *Session) ApplicationCommandBulkOverwrite(appID, guildID string, commands []*discord.ApplicationCommand) ([]*discord.ApplicationCommand, error) {
+func (s *Session) ApplicationCommandBulkOverwrite(ctx context.Context, appID, guildID string, commands []*discord.ApplicationCommand) ([]*discord.ApplicationCommand, error) {
 	if commands == nil {
 		commands = []*discord.ApplicationCommand{}
 	}
 
 	var out []*discord.ApplicationCommand
-	err := s.Request(context.Background(), http.MethodPut, commandsPath(appID, guildID), commands, &out)
+	err := s.Request(ctx, http.MethodPut, commandsPath(appID, guildID), commands, &out)
 	return out, err
 }
 
 // InteractionRespond sends the initial response to an interaction.
-func (s *Session) InteractionRespond(i *discord.Interaction, res *discord.InteractionResponse) error {
+func (s *Session) InteractionRespond(ctx context.Context, i *discord.Interaction, res *discord.InteractionResponse) error {
 	var files []*discord.File
 	if res.Data != nil {
 		files = res.Data.Files
 	}
 
-	return s.requestWithFiles(context.Background(), http.MethodPost, callbackPath(i), res, files, nil)
+	return s.requestWithFiles(ctx, http.MethodPost, callbackPath(i), res, files, nil)
 }
 
 // InteractionRespondWithResponse is InteractionRespond, returning what the
 // response created, such as the message sent.
-func (s *Session) InteractionRespondWithResponse(i *discord.Interaction, res *discord.InteractionResponse) (*discord.InteractionCallbackResponse, error) {
+func (s *Session) InteractionRespondWithResponse(ctx context.Context, i *discord.Interaction, res *discord.InteractionResponse) (*discord.InteractionCallbackResponse, error) {
 	var files []*discord.File
 	if res.Data != nil {
 		files = res.Data.Files
 	}
 
 	out := &discord.InteractionCallbackResponse{}
-	if err := s.requestWithFiles(context.Background(), http.MethodPost, callbackPath(i)+"?with_response=true", res, files, out); err != nil {
+	if err := s.requestWithFiles(ctx, http.MethodPost, callbackPath(i)+"?with_response=true", res, files, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -378,14 +390,14 @@ func callbackPath(i *discord.Interaction) string {
 }
 
 // InteractionResponse fetches the original interaction response.
-func (s *Session) InteractionResponse(i *discord.Interaction) (*discord.Message, error) {
-	return s.FollowupMessage(i, "@original")
+func (s *Session) InteractionResponse(ctx context.Context, i *discord.Interaction) (*discord.Message, error) {
+	return s.FollowupMessage(ctx, i, "@original")
 }
 
 // FollowupMessage fetches a followup message.
-func (s *Session) FollowupMessage(i *discord.Interaction, messageID string) (*discord.Message, error) {
+func (s *Session) FollowupMessage(ctx context.Context, i *discord.Interaction, messageID string) (*discord.Message, error) {
 	out := &discord.Message{}
-	if err := s.Request(context.Background(), http.MethodGet, webhookMessagePath(i, messageID), nil, out); err != nil {
+	if err := s.Request(ctx, http.MethodGet, webhookMessagePath(i, messageID), nil, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -396,65 +408,65 @@ func webhookMessagePath(i *discord.Interaction, messageID string) string {
 }
 
 // InteractionResponseEdit edits the original interaction response.
-func (s *Session) InteractionResponseEdit(i *discord.Interaction, edit *discord.WebhookEdit) (*discord.Message, error) {
-	return s.FollowupMessageEdit(i, "@original", edit)
+func (s *Session) InteractionResponseEdit(ctx context.Context, i *discord.Interaction, edit *discord.WebhookEdit) (*discord.Message, error) {
+	return s.FollowupMessageEdit(ctx, i, "@original", edit)
 }
 
 // InteractionResponseDelete deletes the original interaction response.
-func (s *Session) InteractionResponseDelete(i *discord.Interaction) error {
-	return s.FollowupMessageDelete(i, "@original")
+func (s *Session) InteractionResponseDelete(ctx context.Context, i *discord.Interaction) error {
+	return s.FollowupMessageDelete(ctx, i, "@original")
 }
 
 // FollowupMessageCreate sends a followup message to an interaction.
-func (s *Session) FollowupMessageCreate(i *discord.Interaction, params *discord.WebhookParams) (*discord.Message, error) {
+func (s *Session) FollowupMessageCreate(ctx context.Context, i *discord.Interaction, params *discord.WebhookParams) (*discord.Message, error) {
 	out := &discord.Message{}
 	path := "/webhooks/" + i.AppID + "/" + i.Token
-	if err := s.requestWithFiles(context.Background(), http.MethodPost, path, params, params.Files, out); err != nil {
+	if err := s.requestWithFiles(ctx, http.MethodPost, path, params, params.Files, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
 // FollowupMessageEdit edits a followup message.
-func (s *Session) FollowupMessageEdit(i *discord.Interaction, messageID string, edit *discord.WebhookEdit) (*discord.Message, error) {
+func (s *Session) FollowupMessageEdit(ctx context.Context, i *discord.Interaction, messageID string, edit *discord.WebhookEdit) (*discord.Message, error) {
 	out := &discord.Message{}
-	if err := s.requestWithFiles(context.Background(), http.MethodPatch, webhookMessagePath(i, messageID), edit, edit.Files, out); err != nil {
+	if err := s.requestWithFiles(ctx, http.MethodPatch, webhookMessagePath(i, messageID), edit, edit.Files, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
 // FollowupMessageDelete deletes a followup message.
-func (s *Session) FollowupMessageDelete(i *discord.Interaction, messageID string) error {
-	return s.Request(context.Background(), http.MethodDelete, webhookMessagePath(i, messageID), nil, nil)
+func (s *Session) FollowupMessageDelete(ctx context.Context, i *discord.Interaction, messageID string) error {
+	return s.Request(ctx, http.MethodDelete, webhookMessagePath(i, messageID), nil, nil)
 }
 
 // ChannelMessageSendComplex sends a message to a channel.
-func (s *Session) ChannelMessageSendComplex(channelID string, msg *discord.MessageSend) (*discord.Message, error) {
+func (s *Session) ChannelMessageSendComplex(ctx context.Context, channelID string, msg *discord.MessageSend) (*discord.Message, error) {
 	out := &discord.Message{}
 	path := "/channels/" + channelID + "/messages"
-	if err := s.requestWithFiles(context.Background(), http.MethodPost, path, msg, msg.Files, out); err != nil {
+	if err := s.requestWithFiles(ctx, http.MethodPost, path, msg, msg.Files, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
 // ChannelMessageSend sends a text message to a channel.
-func (s *Session) ChannelMessageSend(channelID, content string) (*discord.Message, error) {
-	return s.ChannelMessageSendComplex(channelID, &discord.MessageSend{Content: content})
+func (s *Session) ChannelMessageSend(ctx context.Context, channelID, content string) (*discord.Message, error) {
+	return s.ChannelMessageSendComplex(ctx, channelID, &discord.MessageSend{Content: content})
 }
 
 // ChannelMessageSendReply sends a text message as a reply.
-func (s *Session) ChannelMessageSendReply(channelID, content string, reference *discord.MessageReference) (*discord.Message, error) {
-	return s.ChannelMessageSendComplex(channelID, &discord.MessageSend{Content: content, Reference: reference})
+func (s *Session) ChannelMessageSendReply(ctx context.Context, channelID, content string, reference *discord.MessageReference) (*discord.Message, error) {
+	return s.ChannelMessageSendComplex(ctx, channelID, &discord.MessageSend{Content: content, Reference: reference})
 }
 
 // ChannelMessageSendEmbed sends an embed to a channel.
-func (s *Session) ChannelMessageSendEmbed(channelID string, embed *discord.MessageEmbed) (*discord.Message, error) {
-	return s.ChannelMessageSendComplex(channelID, &discord.MessageSend{Embeds: []*discord.MessageEmbed{embed}})
+func (s *Session) ChannelMessageSendEmbed(ctx context.Context, channelID string, embed *discord.MessageEmbed) (*discord.Message, error) {
+	return s.ChannelMessageSendComplex(ctx, channelID, &discord.MessageSend{Embeds: []*discord.MessageEmbed{embed}})
 }
 
 // ChannelMessageSendEmbedReply sends an embed as a reply.
-func (s *Session) ChannelMessageSendEmbedReply(channelID string, embed *discord.MessageEmbed, reference *discord.MessageReference) (*discord.Message, error) {
-	return s.ChannelMessageSendComplex(channelID, &discord.MessageSend{Embeds: []*discord.MessageEmbed{embed}, Reference: reference})
+func (s *Session) ChannelMessageSendEmbedReply(ctx context.Context, channelID string, embed *discord.MessageEmbed, reference *discord.MessageReference) (*discord.Message, error) {
+	return s.ChannelMessageSendComplex(ctx, channelID, &discord.MessageSend{Embeds: []*discord.MessageEmbed{embed}, Reference: reference})
 }

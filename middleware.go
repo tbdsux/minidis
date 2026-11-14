@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"slices"
 )
 
@@ -20,6 +21,13 @@ type PanicError struct {
 
 func (e *PanicError) Error() string {
 	return fmt.Sprintf("minidis: handler panicked: %v", e.Value)
+}
+
+// Unwrap returns the panic value if it is an error, so that errors.Is and
+// errors.As see through the panic.
+func (e *PanicError) Unwrap() error {
+	err, _ := e.Value.(error)
+	return err
 }
 
 // HandlerFunc is an interaction handler. Component, modal and context menu
@@ -53,21 +61,21 @@ func (m *Minidis) chain(handler HandlerFunc) HandlerFunc {
 	return handler
 }
 
-// OnError sets the function that receives errors returned by interaction
+// HandleError sets the function that receives errors returned by interaction
 // handlers and middleware, replacing the default of logging them. A panic
-// arrives as a *PanicError. Use it to tell the user something failed, but note
-// that the interaction may already have been responded to.
-func (m *Minidis) OnError(h func(c *Context, err error)) {
+// arrives as a *PanicError. Use it to tell the user something failed, with
+// c.Responded deciding between c.Reply and c.Followup. A panic in it is logged.
+func (m *Minidis) HandleError(h func(c *Context, err error)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.onError = h
 }
 
-// OnChannelMessageError sets the function that receives errors from
-// OnChannelMessageCreate handlers, replacing the default of logging them. A
-// panic arrives as a *PanicError.
-func (m *Minidis) OnChannelMessageError(h func(c *ChannelMessageContext, err error)) {
+// HandleChannelMessageError sets the function that receives errors from
+// HandleChannelMessage handlers, replacing the default of logging them. A
+// panic arrives as a *PanicError. A panic in it is logged.
+func (m *Minidis) HandleChannelMessageError(h func(c *ChannelMessageContext, err error)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -79,11 +87,14 @@ func (m *Minidis) handleError(c *Context, err error) {
 	h := m.onError
 	m.mu.RUnlock()
 
-	if h != nil {
-		h(c, err)
+	source := "interaction " + c.ID
+	if h == nil {
+		logError(source, err)
 		return
 	}
-	logError("interaction "+c.ID, err)
+
+	defer recoverErrorHandler(source)
+	h(c, err)
 }
 
 func (m *Minidis) handleChannelError(c *ChannelMessageContext, err error) {
@@ -91,11 +102,22 @@ func (m *Minidis) handleChannelError(c *ChannelMessageContext, err error) {
 	h := m.onChannelError
 	m.mu.RUnlock()
 
-	if h != nil {
-		h(c, err)
+	source := "channel message handler for " + c.ChannelID
+	if h == nil {
+		logError(source, err)
 		return
 	}
-	logError("channel message handler for "+c.ChannelID, err)
+
+	defer recoverErrorHandler(source)
+	h(c, err)
+}
+
+// recoverErrorHandler logs a panic in an error handler. Passing it on would
+// end the program, as nothing above it recovers on the HTTP path.
+func recoverErrorHandler(source string) {
+	if r := recover(); r != nil {
+		logError("error handler of "+source, &PanicError{Value: r, Stack: debug.Stack()})
+	}
 }
 
 func logError(source string, err error) {

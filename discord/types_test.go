@@ -276,11 +276,38 @@ func TestDecodeMessagePoll(t *testing.T) {
 }
 
 func TestWebhookEditFlags(t *testing.T) {
-	got, err := json.Marshal(WebhookEdit{Flags: MessageFlagsIsComponentsV2})
+	v2, none := MessageFlagsIsComponentsV2, MessageFlags(0)
+
+	tests := []struct {
+		name string
+		edit any
+		want string
+	}{
+		{"unset flags are left out", WebhookEdit{}, `{}`},
+		{"zero clears the flags", WebhookEdit{Flags: &none}, `{"flags":0}`},
+		{"components v2 nulls content and poll", WebhookEdit{Flags: &v2}, `{"flags":32768,"content":null,"poll":null}`},
+		{"components v2 keeps a set content", WebhookEdit{Flags: &v2, Content: String("x")}, `{"flags":32768,"content":"x","poll":null}`},
+		{"response data does the same", InteractionResponseData{Flags: v2}, `{"flags":32768,"content":null,"poll":null}`},
+		{"other response data is unchanged", InteractionResponseData{Flags: MessageFlagsEphemeral}, `{"flags":64}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := json.Marshal(tt.edit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertJSONEqual(t, got, tt.want)
+		})
+	}
+}
+
+func TestApplicationCommandEditLeavesNameOut(t *testing.T) {
+	got, err := json.Marshal(ApplicationCommand{Description: "new"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertJSONEqual(t, got, `{"flags":32768}`)
+	assertJSONEqual(t, got, `{"description":"new"}`)
 }
 
 func TestEntryPointCommandEncodes(t *testing.T) {

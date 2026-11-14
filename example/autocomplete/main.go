@@ -35,10 +35,24 @@ func main() {
 	})
 
 	// Errors and panics from any interaction handler end up here
-	bot.OnError(func(c *minidis.Context, err error) {
+	bot.HandleError(func(c *minidis.Context, err error) {
 		log.Printf("interaction failed: %v", err)
-		if replyErr := c.ReplyWith(minidis.Message{Content: "Something went wrong.", Ephemeral: true}); replyErr != nil {
-			log.Printf("could not tell the user: %v", replyErr)
+
+		// Autocomplete can only answer with choices.
+		if c.Interaction.Type == discord.InteractionApplicationCommandAutocomplete {
+			return
+		}
+
+		// After a reply or a deferral, the user is told in a followup instead.
+		msg := minidis.Message{Content: "Something went wrong.", Ephemeral: true}
+		var tellErr error
+		if c.Responded() {
+			_, tellErr = c.FollowupWith(msg)
+		} else {
+			tellErr = c.ReplyWith(msg)
+		}
+		if tellErr != nil {
+			log.Printf("could not tell the user: %v", tellErr)
 		}
 	})
 
@@ -93,14 +107,14 @@ func main() {
 		})
 	})
 
-	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
-	}
-
-	// Run until CTRL+C
+	// Stop on CTRL+C
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Register the commands. This replaces any registered before.
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
+		log.Fatalln("Failed to sync commands:", err)
+	}
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
 	if err := bot.Run(ctx); err != nil {

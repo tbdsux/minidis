@@ -2,25 +2,33 @@ package minidis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/tbdsux/minidis/discord"
 )
 
 // SyncCommands registers the added commands with Discord, replacing any others.
-// With no guild IDs the commands are registered globally. It can be called
-// before Open.
-func (m *Minidis) SyncCommands(guildIDs ...string) error {
+// With no guild IDs the commands are registered globally. Empty IDs are
+// ignored, so that splitting an unset environment variable means global. It
+// can be called before Open.
+func (m *Minidis) SyncCommands(ctx context.Context, guildIDs ...string) error {
+	if err := m.validateCommands(); err != nil {
+		return err
+	}
+
+	guildIDs = nonEmpty(guildIDs)
 	if len(guildIDs) == 0 {
-		return m.overwriteCommands("", m.buildCommands(true))
+		return m.overwriteCommands(ctx, "", m.buildCommands(true))
 	}
 
 	commands := m.buildCommands(false)
 	for _, id := range guildIDs {
-		if err := m.overwriteCommands(id, commands); err != nil {
+		if err := m.overwriteCommands(ctx, id, commands); err != nil {
 			return err
 		}
 	}
@@ -29,39 +37,74 @@ func (m *Minidis) SyncCommands(guildIDs ...string) error {
 
 // ClearCommands removes the application commands from the given guilds.
 // If no guilds are given, the global commands are removed instead, except
-// the entry point command (see SetEntryPoint).
-func (m *Minidis) ClearCommands(guildIDs ...string) error {
+// the entry point command (see SetEntryPoint). Empty IDs are ignored.
+func (m *Minidis) ClearCommands(ctx context.Context, guildIDs ...string) error {
+	guildIDs = nonEmpty(guildIDs)
 	if len(guildIDs) == 0 {
-		return m.overwriteCommands("", nil)
+		return m.overwriteCommands(ctx, "", nil)
 	}
 
 	for _, id := range guildIDs {
-		if err := m.overwriteCommands(id, nil); err != nil {
+		if err := m.overwriteCommands(ctx, id, nil); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (m *Minidis) overwriteCommands(guildID string, commands []*discord.ApplicationCommand) error {
-	appID, err := m.applicationID()
+// nonEmpty returns the IDs with surrounding spaces removed, without empty ones.
+func nonEmpty(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// validateCommands catches what Discord would reject for every command at
+// once, with a clearer message.
+func (m *Minidis) validateCommands() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(m.commands)) {
+		if cmd := m.commands[name]; cmd.hasSubcommands() && len(cmd.Options) > 0 {
+			errs = append(errs, fmt.Errorf("minidis: command %q has both Options and subcommands; move the options into the subcommands", name))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Minidis) overwriteCommands(ctx context.Context, guildID string, commands []*discord.ApplicationCommand) error {
+	appID, err := m.applicationID(ctx)
 	if err != nil {
 		return err
 	}
 
-	// Discord refuses to remove the entry point command in a bulk update, and
-	// creates one itself for apps with an Activity, so keep it unless replaced.
-	if guildID == "" && !slices.ContainsFunc(commands, isEntryPoint) {
-		existing, err := m.globalEntryPoint(appID)
+	// Discord creates an entry point command for apps with an Activity, allows
+	// only one, and refuses to remove it in a bulk update. So keep it, or
+	// update it in place with the one set by SetEntryPoint.
+	if guildID == "" {
+		existing, err := m.globalEntryPoint(ctx, appID)
 		if err != nil {
 			return err
 		}
 		if existing != nil {
-			commands = append(slices.Clone(commands), existing)
+			commands = slices.Clone(commands)
+			if i := slices.IndexFunc(commands, isEntryPoint); i >= 0 {
+				replacement := *commands[i]
+				replacement.ID = existing.ID
+				commands[i] = &replacement
+			} else {
+				commands = append(commands, existing)
+			}
 		}
 	}
 
-	_, err = m.Session.ApplicationCommandBulkOverwrite(appID, guildID, commands)
+	_, err = m.Session.ApplicationCommandBulkOverwrite(ctx, appID, guildID, commands)
 	return err
 }
 
@@ -69,23 +112,39 @@ func isEntryPoint(cmd *discord.ApplicationCommand) bool {
 	return cmd.Type == discord.PrimaryEntryPointApplicationCommand
 }
 
-// globalEntryPoint returns the entry point command Discord has, or nil.
-func (m *Minidis) globalEntryPoint(appID string) (*discord.ApplicationCommand, error) {
+// globalEntryPoint returns the entry point command Discord has, or nil. It
+// carries only the fields a bulk overwrite takes, so that it can be sent back.
+func (m *Minidis) globalEntryPoint(ctx context.Context, appID string) (*discord.ApplicationCommand, error) {
 	var commands []*discord.ApplicationCommand
 	path := "/applications/" + appID + "/commands?with_localizations=true"
-	if err := m.Session.Request(context.Background(), http.MethodGet, path, nil, &commands); err != nil {
+	if err := m.Session.Request(ctx, http.MethodGet, path, nil, &commands); err != nil {
 		return nil, fmt.Errorf("minidis: looking for the entry point command: %w", err)
 	}
 
-	if i := slices.IndexFunc(commands, isEntryPoint); i >= 0 {
-		return commands[i], nil
+	i := slices.IndexFunc(commands, isEntryPoint)
+	if i < 0 {
+		return nil, nil
 	}
-	return nil, nil
+
+	c := commands[i]
+	return &discord.ApplicationCommand{
+		ID:                       c.ID,
+		Type:                     c.Type,
+		Name:                     c.Name,
+		NameLocalizations:        c.NameLocalizations,
+		Description:              c.Description,
+		DescriptionLocalizations: c.DescriptionLocalizations,
+		DefaultMemberPermissions: c.DefaultMemberPermissions,
+		NSFW:                     c.NSFW,
+		Contexts:                 c.Contexts,
+		IntegrationTypes:         c.IntegrationTypes,
+		Handler:                  c.Handler,
+	}, nil
 }
 
 // applicationID returns the bot's application ID, asking Discord for it if the
 // session is not open.
-func (m *Minidis) applicationID() (string, error) {
+func (m *Minidis) applicationID(ctx context.Context) (string, error) {
 	if id := m.Session.ApplicationID(); id != "" {
 		return id, nil
 	}
@@ -100,7 +159,7 @@ func (m *Minidis) applicationID() (string, error) {
 	var app struct {
 		ID string `json:"id"`
 	}
-	if err := m.Session.Request(context.Background(), http.MethodGet, "/applications/@me", nil, &app); err != nil {
+	if err := m.Session.Request(ctx, http.MethodGet, "/applications/@me", nil, &app); err != nil {
 		return "", fmt.Errorf("minidis: looking up the application ID: %w", err)
 	}
 
@@ -221,7 +280,21 @@ func (cmd *EntryPointCommand) build() *discord.ApplicationCommand {
 		DefaultMemberPermissions: cmd.DefaultMemberPermissions,
 		NSFW:                     nsfw(cmd.NSFW),
 	}
-	setGlobalScope(res, cmd.Contexts, cmd.IntegrationTypes)
+	if res.Handler == 0 {
+		res.Handler = discord.EntryPointHandlerDiscordLaunchActivity
+		if cmd.Execute != nil {
+			res.Handler = discord.EntryPointHandlerApp
+		}
+	}
+
+	// Activities are made for DMs and group chats as much as for guilds, so
+	// nil contexts keep Discord's default of everywhere.
+	if cmd.Contexts != nil {
+		res.Contexts = &cmd.Contexts
+	}
+	if cmd.IntegrationTypes != nil {
+		res.IntegrationTypes = &cmd.IntegrationTypes
+	}
 	return res
 }
 
@@ -234,12 +307,16 @@ func nsfw(v bool) *bool {
 }
 
 // setGlobalScope sets the fields Discord only accepts on global commands. Nil
-// contexts mean guilds only.
+// contexts mean guilds only, where member permissions apply, except for
+// user-installable commands: those are mostly used outside guilds, so nil
+// keeps Discord's default of everywhere.
 func setGlobalScope(cmd *discord.ApplicationCommand, contexts []discord.InteractionContextType, types []discord.ApplicationIntegrationType) {
-	if contexts == nil {
+	if contexts == nil && !slices.Contains(types, discord.ApplicationIntegrationUserInstall) {
 		contexts = []discord.InteractionContextType{discord.InteractionContextGuild}
 	}
-	cmd.Contexts = &contexts
+	if contexts != nil {
+		cmd.Contexts = &contexts
+	}
 
 	if types != nil {
 		cmd.IntegrationTypes = &types

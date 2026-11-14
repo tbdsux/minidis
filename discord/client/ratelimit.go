@@ -14,7 +14,9 @@ import (
 const maxTrackedBuckets = 2048
 
 type bucket struct {
-	gate sync.Mutex // serializes requests in this bucket; held across the HTTP call
+	// gate serializes requests in this bucket and is held across the HTTP call.
+	// It is a channel rather than a mutex so that waiting for it obeys ctx.
+	gate chan struct{}
 
 	// guarded by rateLimiter.mu
 	limited   bool
@@ -54,7 +56,7 @@ func (l *rateLimiter) bucketFor(route string) *bucket {
 func (l *rateLimiter) getOrCreate(key string) *bucket {
 	b, ok := l.buckets[key]
 	if !ok {
-		b = &bucket{}
+		b = &bucket{gate: make(chan struct{}, 1)}
 		l.buckets[key] = b
 	}
 	return b
@@ -77,7 +79,11 @@ func (l *rateLimiter) sweep() {
 // acquire blocks until a request may be sent for route. The caller must release the bucket.
 func (l *rateLimiter) acquire(ctx context.Context, route string) (*bucket, error) {
 	b := l.bucketFor(route)
-	b.gate.Lock()
+	select {
+	case b.gate <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
 	l.mu.Lock()
 	wait := time.Until(l.globalUntil)
@@ -87,7 +93,7 @@ func (l *rateLimiter) acquire(ctx context.Context, route string) (*bucket, error
 	l.mu.Unlock()
 
 	if err := sleep(ctx, wait); err != nil {
-		b.gate.Unlock()
+		<-b.gate
 		return nil, err
 	}
 
@@ -99,7 +105,7 @@ func (l *rateLimiter) release(b *bucket, route, major string, h http.Header) {
 	if h != nil {
 		l.update(b, route, major, h)
 	}
-	b.gate.Unlock()
+	<-b.gate
 }
 
 func (l *rateLimiter) update(b *bucket, route, major string, h http.Header) {

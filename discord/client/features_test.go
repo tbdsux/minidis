@@ -36,7 +36,7 @@ func TestHandlerPanicDoesNotStopTheSession(t *testing.T) {
 		close(survived)
 	})
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -63,7 +63,7 @@ func TestShutdownWaitsForHandlers(t *testing.T) {
 		finished.Store(true)
 	})
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, started, "the handler")
@@ -93,7 +93,7 @@ func TestShutdownStopsWaitingWhenContextEnds(t *testing.T) {
 		<-release
 	})
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, started, "the handler")
@@ -158,7 +158,7 @@ func TestPresenceIsSentAndSurvivesReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -196,7 +196,7 @@ func TestTypedEvents(t *testing.T) {
 	})
 	s.OnGuildMemberRemove(func(_ *Session, e *discord.GuildMemberRemove) { seen <- "leave " + e.User.ID })
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -223,41 +223,52 @@ func TestResourceEndpoints(t *testing.T) {
 		want string
 		call func(s *Session) error
 	}{
-		{"GET /channels/C/messages/M", func(s *Session) error { _, err := s.ChannelMessage("C", "M"); return err }},
-		{"GET /channels/C/messages", func(s *Session) error { _, err := s.ChannelMessages("C", 0, ""); return err }},
-		{"GET /channels/C/messages?before=B&limit=5", func(s *Session) error { _, err := s.ChannelMessages("C", 5, "B"); return err }},
-		{"PATCH /channels/C/messages/M", func(s *Session) error { _, err := s.ChannelMessageEdit("C", "M", "x"); return err }},
-		{"DELETE /channels/C/messages/M", func(s *Session) error { return s.ChannelMessageDelete("C", "M") }},
-		{"POST /channels/C/messages/bulk-delete", func(s *Session) error { return s.ChannelMessagesBulkDelete("C", []string{"1", "2"}) }},
-		{"PUT /channels/C/messages/M/reactions/%F0%9F%91%8D/@me", func(s *Session) error { return s.MessageReactionAdd("C", "M", "👍") }},
-		{"PUT /channels/C/messages/M/reactions/name:1/@me", func(s *Session) error { return s.MessageReactionAdd("C", "M", "name:1") }},
-		{"DELETE /channels/C/messages/M/reactions/x/@me", func(s *Session) error { return s.MessageReactionRemove("C", "M", "x", "") }},
-		{"DELETE /channels/C/messages/M/reactions/x/U", func(s *Session) error { return s.MessageReactionRemove("C", "M", "x", "U") }},
-		{"DELETE /channels/C/messages/M/reactions", func(s *Session) error { return s.MessageReactionsRemoveAll("C", "M") }},
-		{"PUT /channels/C/messages/pins/M", func(s *Session) error { return s.ChannelMessagePin("C", "M") }},
-		{"DELETE /channels/C/messages/pins/M", func(s *Session) error { return s.ChannelMessageUnpin("C", "M") }},
-		{"GET /channels/C/messages/pins", func(s *Session) error { _, err := s.ChannelPins("C", 0, time.Time{}); return err }},
-		{"GET /channels/C/messages/pins?before=2026-01-02T03%3A04%3A05Z&limit=10", func(s *Session) error {
-			_, err := s.ChannelPins("C", 10, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+		{"GET /channels/C/messages/M", func(s *Session) error { _, err := s.ChannelMessage(context.Background(), "C", "M"); return err }},
+		{"GET /channels/C/messages", func(s *Session) error { _, err := s.ChannelMessages(context.Background(), "C", 0, ""); return err }},
+		{"GET /channels/C/messages?before=B&limit=5", func(s *Session) error { _, err := s.ChannelMessages(context.Background(), "C", 5, "B"); return err }},
+		{"PATCH /channels/C/messages/M", func(s *Session) error {
+			_, err := s.ChannelMessageEdit(context.Background(), "C", "M", "x")
 			return err
 		}},
-		{"POST /guilds/G/roles", func(s *Session) error { _, err := s.GuildRoleCreate("G", &discord.RoleParams{}); return err }},
-		{"PATCH /guilds/G/roles/R", func(s *Session) error { _, err := s.GuildRoleEdit("G", "R", &discord.RoleParams{}); return err }},
-		{"DELETE /guilds/G/roles/R", func(s *Session) error { return s.GuildRoleDelete("G", "R") }},
-		{"GET /channels/C", func(s *Session) error { _, err := s.Channel("C"); return err }},
-		{"POST /users/@me/channels", func(s *Session) error { _, err := s.UserChannelCreate("U"); return err }},
-		{"GET /guilds/G?with_counts=true", func(s *Session) error { _, err := s.Guild("G"); return err }},
-		{"GET /guilds/G/channels", func(s *Session) error { _, err := s.GuildChannels("G"); return err }},
-		{"GET /guilds/G/roles", func(s *Session) error { _, err := s.GuildRoles("G"); return err }},
-		{"GET /guilds/G/members/U", func(s *Session) error { _, err := s.GuildMember("G", "U"); return err }},
-		{"GET /guilds/G/members?after=A&limit=2", func(s *Session) error { _, err := s.GuildMembers("G", 2, "A"); return err }},
-		{"DELETE /guilds/G/members/U", func(s *Session) error { return s.GuildMemberRemove("G", "U") }},
-		{"PUT /guilds/G/members/U/roles/R", func(s *Session) error { return s.GuildMemberRoleAdd("G", "U", "R") }},
-		{"DELETE /guilds/G/members/U/roles/R", func(s *Session) error { return s.GuildMemberRoleRemove("G", "U", "R") }},
-		{"GET /guilds/G/bans/U", func(s *Session) error { _, err := s.GuildBan("G", "U"); return err }},
-		{"GET /guilds/G/bans?limit=3", func(s *Session) error { _, err := s.GuildBans("G", 3, ""); return err }},
-		{"PUT /guilds/G/bans/U", func(s *Session) error { return s.GuildBanCreate("G", "U", 60) }},
-		{"DELETE /guilds/G/bans/U", func(s *Session) error { return s.GuildBanDelete("G", "U") }},
+		{"DELETE /channels/C/messages/M", func(s *Session) error { return s.ChannelMessageDelete(context.Background(), "C", "M") }},
+		{"POST /channels/C/messages/bulk-delete", func(s *Session) error {
+			return s.ChannelMessagesBulkDelete(context.Background(), "C", []string{"1", "2"})
+		}},
+		{"PUT /channels/C/messages/M/reactions/%F0%9F%91%8D/@me", func(s *Session) error { return s.MessageReactionAdd(context.Background(), "C", "M", "👍") }},
+		{"PUT /channels/C/messages/M/reactions/name:1/@me", func(s *Session) error { return s.MessageReactionAdd(context.Background(), "C", "M", "name:1") }},
+		{"DELETE /channels/C/messages/M/reactions/x/@me", func(s *Session) error { return s.MessageReactionRemove(context.Background(), "C", "M", "x", "") }},
+		{"DELETE /channels/C/messages/M/reactions/x/U", func(s *Session) error { return s.MessageReactionRemove(context.Background(), "C", "M", "x", "U") }},
+		{"DELETE /channels/C/messages/M/reactions", func(s *Session) error { return s.MessageReactionsRemoveAll(context.Background(), "C", "M") }},
+		{"PUT /channels/C/messages/pins/M", func(s *Session) error { return s.ChannelMessagePin(context.Background(), "C", "M") }},
+		{"DELETE /channels/C/messages/pins/M", func(s *Session) error { return s.ChannelMessageUnpin(context.Background(), "C", "M") }},
+		{"GET /channels/C/messages/pins", func(s *Session) error { _, err := s.ChannelPins(context.Background(), "C", 0, time.Time{}); return err }},
+		{"GET /channels/C/messages/pins?before=2026-01-02T03%3A04%3A05Z&limit=10", func(s *Session) error {
+			_, err := s.ChannelPins(context.Background(), "C", 10, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+			return err
+		}},
+		{"POST /guilds/G/roles", func(s *Session) error {
+			_, err := s.GuildRoleCreate(context.Background(), "G", &discord.RoleParams{})
+			return err
+		}},
+		{"PATCH /guilds/G/roles/R", func(s *Session) error {
+			_, err := s.GuildRoleEdit(context.Background(), "G", "R", &discord.RoleParams{})
+			return err
+		}},
+		{"DELETE /guilds/G/roles/R", func(s *Session) error { return s.GuildRoleDelete(context.Background(), "G", "R") }},
+		{"GET /channels/C", func(s *Session) error { _, err := s.Channel(context.Background(), "C"); return err }},
+		{"POST /users/@me/channels", func(s *Session) error { _, err := s.UserChannelCreate(context.Background(), "U"); return err }},
+		{"GET /guilds/G?with_counts=true", func(s *Session) error { _, err := s.Guild(context.Background(), "G"); return err }},
+		{"GET /guilds/G/channels", func(s *Session) error { _, err := s.GuildChannels(context.Background(), "G"); return err }},
+		{"GET /guilds/G/roles", func(s *Session) error { _, err := s.GuildRoles(context.Background(), "G"); return err }},
+		{"GET /guilds/G/members/U", func(s *Session) error { _, err := s.GuildMember(context.Background(), "G", "U"); return err }},
+		{"GET /guilds/G/members?after=A&limit=2", func(s *Session) error { _, err := s.GuildMembers(context.Background(), "G", 2, "A"); return err }},
+		{"DELETE /guilds/G/members/U", func(s *Session) error { return s.GuildMemberRemove(context.Background(), "G", "U") }},
+		{"PUT /guilds/G/members/U/roles/R", func(s *Session) error { return s.GuildMemberRoleAdd(context.Background(), "G", "U", "R") }},
+		{"DELETE /guilds/G/members/U/roles/R", func(s *Session) error { return s.GuildMemberRoleRemove(context.Background(), "G", "U", "R") }},
+		{"GET /guilds/G/bans/U", func(s *Session) error { _, err := s.GuildBan(context.Background(), "G", "U"); return err }},
+		{"GET /guilds/G/bans?limit=3", func(s *Session) error { _, err := s.GuildBans(context.Background(), "G", 3, ""); return err }},
+		{"PUT /guilds/G/bans/U", func(s *Session) error { return s.GuildBanCreate(context.Background(), "G", "U", 60) }},
+		{"DELETE /guilds/G/bans/U", func(s *Session) error { return s.GuildBanDelete(context.Background(), "G", "U") }},
 	}
 
 	for _, tt := range tests {
@@ -283,7 +294,7 @@ func TestChannelPinsDecodesWrapper(t *testing.T) {
 		w.Write([]byte(`{"items":[{"pinned_at":"2026-01-02T03:04:05Z","message":{"id":"M"}}],"has_more":true}`))
 	})
 
-	pins, err := s.ChannelPins("C", 0, time.Time{})
+	pins, err := s.ChannelPins(context.Background(), "C", 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +311,7 @@ func TestRoleParamsEncoding(t *testing.T) {
 		w.Write([]byte(`{"id":"R","name":"mods","permissions":"8","colors":{"primary_color":255,"secondary_color":null,"tertiary_color":null}}`))
 	})
 
-	role, err := s.GuildRoleCreate("G", &discord.RoleParams{
+	role, err := s.GuildRoleCreate(context.Background(), "G", &discord.RoleParams{
 		Name:        "mods",
 		Permissions: discord.Int64(8),
 		Colors:      &discord.RoleColors{Primary: 255},
@@ -324,7 +335,7 @@ func TestFetchDecodesResources(t *testing.T) {
 		w.Write([]byte(`{"id":"G","name":"guild","approximate_member_count":4,"roles":[{"id":"R","permissions":"8"}]}`))
 	})
 
-	g, err := s.Guild("G")
+	g, err := s.Guild(context.Background(), "G")
 	if err != nil {
 		t.Fatal(err)
 	}

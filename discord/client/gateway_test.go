@@ -211,14 +211,14 @@ func TestOpenIdentifiesAndDispatches(t *testing.T) {
 		}
 	})
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
 	if s.User().ID != "42" || s.ApplicationID() != "99" {
 		t.Errorf("after Open: user=%+v app=%q", s.User(), s.ApplicationID())
 	}
-	if err := s.Open(); !errors.Is(err, ErrAlreadyOpen) {
+	if err := s.Open(t.Context()); !errors.Is(err, ErrAlreadyOpen) {
 		t.Errorf("second Open = %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestOpenFailsOnFatalCloseCode(t *testing.T) {
 	})
 
 	var closeErr *GatewayCloseError
-	if err := s.Open(); !errors.As(err, &closeErr) || closeErr.Code != 4014 {
+	if err := s.Open(t.Context()); !errors.As(err, &closeErr) || closeErr.Code != 4014 {
 		t.Fatalf("Open = %v, want close code 4014", err)
 	}
 	if n := g.conns.Load(); n != 1 {
@@ -254,7 +254,7 @@ func TestOpenRefusesWithoutSessionStarts(t *testing.T) {
 	s, g := newFakeGateway(t)
 	g.remain.Store(0)
 
-	if err := s.Open(); err == nil || !strings.Contains(err.Error(), "no session starts") {
+	if err := s.Open(t.Context()); err == nil || !strings.Contains(err.Error(), "no session starts") {
 		t.Fatalf("Open = %v", err)
 	}
 	if n := g.conns.Load(); n != 0 {
@@ -299,7 +299,7 @@ func TestReconnectOpResumes(t *testing.T) {
 		c.waitClosed()
 	}, resumeScript(t, 5, done))
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -318,7 +318,7 @@ func TestResumableCloseCodeResumes(t *testing.T) {
 		c.waitClosed()
 	}, resumeScript(t, 9, done))
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -336,7 +336,7 @@ func TestMissedHeartbeatACKResumes(t *testing.T) {
 		c.waitClosed() // never ACKs
 	}, resumeScript(t, 3, done))
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -370,7 +370,7 @@ func TestInvalidSessionIdentifiesAgain(t *testing.T) {
 				c.waitClosed()
 			})
 
-			if err := s.Open(); err != nil {
+			if err := s.Open(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close()
@@ -408,7 +408,7 @@ func TestHeartbeatSendsLastSequenceAndAnswersServerRequest(t *testing.T) {
 		c.waitClosed()
 	})
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -427,7 +427,7 @@ func TestCloseAllowsReopen(t *testing.T) {
 	s, g := newFakeGateway(t, script, script)
 
 	for range 2 {
-		if err := s.Open(); err != nil {
+		if err := s.Open(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.Close(); err != nil {

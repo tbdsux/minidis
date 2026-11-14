@@ -28,10 +28,8 @@ func main() {
 
 	// Simple Ping command
 	bot.AddCommand(&minidis.Command{
-		Name:                     "ping",
-		Description:              "Simple ping command.",
-		DefaultMemberPermissions: discord.Int64(1 << 31),
-		Options:                  []*discord.ApplicationCommandOption{},
+		Name:        "ping",
+		Description: "Simple ping command.",
 		Execute: func(c *minidis.Context) error {
 			return c.Reply(fmt.Sprintf("Hello **%s**, pong? Guild: %s", c.Author.Username, c.GuildID))
 		},
@@ -39,9 +37,10 @@ func main() {
 
 	// Deferred replies
 	bot.AddCommand(&minidis.Command{
-		Name:                     "defer",
-		Description:              "Deferred reply.",
-		DefaultMemberPermissions: discord.Int64(1 << 31),
+		Name:        "defer",
+		Description: "Deferred reply.",
+		// Only members who can manage messages see this command.
+		DefaultMemberPermissions: discord.Int64(discord.PermissionManageMessages),
 		Execute: func(c *minidis.Context) error {
 			if err := c.DeferReply(true); err != nil {
 				return err
@@ -91,14 +90,14 @@ func main() {
 		},
 	})
 
-	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
-	}
-
-	// Run until CTRL+C
+	// Stop on CTRL+C
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Register the commands. This replaces any registered before.
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
+		log.Fatalln("Failed to sync commands:", err)
+	}
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
 	if err := bot.Run(ctx); err != nil {

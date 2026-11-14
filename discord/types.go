@@ -448,6 +448,7 @@ type Guild struct {
 	Roles                  []*Role    `json:"roles"`
 	Features               []string   `json:"features"`
 	PreferredLocale        Locale     `json:"preferred_locale"`
+	Locale                 Locale     `json:"locale"` // only on the partial guild of an interaction
 	ApproximateMemberCount int        `json:"approximate_member_count"`
 	Channels               []*Channel `json:"channels"`
 	MemberCount            int        `json:"member_count"`
