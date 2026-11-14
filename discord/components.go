@@ -26,6 +26,9 @@ const (
 	ContainerComponent             ComponentType = 17
 	LabelComponent                 ComponentType = 18
 	FileUploadComponent            ComponentType = 19
+	RadioGroupComponent            ComponentType = 21
+	CheckboxGroupComponent         ComponentType = 22
+	CheckboxComponent              ComponentType = 23
 )
 
 // MessageComponent is any component that can be sent to or received from Discord.
@@ -92,6 +95,12 @@ func newComponent(t ComponentType) MessageComponent {
 		return &Label{}
 	case FileUploadComponent:
 		return &FileUpload{}
+	case RadioGroupComponent:
+		return &RadioGroup{}
+	case CheckboxGroupComponent:
+		return &CheckboxGroup{}
+	case CheckboxComponent:
+		return &Checkbox{}
 	default:
 		return nil
 	}
@@ -266,7 +275,9 @@ func (c TextInput) MarshalJSON() ([]byte, error) {
 	return marshalComponent(c.Type(), alias(c))
 }
 
-// Label titles a single interactive component in a modal.
+// Label titles a single interactive component in a modal: a TextInput, a
+// SelectMenu of any kind, a FileUpload, a RadioGroup, a CheckboxGroup or a
+// Checkbox.
 type Label struct {
 	ID          int              `json:"id,omitempty"`
 	Label       string           `json:"label,omitempty"`
@@ -310,6 +321,61 @@ type FileUpload struct {
 func (FileUpload) Type() ComponentType { return FileUploadComponent }
 func (c FileUpload) MarshalJSON() ([]byte, error) {
 	type alias FileUpload
+	return marshalComponent(c.Type(), alias(c))
+}
+
+// GroupOption is one choice in a RadioGroup or CheckboxGroup.
+type GroupOption struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+// RadioGroup lets a user pick one of 2 to 10 options in a modal.
+type RadioGroup struct {
+	ID       int           `json:"id,omitempty"`
+	CustomID string        `json:"custom_id"`
+	Options  []GroupOption `json:"options"`
+	Required *bool         `json:"required,omitempty"` // Discord defaults this to true
+	Value    *string       `json:"value,omitempty"`    // received on modal submit; nil if nothing was picked
+}
+
+func (RadioGroup) Type() ComponentType { return RadioGroupComponent }
+func (c RadioGroup) MarshalJSON() ([]byte, error) {
+	type alias RadioGroup
+	return marshalComponent(c.Type(), alias(c))
+}
+
+// CheckboxGroup lets a user tick several of 1 to 10 options in a modal.
+type CheckboxGroup struct {
+	ID        int           `json:"id,omitempty"`
+	CustomID  string        `json:"custom_id"`
+	Options   []GroupOption `json:"options"`
+	MinValues *int          `json:"min_values,omitempty"`
+	MaxValues int           `json:"max_values,omitempty"`
+	Required  *bool         `json:"required,omitempty"` // Discord defaults this to true
+	Values    []string      `json:"values,omitempty"`   // received on modal submit
+}
+
+func (CheckboxGroup) Type() ComponentType { return CheckboxGroupComponent }
+func (c CheckboxGroup) MarshalJSON() ([]byte, error) {
+	type alias CheckboxGroup
+	return marshalComponent(c.Type(), alias(c))
+}
+
+// Checkbox is a single yes/no box in a modal. It cannot be required; use a
+// CheckboxGroup with one option for that.
+type Checkbox struct {
+	ID       int    `json:"id,omitempty"`
+	CustomID string `json:"custom_id"`
+	Default  bool   `json:"default,omitempty"`
+	Value    bool   `json:"value,omitempty"` // received on modal submit
+}
+
+func (Checkbox) Type() ComponentType { return CheckboxComponent }
+func (c Checkbox) MarshalJSON() ([]byte, error) {
+	type alias Checkbox
 	return marshalComponent(c.Type(), alias(c))
 }
 

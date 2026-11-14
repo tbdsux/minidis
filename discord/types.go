@@ -341,6 +341,7 @@ type Message struct {
 	Flags             MessageFlags         `json:"flags"`
 	MessageReference  *MessageReference    `json:"message_reference"`
 	ReferencedMessage *Message             `json:"referenced_message"`
+	Poll              *Poll                `json:"poll"`
 }
 
 // MessageSend is the body of a Create Message request.
@@ -353,7 +354,64 @@ type MessageSend struct {
 	Reference       *MessageReference       `json:"message_reference,omitempty"`
 	StickerIDs      []string                `json:"sticker_ids,omitempty"`
 	Flags           MessageFlags            `json:"flags,omitempty"`
+	Poll            *PollCreateRequest      `json:"poll,omitempty"`
 	Files           []*File                 `json:"-"`
+}
+
+// PollLayoutType is how a poll is shown.
+type PollLayoutType int
+
+// PollLayoutDefault is the only layout.
+const PollLayoutDefault PollLayoutType = 1
+
+// PollMedia is the text of a poll question or answer. Questions only support
+// Text, of up to 300 characters; answers up to 55, with an optional Emoji (send
+// only its ID or Name).
+type PollMedia struct {
+	Text  string          `json:"text,omitempty"`
+	Emoji *ComponentEmoji `json:"emoji,omitempty"`
+}
+
+// PollAnswer is one choice of a poll. AnswerID is set by Discord.
+type PollAnswer struct {
+	AnswerID  int       `json:"answer_id,omitempty"`
+	PollMedia PollMedia `json:"poll_media"`
+}
+
+// PollCreateRequest is a poll to send with a message. It can't be combined
+// with MessageFlagsIsComponentsV2.
+type PollCreateRequest struct {
+	Question         PollMedia      `json:"question"`
+	Answers          []PollAnswer   `json:"answers"`                     // up to 10
+	Duration         int            `json:"duration,omitempty"`          // hours, up to 32 days; Discord defaults to 24
+	AllowMultiselect bool           `json:"allow_multiselect,omitempty"` // let users pick more than one answer
+	LayoutType       PollLayoutType `json:"layout_type,omitempty"`
+}
+
+// Poll is a poll on a received message.
+type Poll struct {
+	Question         PollMedia      `json:"question"`
+	Answers          []PollAnswer   `json:"answers"`
+	Expiry           *time.Time     `json:"expiry"`
+	AllowMultiselect bool           `json:"allow_multiselect"`
+	LayoutType       PollLayoutType `json:"layout_type"`
+
+	// Results is nil when the counts are not known, which does not mean that
+	// there are no votes.
+	Results *PollResults `json:"results"`
+}
+
+// PollResults are the vote counts of a poll.
+type PollResults struct {
+	IsFinalized  bool              `json:"is_finalized"`
+	AnswerCounts []PollAnswerCount `json:"answer_counts"` // an answer without votes may be missing
+}
+
+// PollAnswerCount is the number of votes for an answer.
+type PollAnswerCount struct {
+	ID      int  `json:"id"` // the AnswerID
+	Count   int  `json:"count"`
+	MeVoted bool `json:"me_voted"`
 }
 
 // MessageEdit is the body of an Edit Message request. A nil field is left
