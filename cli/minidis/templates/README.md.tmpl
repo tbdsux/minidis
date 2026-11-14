@@ -1,0 +1,23 @@
+# {{.Name}}
+
+A Discord bot built with [minidis](https://github.com/tbdsux/minidis).
+
+## Run it
+
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), add a bot to it, and invite the bot to a server with the `bot` and `applications.commands` scopes.
+2. Run the bot with its token. `GUILD` is optional: it registers the commands in that server only, which is handy while developing.
+{{- if .HTTP}}
+   `PUBLIC_KEY` is on the General Information page of the app.
+{{- end}}
+
+   ```sh
+   TOKEN=<bot token> GUILD=<server ID>{{if .HTTP}} PUBLIC_KEY=<public key>{{end}} go run .
+   ```
+{{- if .HTTP}}
+
+3. Make `http://localhost:8080/interactions` reachable over HTTPS, for example with a tunnel, and set it as the Interactions Endpoint URL on the General Information page. Discord checks the URL when you save it, so the bot must be running. Set `ADDR` to listen elsewhere than `:8080`.
+{{- end}}
+
+## Add a command
+
+Write it in `commands/`, like `commands/hello.go`, and add it to `Register` in `commands/commands.go`.

@@ -1,0 +1,88 @@
+// Command {{.Name}} is a Discord bot built with minidis that receives
+// interactions over HTTP. Set the app's Interactions Endpoint URL in the
+// Developer Portal to https://<your host>/interactions.
+package main
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/tbdsux/minidis"
+
+	"{{.Module}}/commands"
+)
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	token := os.Getenv("TOKEN")
+	if token == "" {
+		return errors.New("set TOKEN to the bot token from the Discord Developer Portal")
+	}
+
+	bot := minidis.New(token)
+	commands.Register(bot)
+
+	// Register the commands with Discord, replacing any registered before.
+	if err := bot.SyncCommands(guildIDs()...); err != nil {
+		return fmt.Errorf("syncing commands: %w", err)
+	}
+
+	// PUBLIC_KEY is on the General Information page of the Developer Portal.
+	interactions, err := bot.HTTPHandler(os.Getenv("PUBLIC_KEY"))
+	if err != nil {
+		return fmt.Errorf("PUBLIC_KEY: %w", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("POST /interactions", interactions)
+
+	srv := &http.Server{
+		Addr:              cmp.Or(os.Getenv("ADDR"), ":8080"),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+	log.Printf("Listening on %s. Press Ctrl+C to stop.", srv.Addr)
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Stop taking requests, then wait for the handlers still running.
+	return errors.Join(srv.Shutdown(shutdownCtx), bot.Shutdown(shutdownCtx))
+}
+
+// guildIDs reads GUILD, a comma-separated list of the servers to register the
+// commands in. Without it, the commands are registered globally.
+func guildIDs() []string {
+	return strings.FieldsFunc(os.Getenv("GUILD"), func(r rune) bool {
+		return r == ',' || r == ' '
+	})
+}

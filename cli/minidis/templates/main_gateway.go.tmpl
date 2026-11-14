@@ -1,0 +1,57 @@
+// Command {{.Name}} is a Discord bot built with minidis.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
+
+	"{{.Module}}/commands"
+)
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	token := os.Getenv("TOKEN")
+	if token == "" {
+		return errors.New("set TOKEN to the bot token from the Discord Developer Portal")
+	}
+
+	bot := minidis.New(token)
+	commands.Register(bot)
+
+	bot.OnReady(func(*client.Session, *discord.Ready) {
+		log.Println("Bot is ready. Press Ctrl+C to stop.")
+	})
+
+	// Register the commands with Discord, replacing any registered before.
+	if err := bot.SyncCommands(guildIDs()...); err != nil {
+		return fmt.Errorf("syncing commands: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return bot.Run(ctx)
+}
+
+// guildIDs reads GUILD, a comma-separated list of the servers to register the
+// commands in. Without it, the commands are registered globally.
+func guildIDs() []string {
+	return strings.FieldsFunc(os.Getenv("GUILD"), func(r rune) bool {
+		return r == ',' || r == ' '
+	})
+}

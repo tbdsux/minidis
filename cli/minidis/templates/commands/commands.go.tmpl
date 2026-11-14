@@ -1,0 +1,15 @@
+// Package commands holds the bot's commands and the handlers of their
+// components.
+package commands
+
+import "github.com/tbdsux/minidis"
+
+// Register adds the commands and handlers to the bot. Add new ones here; they
+// reach Discord the next time the bot syncs its commands on start.
+func Register(bot *minidis.Minidis) {
+	bot.AddCommand(
+		hello,
+	)
+
+	bot.HandleComponent(waveButtonID, waveBack)
+}
