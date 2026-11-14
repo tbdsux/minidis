@@ -84,9 +84,6 @@ func TestHandlerContextLifetime(t *testing.T) {
 func TestShutdownCancelsHandlerContexts(t *testing.T) {
 	bot, _ := newTestBot(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	bot.running.Store(&runState{ctx: ctx, cancel: cancel})
-
 	started, done := make(chan struct{}), make(chan error)
 	bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
 		close(started)

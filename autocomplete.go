@@ -48,7 +48,7 @@ func (c *AutocompleteContext) Respond(choices ...*discord.ApplicationCommandOpti
 		choices = []*discord.ApplicationCommandOptionChoice{}
 	}
 
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+	return c.respond(&discord.InteractionResponse{
 		Type: discord.InteractionApplicationCommandAutocompleteResult,
 		Data: &discord.InteractionResponseData{Choices: choices},
 	})

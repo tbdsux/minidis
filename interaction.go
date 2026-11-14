@@ -13,10 +13,17 @@ import (
 const interactionLifetime = 15 * time.Minute
 
 func (m *Minidis) handleInteraction(s *client.Session, i *discord.InteractionCreate) {
-	ctx, cancel := context.WithTimeout(m.baseContext(), interactionLifetime)
+	m.runInteraction(m.current().ctx, s, i.Interaction, nil)
+}
+
+// runInteraction handles an interaction however it was received. ack, if not
+// nil, is called once the interaction has been responded to.
+func (m *Minidis) runInteraction(parent context.Context, s *client.Session, i *discord.Interaction, ack func()) {
+	ctx, cancel := context.WithTimeout(parent, interactionLifetime)
 	defer cancel()
 
-	c := newContext(ctx, s, i.Interaction)
+	c := newContext(ctx, s, i)
+	c.ack = ack
 
 	defer func() {
 		if r := recover(); r != nil {

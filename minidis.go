@@ -2,8 +2,9 @@ package minidis
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/tbdsux/minidis/discord"
@@ -40,13 +41,23 @@ type Minidis struct {
 	appIDMu sync.Mutex
 	appID   string // looked up by SyncCommands when the session is not open
 
-	running atomic.Pointer[runState] // nil unless open
+	runMu sync.RWMutex
+	run   *runState // replaced by Open after Shutdown
 }
 
-// runState is the context handlers derive from while the bot is open.
+// runState is what handlers share between Open (or New) and Shutdown.
 type runState struct {
-	ctx    context.Context
+	ctx    context.Context // the parent of handler contexts
 	cancel context.CancelFunc
+
+	// http tracks handlers of interactions received by HTTPHandler, which the
+	// Session does not know about.
+	http sync.WaitGroup
+}
+
+func newRunState() *runState {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &runState{ctx: ctx, cancel: cancel}
 }
 
 // New creates a bot that authenticates with the given bot token.
@@ -57,6 +68,7 @@ func New(token string) *Minidis {
 		messageCommands: map[string]*MessageCommand{},
 		userCommands:    map[string]*UserCommand{},
 		channelHandlers: map[string]func(*ChannelMessageContext) error{},
+		run:             newRunState(),
 	}
 
 	m.Session.OnInteractionCreate(m.handleInteraction)
@@ -65,23 +77,17 @@ func New(token string) *Minidis {
 	return m
 }
 
-// Open connects to Discord and returns once the bot is ready. The connection is
-// kept in the background until Close.
+// Open connects to the Discord gateway and returns once the bot is ready. The
+// connection is kept in the background until Close. A bot that only receives
+// interactions through HTTPHandler does not need it.
 func (m *Minidis) Open() error {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	if !m.running.CompareAndSwap(nil, &runState{ctx: ctx, cancel: cancel}) {
-		cancel()
-		return client.ErrAlreadyOpen
+	m.runMu.Lock()
+	if m.run.ctx.Err() != nil {
+		m.run = newRunState() // reopening after Shutdown
 	}
+	m.runMu.Unlock()
 
-	if err := m.Session.Open(); err != nil {
-		m.running.Store(nil)
-		cancel()
-		return err
-	}
-
-	return nil
+	return m.Session.Open()
 }
 
 // Close disconnects from Discord, cancels the context of running handlers, and
@@ -95,11 +101,27 @@ func (m *Minidis) Close() error {
 
 // Shutdown is Close, waiting for running handlers until ctx ends instead.
 func (m *Minidis) Shutdown(ctx context.Context) error {
-	if r := m.running.Swap(nil); r != nil {
-		r.cancel()
-	}
+	// Canceling under the lock means HTTPHandler cannot start a handler after
+	// the wait below has begun.
+	m.runMu.Lock()
+	run := m.run
+	run.cancel()
+	m.runMu.Unlock()
 
-	return m.Session.Shutdown(ctx)
+	err := m.Session.Shutdown(ctx)
+
+	drained := make(chan struct{})
+	go func() {
+		run.http.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		return err
+	case <-ctx.Done():
+		return errors.Join(err, fmt.Errorf("minidis: HTTP interaction handlers still running: %w", ctx.Err()))
+	}
 }
 
 // Run opens the bot, waits for ctx to end, and closes it. Pair it with
@@ -114,12 +136,12 @@ func (m *Minidis) Run(ctx context.Context) error {
 	return m.Close()
 }
 
-// baseContext is the parent of handler contexts.
-func (m *Minidis) baseContext() context.Context {
-	if r := m.running.Load(); r != nil {
-		return r.ctx
-	}
-	return context.Background()
+// current returns the run that handlers starting now belong to.
+func (m *Minidis) current() *runState {
+	m.runMu.RLock()
+	defer m.runMu.RUnlock()
+
+	return m.run
 }
 
 // SetIntents sets the gateway events the bot receives. Slash commands and other

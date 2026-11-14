@@ -17,6 +17,7 @@ import (
 // when Discord stops accepting responses. Pass it to the calls a handler makes.
 type Context struct {
 	ctx context.Context
+	ack func() // called after the initial response; see runInteraction
 
 	Interaction *discord.Interaction
 	Session     *client.Session
@@ -205,6 +206,15 @@ type Modal struct {
 	Components []discord.MessageComponent
 }
 
+// respond sends the initial response to the interaction.
+func (c *Context) respond(res *discord.InteractionResponse) error {
+	err := c.Session.InteractionRespond(c.Interaction, res)
+	if c.ack != nil {
+		c.ack()
+	}
+	return err
+}
+
 // Reply responds to the interaction with a message.
 func (c *Context) Reply(content string) error {
 	return c.ReplyWith(Message{Content: content})
@@ -212,7 +222,7 @@ func (c *Context) Reply(content string) error {
 
 // ReplyWith responds to the interaction with a message.
 func (c *Context) ReplyWith(msg Message) error {
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+	return c.respond(&discord.InteractionResponse{
 		Type: discord.InteractionResponseChannelMessageWithSource,
 		Data: msg.responseData(),
 	})
@@ -223,7 +233,7 @@ func (c *Context) ReplyWith(msg Message) error {
 // used afterwards. If ephemeral, only the user sees the loading state and the
 // message that replaces it.
 func (c *Context) DeferReply(ephemeral bool) error {
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+	return c.respond(&discord.InteractionResponse{
 		Type: discord.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discord.InteractionResponseData{Flags: Message{Ephemeral: ephemeral}.flags()},
 	})
@@ -231,7 +241,7 @@ func (c *Context) DeferReply(ephemeral bool) error {
 
 // ReplyModal responds to the interaction by showing a modal.
 func (c *Context) ReplyModal(modal Modal) error {
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+	return c.respond(&discord.InteractionResponse{
 		Type: discord.InteractionResponseModal,
 		Data: &discord.InteractionResponseData{
 			Title:      modal.Title,
@@ -243,7 +253,7 @@ func (c *Context) ReplyModal(modal Modal) error {
 
 // LaunchActivity responds to the interaction by launching the app's Activity.
 func (c *Context) LaunchActivity() error {
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{Type: discord.InteractionResponseLaunchActivity})
+	return c.respond(&discord.InteractionResponse{Type: discord.InteractionResponseLaunchActivity})
 }
 
 // Response fetches the message sent as the response, such as to learn its ID.

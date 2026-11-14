@@ -60,7 +60,7 @@ func (m *Minidis) handleChannelMessage(s *client.Session, msg *discord.MessageCr
 		return
 	}
 
-	ctx, cancel := context.WithCancel(m.baseContext())
+	ctx, cancel := context.WithCancel(m.current().ctx)
 	defer cancel()
 
 	m.runChannelHandler(&ChannelMessageContext{

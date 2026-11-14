@@ -59,7 +59,7 @@ func (c *ComponentContext) Update(content string) error {
 
 // UpdateWith responds by changing the message the component is on.
 func (c *ComponentContext) UpdateWith(edit MessageEdit) error {
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+	return c.respond(&discord.InteractionResponse{
 		Type: discord.InteractionResponseUpdateMessage,
 		Data: edit.responseData(),
 	})
@@ -68,7 +68,7 @@ func (c *ComponentContext) UpdateWith(edit MessageEdit) error {
 // DeferUpdate acknowledges the interaction without changing the message yet.
 // Change it within 15 minutes using Edit.
 func (c *ComponentContext) DeferUpdate() error {
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+	return c.respond(&discord.InteractionResponse{
 		Type: discord.InteractionResponseDeferredMessageUpdate,
 	})
 }
