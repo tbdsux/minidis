@@ -171,8 +171,15 @@ func TestFatalCloseAfterReadyEndsTheSession(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if s.Done() != nil || s.Err() != nil {
-		t.Errorf("after Close: Done = %v, Err = %v", s.Done(), s.Err())
+	// Done stays the closed channel of the last run, so that a caller that
+	// reads it after a concurrent Close does not block forever.
+	select {
+	case <-s.Done():
+	default:
+		t.Error("Done is not closed after Close")
+	}
+	if s.Err() != nil {
+		t.Errorf("Err after Close = %v", s.Err())
 	}
 	if n := readies.Load(); n != 2 {
 		t.Errorf("READY handlers ran %d times, want 2", n)

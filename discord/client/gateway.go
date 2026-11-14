@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -73,9 +74,9 @@ func (s *Session) fetchGatewayBot(ctx context.Context) (*gatewayBot, error) {
 	return info, nil
 }
 
-// errShuttingDown is returned by an Open that would race a Shutdown waiting
-// for the session.
-var errShuttingDown = errors.New("discord: session is shutting down")
+// ErrShuttingDown is returned by an Open that races a Shutdown: one that was
+// canceled by it, or that was waiting while it ran. The session stays closed.
+var ErrShuttingDown = errors.New("discord: session is shutting down")
 
 // gatewayRun is one Open: the gateway goroutine and the handlers it started.
 type gatewayRun struct {
@@ -83,6 +84,8 @@ type gatewayRun struct {
 	done    chan struct{}      // closed when the gateway goroutine has stopped
 	err     error              // why it stopped on its own; written before done closes
 	running *sync.WaitGroup    // the handlers it started
+
+	shutDown atomic.Bool // stopped by Shutdown rather than by Discord
 }
 
 func (r *gatewayRun) stopped() bool {
@@ -94,17 +97,36 @@ func (r *gatewayRun) stopped() bool {
 	}
 }
 
+// lock takes the lifecycle lock, or returns ctx's cause if ctx ends first.
+func (s *Session) lock(ctx context.Context) error {
+	select {
+	case s.lifecycle <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
+func (s *Session) unlock() { <-s.lifecycle }
+
 // Open connects to the Gateway and returns once the session is READY. After
 // that, the connection is maintained in the background until Shutdown, Close,
 // or a close code from Discord that rules out reconnecting (see Done and Err).
 //
-// Canceling ctx aborts the connection attempt and returns ctx's error; it has
-// no effect once Open has returned. Open gives up after 30 seconds without
-// READY. A Shutdown or Close called meanwhile cancels it, and an Open that
-// races a Shutdown in progress fails rather than reopening the session.
+// Canceling ctx aborts the connection attempt, including waiting for another
+// Open or Shutdown to finish, and returns ctx's error; it has no effect once
+// Open has returned. Open gives up after 30 seconds without READY. A Shutdown
+// or Close called meanwhile cancels it, and an Open that races a Shutdown
+// fails with ErrShuttingDown rather than reopening the session after it.
 func (s *Session) Open(ctx context.Context) error {
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
+	s.openingMu.Lock()
+	shutdowns := s.shutdowns
+	s.openingMu.Unlock()
+
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
 
 	if r := s.run.Load(); r != nil && !r.stopped() {
 		return ErrAlreadyOpen
@@ -113,10 +135,10 @@ func (s *Session) Open(ctx context.Context) error {
 	openCtx, cancelOpen := context.WithTimeout(ctx, gatewayOpenTimeout)
 	defer cancelOpen()
 
-	if !s.startOpening(cancelOpen) {
-		return errShuttingDown
+	if !s.startOpening(cancelOpen, shutdowns) {
+		return ErrShuttingDown
 	}
-	defer s.startOpening(nil)
+	defer s.startOpening(nil, 0)
 
 	// A previous connection that Discord ended starts over with a new session.
 	s.resetSession()
@@ -168,24 +190,25 @@ func (s *Session) Open(ctx context.Context) error {
 func openError(ctx, openCtx context.Context, err error) error {
 	switch {
 	case ctx.Err() != nil:
-		return ctx.Err()
+		return context.Cause(ctx)
 	case errors.Is(openCtx.Err(), context.DeadlineExceeded):
 		return errors.New("discord: timed out waiting for READY")
 	case openCtx.Err() != nil:
-		return errShuttingDown
+		return ErrShuttingDown
 	default:
 		return err
 	}
 }
 
 // startOpening records the cancel func of an Open in progress, or clears it
-// when cancel is nil. It reports false if a Shutdown is waiting, in which case
-// the Open should not start.
-func (s *Session) startOpening(cancel context.CancelFunc) bool {
+// when cancel is nil. It reports false if a Shutdown is waiting or ran since
+// the Open began (shutdowns is the count it saw then), in which case the Open
+// should not start.
+func (s *Session) startOpening(cancel context.CancelFunc, shutdowns uint64) bool {
 	s.openingMu.Lock()
 	defer s.openingMu.Unlock()
 
-	if cancel != nil && s.pendingShutdowns > 0 {
+	if cancel != nil && (s.pendingShutdowns > 0 || s.shutdowns != shutdowns) {
 		return false
 	}
 	s.opening = cancel
@@ -195,8 +218,8 @@ func (s *Session) startOpening(cancel context.CancelFunc) bool {
 // Done returns a channel that is closed when the connection made by the last
 // Open stops for good: after Shutdown or Close, or when Discord closes it with
 // a code that rules out reconnecting, such as an invalid token or disallowed
-// intents. Err then says why. Done returns nil before the first Open and after
-// Shutdown.
+// intents. Err then says why. Done returns nil before the first Open, and
+// after Shutdown the closed channel of the last Open.
 func (s *Session) Done() <-chan struct{} {
 	if r := s.run.Load(); r != nil {
 		return r.done
@@ -209,7 +232,7 @@ func (s *Session) Done() <-chan struct{} {
 // Shutdown, and before the first Open. Open can be called again afterwards.
 func (s *Session) Err() error {
 	r := s.run.Load()
-	if r == nil || !r.stopped() {
+	if r == nil || !r.stopped() || r.shutDown.Load() {
 		return nil
 	}
 	return r.err
@@ -226,43 +249,62 @@ func (s *Session) Close() error {
 
 // Shutdown disconnects from the Gateway, ends the session, and waits for
 // running handlers to finish or for ctx to end, returning ctx's error in that
-// case. An Open in progress is canceled first. Calling Shutdown from a handler
-// waits for that handler too, so it would use up the whole of ctx.
+// case. An Open in progress is canceled first. Waiting for handlers does not
+// block other calls: a later Open can start meanwhile, and a later Shutdown
+// waits for the same handlers within its own ctx. Calling Shutdown from a
+// handler waits for that handler too, so it would use up the whole of ctx.
 func (s *Session) Shutdown(ctx context.Context) error {
 	s.openingMu.Lock()
 	s.pendingShutdowns++
+	s.shutdowns++
 	if s.opening != nil {
 		s.opening()
 	}
 	s.openingMu.Unlock()
 
-	defer func() {
-		s.openingMu.Lock()
-		s.pendingShutdowns--
-		s.openingMu.Unlock()
-	}()
+	waiting, err := s.stop(ctx)
 
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
+	s.openingMu.Lock()
+	s.pendingShutdowns--
+	s.openingMu.Unlock()
 
-	if r := s.run.Load(); r != nil {
+	if err != nil {
+		return err
+	}
+	return s.wait(ctx, waiting)
+}
+
+// stop ends the current run under the lifecycle lock and returns the handlers
+// to wait for.
+func (s *Session) stop(ctx context.Context) ([]*sync.WaitGroup, error) {
+	if err := s.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer s.unlock()
+
+	if r := s.run.Load(); r != nil && !r.shutDown.Load() {
+		r.shutDown.Store(true)
 		r.cancel()
 		<-r.done
-		s.run.Store(nil)
 		s.resetSession()
 	}
 
-	// No new handlers can start now that the gateway goroutine has stopped.
-	waiting := s.drain
-	s.drain = nil
-	if len(waiting) == 0 {
+	// No new handlers can start in these groups now that their gateway
+	// goroutines have stopped. Groups stay listed until a wait sees them
+	// finish, so that every Shutdown waits for the handlers still running.
+	return slices.Clone(s.drain), nil
+}
+
+// wait waits for the handlers in groups, or for ctx to end.
+func (s *Session) wait(ctx context.Context, groups []*sync.WaitGroup) error {
+	if len(groups) == 0 {
 		return nil
 	}
 
 	// yagni: this goroutine outlives ctx until a stuck handler returns.
 	drained := make(chan struct{})
 	go func() {
-		for _, running := range waiting {
+		for _, running := range groups {
 			running.Wait()
 		}
 		close(drained)
@@ -270,10 +312,18 @@ func (s *Session) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-drained:
-		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("discord: handlers still running: %w", ctx.Err())
+		return fmt.Errorf("discord: handlers still running: %w", context.Cause(ctx))
 	}
+
+	// Forget the groups that are done, unless another call holds the lock.
+	select {
+	case s.lifecycle <- struct{}{}:
+		s.drain = slices.DeleteFunc(s.drain, func(g *sync.WaitGroup) bool { return slices.Contains(groups, g) })
+		s.unlock()
+	default:
+	}
+	return nil
 }
 
 // UpdatePresence sets the bot's status and activities. It may be called at any

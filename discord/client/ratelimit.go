@@ -31,6 +31,7 @@ type rateLimiter struct {
 	buckets     map[string]*bucket
 	routes      map[string]string
 	globalUntil time.Time
+	sweepAt     int // the map size that triggers the next sweep
 }
 
 func newRateLimiter() *rateLimiter {
@@ -41,16 +42,31 @@ func (l *rateLimiter) bucketFor(route string) *bucket {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if len(l.buckets) >= maxTrackedBuckets {
+	if len(l.buckets) >= max(l.sweepAt, maxTrackedBuckets) {
 		l.sweep()
+		// Sweep again only once the map has doubled, so that a map full of
+		// live buckets is not scanned on every request.
+		l.sweepAt = 2 * len(l.buckets)
 	}
 
-	key, ok := l.routes[route]
-	if !ok {
-		key = route
-	}
+	return l.getOrCreate(l.keyOf(route))
+}
 
-	return l.getOrCreate(key)
+// keyOf returns the bucket key of route: the shared bucket it was mapped to,
+// or the route itself. l.mu must be held.
+func (l *rateLimiter) keyOf(route string) string {
+	if key, ok := l.routes[route]; ok {
+		return key
+	}
+	return route
+}
+
+// current reports whether b is still the bucket route maps to.
+func (l *rateLimiter) current(route string, b *bucket) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.buckets[l.keyOf(route)] == b
 }
 
 func (l *rateLimiter) getOrCreate(key string) *bucket {
@@ -62,10 +78,13 @@ func (l *rateLimiter) getOrCreate(key string) *bucket {
 	return b
 }
 
+// sweep drops buckets whose limit has reset. A bucket in use, with a request
+// in flight or waiting, is kept: dropping it would let a new bucket for the
+// same route send alongside it.
 func (l *rateLimiter) sweep() {
 	now := time.Now()
 	for key, b := range l.buckets {
-		if b.reset.Before(now) {
+		if b.reset.Before(now) && len(b.gate) == 0 {
 			delete(l.buckets, key)
 		}
 	}
@@ -78,11 +97,22 @@ func (l *rateLimiter) sweep() {
 
 // acquire blocks until a request may be sent for route. The caller must release the bucket.
 func (l *rateLimiter) acquire(ctx context.Context, route string) (*bucket, error) {
-	b := l.bucketFor(route)
-	select {
-	case b.gate <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	var b *bucket
+	for {
+		b = l.bucketFor(route)
+		select {
+		case b.gate <- struct{}{}:
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+
+		// While this request waited, the route may have moved to a shared
+		// bucket, or its bucket may have been swept. Queue on the bucket that
+		// now holds its limits instead.
+		if l.current(route, b) {
+			break
+		}
+		<-b.gate
 	}
 
 	l.mu.Lock()
@@ -145,10 +175,14 @@ func seconds(s float64) time.Duration {
 	return time.Duration(s * float64(time.Second))
 }
 
-// sleep waits for d, returning early with the context's error if it is cancelled.
+// sleep waits for d, returning early with the context's cause if it is
+// canceled.
 func sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
-		return ctx.Err()
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+		return nil
 	}
 
 	t := time.NewTimer(d)
@@ -158,7 +192,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 }
 

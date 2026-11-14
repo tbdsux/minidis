@@ -144,19 +144,11 @@ func (s *Session) send(ctx context.Context, method, path, contentType string, pa
 
 	rateLimited, serverErrors := 0, 0
 	for {
-		var b *bucket
-		var err error
-		if limited {
-			if b, err = s.limiter.acquire(ctx, route); err != nil {
-				return err
-			}
-		}
-
-		status, header, data, err := s.roundTrip(ctx, method, path, contentType, payload)
-		if limited {
-			s.limiter.release(b, route, major, header)
-		}
+		status, header, data, err := s.attempt(ctx, limited, route, major, method, path, contentType, payload)
 		if err != nil {
+			if ctx.Err() != nil {
+				err = context.Cause(ctx)
+			}
 			return fmt.Errorf("discord: %s %s: %w", method, safePath, err)
 		}
 
@@ -181,8 +173,10 @@ func (s *Session) send(ctx context.Context, method, path, contentType string, pa
 				return err
 			}
 
+		// A POST or PATCH may have been carried out before the gateway in front
+		// of Discord failed, so only requests that are safe to repeat are.
 		case (status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) &&
-			serverErrors < maxServerRetries:
+			idempotent(method) && serverErrors < maxServerRetries:
 			serverErrors++
 			if err := sleep(ctx, serverRetryDelay<<(serverErrors-1)); err != nil {
 				return err
@@ -192,6 +186,29 @@ func (s *Session) send(ctx context.Context, method, path, contentType string, pa
 			return newRESTError(method, safePath, status, data)
 		}
 	}
+}
+
+// attempt sends one request, holding the route's rate limit bucket if limited.
+// The bucket is released even if the round trip panics.
+func (s *Session) attempt(ctx context.Context, limited bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
+	if limited {
+		b, err := s.limiter.acquire(ctx, route)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		defer func() { s.limiter.release(b, route, major, header) }()
+	}
+
+	return s.roundTrip(ctx, method, path, contentType, payload)
+}
+
+// idempotent reports whether a request with method can be sent again safely.
+func idempotent(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, http.MethodOptions:
+		return true
+	}
+	return false
 }
 
 func (s *Session) roundTrip(ctx context.Context, method, path, contentType string, payload []byte) (int, http.Header, []byte, error) {
