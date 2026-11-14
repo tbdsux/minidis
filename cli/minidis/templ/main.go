@@ -6,6 +6,7 @@ var (
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -17,26 +18,19 @@ import (
 )
 
 func main() {
-	// Open session
-	if err := commands.Bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
-
 	// Register the commands. This replaces any registered before.
 	if err := commands.Bot.SyncCommands(lib.GUILDS...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
-	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	// Run until CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Close the session
-	commands.Bot.CloseSession()
+	fmt.Println("Bot is running. Press CTRL+C to exit.")
+	if err := commands.Bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }
 
 `
@@ -76,13 +70,11 @@ import (
 	"github.com/tbdsux/minidis"
 )
 
-var helloCommand = &minidis.SlashCommandProps{
+var helloCommand = &minidis.Command{
 	Name:        "hello",
 	Description: "Say hi to the bot",
-	Execute: func(c *minidis.SlashContext) error {
-		return c.ReplyC(minidis.ReplyProps{
-			Content: "Hi!",
-		})
+	Execute: func(c *minidis.Context) error {
+		return c.Reply("Hi!")
 	},
 }
 `

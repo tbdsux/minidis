@@ -2,25 +2,33 @@ package minidis
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/tbdsux/minidis/discord"
 )
 
 // commandTarget is the command or subcommand an interaction is aimed at.
 type commandTarget struct {
-	execute      func(*SlashContext) error
+	execute      func(*Context) error
 	autocomplete func(*AutocompleteContext) error
 	options      []*discord.ApplicationCommandInteractionDataOption // the values the user gave it
 }
 
-func (s *SlashSubcommandProps) target(options []*discord.ApplicationCommandInteractionDataOption) commandTarget {
+func (s *Subcommand) target(options []*discord.ApplicationCommandInteractionDataOption) commandTarget {
 	return commandTarget{execute: s.Execute, autocomplete: s.Autocomplete, options: options}
 }
 
+func findSubcommand(subs []*Subcommand, name string) *Subcommand {
+	if i := slices.IndexFunc(subs, func(s *Subcommand) bool { return s.Name == name }); i >= 0 {
+		return subs[i]
+	}
+	return nil
+}
+
 // resolve finds what the given options select. It falls back to the command
-// itself when no registered subcommand matches.
-func (s *SlashCommandProps) resolve(given []*discord.ApplicationCommandInteractionDataOption) commandTarget {
-	root := commandTarget{execute: s.Execute, autocomplete: s.Autocomplete, options: given}
+// itself when no subcommand matches.
+func (cmd *Command) resolve(given []*discord.ApplicationCommandInteractionDataOption) commandTarget {
+	root := commandTarget{execute: cmd.Execute, autocomplete: cmd.Autocomplete, options: given}
 	if len(given) == 0 {
 		return root
 	}
@@ -31,13 +39,15 @@ func (s *SlashCommandProps) resolve(given []*discord.ApplicationCommandInteracti
 		if len(first.Options) == 0 {
 			return root
 		}
-		if group, ok := s.subcommandGroups[first.Name]; ok {
-			if sub, ok := group.subcommands[first.Options[0].Name]; ok {
-				return sub.target(first.Options[0].Options)
-			}
+		i := slices.IndexFunc(cmd.Groups, func(g *SubcommandGroup) bool { return g.Name == first.Name })
+		if i < 0 {
+			return root
+		}
+		if sub := findSubcommand(cmd.Groups[i].Subcommands, first.Options[0].Name); sub != nil {
+			return sub.target(first.Options[0].Options)
 		}
 	case discord.ApplicationCommandOptionSubCommand:
-		if sub, ok := s.subcommands[first.Name]; ok {
+		if sub := findSubcommand(cmd.Subcommands, first.Name); sub != nil {
 			return sub.target(first.Options)
 		}
 	}
@@ -45,14 +55,8 @@ func (s *SlashCommandProps) resolve(given []*discord.ApplicationCommandInteracti
 	return root
 }
 
-// failWith is a handler that reports err, so that it passes through middleware
-// and reaches the error handler like any other failure.
-func failWith(err error) HandlerFunc {
-	return func(*SlashContext) error { return err }
-}
-
-func (m *Minidis) routeSlash(c *SlashContext, data discord.ApplicationCommandInteractionData) HandlerFunc {
-	cmd, ok := m.Commands[data.Name]
+func (m *Minidis) routeSlash(c *Context, data discord.ApplicationCommandInteractionData) HandlerFunc {
+	cmd, ok := m.commands[data.Name]
 	if !ok {
 		return failWith(fmt.Errorf("%w: command %q", ErrNoHandler, data.Name))
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -24,7 +25,7 @@ func main() {
 	})
 
 	// Sample command with options
-	bot.AddCommand(&minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.Command{
 		Name:        "options",
 		Description: "Simple command with options.",
 		Options: []*discord.ApplicationCommandOption{
@@ -35,31 +36,24 @@ func main() {
 				Required:    true,
 			},
 		},
-		Execute: func(c *minidis.SlashContext) error {
+		Execute: func(c *minidis.Context) error {
 			name := c.String("name")
 
-			return c.ReplyString(fmt.Sprintf("Your name is **%s**?", name))
+			return c.Reply(fmt.Sprintf("Your name is **%s**?", name))
 		},
 	})
-
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
 
 	// Register the commands. This replaces any registered before.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
-	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	// Run until CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Close the session
-	bot.CloseSession()
+	fmt.Println("Bot is running. Press CTRL+C to exit.")
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }

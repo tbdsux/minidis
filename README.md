@@ -26,6 +26,7 @@ go install github.com/tbdsux/minidis/cli/minidis@latest
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -50,37 +51,30 @@ func main() {
 	})
 
 	// simple command
-	bot.AddCommand(&minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.Command{
 		Name:        "ping",
 		Description: "Simple ping command.",
-		Execute: func(c *minidis.SlashContext) error {
-			return c.ReplyString(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
+		Execute: func(c *minidis.Context) error {
+			return c.Reply(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
 		},
 	})
-
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
 
 	// Register the commands. With no guilds they are registered globally.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
-	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	// Run until CTRL+C, then close, giving running handlers time to finish
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Close the session, giving running handlers time to finish
-	bot.CloseSession()
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }
-
 ```
+
+Use `bot.Open` and `bot.Close` instead of `Run` to manage the connection yourself.
 
 More [examples...](./example/)
 
@@ -95,7 +89,50 @@ DefaultMemberPermissions: discord.Int64(0),     // admins only
 DefaultMemberPermissions: discord.Int64(1 << 5), // members who can manage the server
 ```
 
-For user-installable commands, set `IntegrationTypes` and `Contexts` on a command and sync it globally.
+Global commands are usable in guilds only, unless `Contexts` says otherwise. For user-installable commands, also set `IntegrationTypes`, and sync the command globally.
+
+```go
+Contexts: []discord.InteractionContextType{discord.InteractionContextGuild, discord.InteractionContextBotDM},
+```
+
+### Subcommands
+
+```go
+bot.AddCommand(&minidis.Command{
+	Name:        "role",
+	Description: "Manage roles.",
+	Subcommands: []*minidis.Subcommand{
+		{Name: "list", Description: "List roles.", Execute: listRoles},
+	},
+	Groups: []*minidis.SubcommandGroup{
+		{Name: "member", Description: "Roles of a member.", Subcommands: []*minidis.Subcommand{
+			{Name: "add", Description: "Give a role.", Execute: addRole},
+		}},
+	},
+})
+```
+
+### Responding
+
+```go
+c.Reply("pong")
+c.ReplyWith(minidis.Message{Content: "only you can see this", Ephemeral: true})
+
+c.DeferReply(false) // for work that takes more than 3 seconds, then:
+c.Edit("done")
+c.EditWith(minidis.MessageEdit{Content: discord.String("done"), Components: []discord.MessageComponent{}})
+
+f, err := c.Followup("one more thing")
+c.ReplyModal(minidis.Modal{CustomID: "feedback", Title: "Feedback", Components: ...})
+```
+
+In a `MessageEdit`, a nil field is left unchanged and an empty one clears it.
+
+Every handler context is also a `context.Context`. It is canceled when the handler returns, when the bot closes, and 15 minutes after the interaction arrived, when Discord stops accepting responses. Pass it to the calls the handler makes:
+
+```go
+rows, err := db.QueryContext(c, "SELECT ...")
+```
 
 ### Reading options
 
@@ -121,13 +158,13 @@ Autocomplete: func(c *minidis.AutocompleteContext) error {
 
 ```go
 bot.Use(func(next minidis.HandlerFunc) minidis.HandlerFunc {
-	return func(c *minidis.SlashContext) error {
+	return func(c *minidis.Context) error {
 		// runs around every command, component and modal handler
 		return next(c)
 	}
 })
 
-bot.OnError(func(c *minidis.SlashContext, err error) {
+bot.OnError(func(c *minidis.Context, err error) {
 	// err is a *minidis.PanicError if a handler panicked, and wraps
 	// minidis.ErrNoHandler for a command that is no longer registered
 })
@@ -135,20 +172,30 @@ bot.OnError(func(c *minidis.SlashContext, err error) {
 
 Without `OnError`, errors are logged. Channel message handlers have `OnChannelMessageError`.
 
-### Components
+### Components and modals
 
 Handler IDs can capture `:`-separated segments, and modal IDs work the same way.
 
 ```go
-bot.AddComponentHandler(&minidis.ComponentInteractionProps{
-	ID: "vote:{poll}",
-	Execute: func(s *minidis.SlashContext, c *minidis.ComponentContext) error {
-		return c.Update("Voted in " + c.Params["poll"]) // edits the message with the button
-	},
+bot.HandleComponent("vote:{poll}", func(c *minidis.ComponentContext) error {
+	return c.Update("Voted in " + c.Params["poll"]) // edits the message with the button
+})
+
+bot.HandleModal("feedback", func(c *minidis.ModalSubmitContext) error {
+	return c.Reply("Thanks!")
 })
 ```
 
-Use `c.UpdateC` for embeds and components, passing an empty non-nil slice to clear them, and `c.DeferUpdate` for slow work.
+Use `c.UpdateWith` for embeds and components, passing an empty non-nil slice to clear them, and `c.DeferUpdate` for slow work. `HandleComponentFallback` and `HandleModalFallback` receive the IDs that no handler matches.
+
+### Channel messages
+
+```go
+bot.OnChannelMessageCreate(func(c *minidis.ChannelMessageContext) error {
+	_, err := c.Reply("hello") // or c.Send, which does not reply to the message
+	return err
+}, channelIDs...)
+```
 
 ### Presence
 

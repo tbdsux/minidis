@@ -1,276 +1,249 @@
 package minidis
 
 import (
+	"context"
+	"time"
+
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
 )
 
-type SlashContext struct {
+// Context is passed to every interaction handler: to slash commands directly,
+// and to the others inside a type that embeds it, such as ComponentContext. It
+// describes the interaction and the user who caused it, and responds to it.
+//
+// Context is also a context.Context. It is canceled when the handler returns,
+// when the bot closes, and 15 minutes after the interaction arrived, which is
+// when Discord stops accepting responses. Pass it to the calls a handler makes.
+type Context struct {
+	ctx context.Context
+
 	Interaction *discord.Interaction
 	Session     *client.Session
 
 	AppID  string
-	Author *discord.User
-	Member *discord.Member // only filled when called in a guild
+	Author *discord.User   // the user who caused the interaction
+	Member *discord.Member // Author as a guild member, or nil in a DM
 	IsDM   bool
-	Bot    *discord.User // this is the bot user
+	Bot    *discord.User // the bot's own user
 
-	Id          string
-	GuildId     string
-	GuildLocale *discord.Locale
-	Local       discord.Locale
-	ChannelId   string
+	ID          string
+	GuildID     string
+	ChannelID   string
+	Locale      discord.Locale  // the language of the user
+	GuildLocale *discord.Locale // the language of the guild, or nil in a DM
 
-	// NOTE: this is empty if component is called.
-	// When a subcommand is called, these are the options of that subcommand.
+	// Options are the values given to the slash command or subcommand that was
+	// run. The getters, such as String and User, are easier to use.
 	Options map[string]*discord.ApplicationCommandInteractionDataOption
 }
 
-// Creates a new slash context for slash command interaction. This is called internally.
-func (m *Minidis) NewSlashContext(session *client.Session, inter *discord.Interaction, isSlash bool) *SlashContext {
-	context := &SlashContext{
-		Interaction: inter,
-		Session:     session,
+func newContext(ctx context.Context, s *client.Session, i *discord.Interaction) *Context {
+	c := &Context{
+		ctx:         ctx,
+		Interaction: i,
+		Session:     s,
 
-		AppID:   inter.AppID,
+		AppID:  i.AppID,
+		Member: i.Member,
+		Author: i.User,
+		IsDM:   i.GuildID == "",
+		Bot:    s.User(),
+
+		ID:          i.ID,
+		GuildID:     i.GuildID,
+		ChannelID:   i.ChannelID,
+		Locale:      i.Locale,
+		GuildLocale: i.GuildLocale,
+
 		Options: map[string]*discord.ApplicationCommandInteractionDataOption{},
-		Bot:     session.User(),
-
-		Id:          inter.ID,
-		GuildId:     inter.GuildID,
-		GuildLocale: inter.GuildLocale,
-		Local:       inter.Locale,
-		ChannelId:   inter.ChannelID,
 	}
 
-	if data, ok := inter.Data.(discord.ApplicationCommandInteractionData); ok && isSlash {
-		context.setOptions(data.Options)
+	if i.Member != nil {
+		c.Author = i.Member.User
 	}
 
-	context.IsDM = inter.GuildID == ""
-	context.Member = inter.Member
-
-	if inter.Member != nil {
-		context.Author = inter.Member.User
-	} else {
-		context.Author = inter.User
-	}
-
-	return context
+	return c
 }
 
-// setOptions indexes options by name for better accessibility.
-func (s *SlashContext) setOptions(options []*discord.ApplicationCommandInteractionDataOption) {
-	s.Options = make(map[string]*discord.ApplicationCommandInteractionDataOption, len(options))
+// setOptions indexes options by name.
+func (c *Context) setOptions(options []*discord.ApplicationCommandInteractionDataOption) {
+	c.Options = make(map[string]*discord.ApplicationCommandInteractionDataOption, len(options))
 	for _, v := range options {
-		s.Options[v.Name] = v
+		c.Options[v.Name] = v
 	}
 }
 
-// SendText sends a string text as interaction response.
-func (s *SlashContext) ReplyString(content string) error {
-	// return errors.New("sample")
-
-	return s.ReplyC(ReplyProps{
-		Content: content,
-	})
+// orBackground guards against a zero handler context, which has no ctx.
+func orBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
-// Reply sends a string content with embeds if there is.
-func (s *SlashContext) Reply(content string, embeds ...*discord.MessageEmbed) error {
-	return s.ReplyC(ReplyProps{
-		Content: content,
-		Embeds:  embeds,
-	})
-}
+// Deadline implements context.Context.
+func (c *Context) Deadline() (time.Time, bool) { return orBackground(c.ctx).Deadline() }
 
-// Reply sends a string content with embeds if there is. `Ephemeral` - the response message will only be seen
-// by the user who called it.
-func (s *SlashContext) ReplyEphemeral(content string, embeds ...*discord.MessageEmbed) error {
-	return s.ReplyC(ReplyProps{
-		Content:     content,
-		Embeds:      embeds,
-		IsEphemeral: true,
-	})
-}
+// Done implements context.Context.
+func (c *Context) Done() <-chan struct{} { return orBackground(c.ctx).Done() }
 
-type ReplyProps struct {
+// Err implements context.Context.
+func (c *Context) Err() error { return orBackground(c.ctx).Err() }
+
+// Value implements context.Context.
+func (c *Context) Value(key any) any { return orBackground(c.ctx).Value(key) }
+
+// Message is a new message: a reply or a followup.
+type Message struct {
 	Content         string
 	Embeds          []*discord.MessageEmbed
 	Components      []discord.MessageComponent
-	IsEphemeral     bool
-	Attachments     []*discord.File
+	Files           []*discord.File
 	AllowedMentions *discord.MessageAllowedMentions
+
+	// Ephemeral messages are only shown to the user who caused the interaction.
+	Ephemeral bool
 }
 
-// ReplyC is the full reply component structure.
-func (s *SlashContext) ReplyC(reply ReplyProps) error {
-	return replyFunc(s.Session, s.Interaction, reply)
-}
-
-// DeferReply sends an interaction response where the user sees a loading state.
-// After sending, 15 minutes is given to complete your command's tasks.
-// This is considered as an interaction response, so you should not use the `Reply*` functions after.
-// - `ephemeral` -> only the user sees the loading state
-func (s *SlashContext) DeferReply(ephemeral bool) error {
-	res := &discord.InteractionResponse{
-		Type: discord.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discord.InteractionResponseData{},
+func (msg Message) flags() discord.MessageFlags {
+	if msg.Ephemeral {
+		return discord.MessageFlagsEphemeral
 	}
+	return 0
+}
 
-	if ephemeral {
-		res.Data.Flags = discord.MessageFlagsEphemeral
+func (msg Message) responseData() *discord.InteractionResponseData {
+	data := &discord.InteractionResponseData{
+		Embeds:          msg.Embeds,
+		Components:      msg.Components,
+		Files:           msg.Files,
+		AllowedMentions: msg.AllowedMentions,
+		Flags:           msg.flags(),
 	}
-
-	return s.Session.InteractionRespond(s.Interaction, res)
+	if msg.Content != "" {
+		data.Content = &msg.Content
+	}
+	return data
 }
 
-// Edit edis the interaction response.
-func (s *SlashContext) Edit(content string) error {
-	return s.EditC(EditProps{
-		Content: content,
-	})
+func (msg Message) webhookParams() *discord.WebhookParams {
+	return &discord.WebhookParams{
+		Content:         msg.Content,
+		Embeds:          msg.Embeds,
+		Components:      msg.Components,
+		Files:           msg.Files,
+		AllowedMentions: msg.AllowedMentions,
+		Flags:           msg.flags(),
+	}
 }
 
-// EditProps changes a message. Nil Embeds or Components are left unchanged; an
-// empty non-nil slice clears them.
-type EditProps struct {
-	Content         string
+// MessageEdit changes a message. A nil field is left unchanged; an empty
+// value clears it, such as an empty non-nil Components to remove the buttons.
+type MessageEdit struct {
+	Content         *string // use discord.String to set it
 	Embeds          []*discord.MessageEmbed
 	Components      []discord.MessageComponent
-	Attachments     []*discord.File
+	Files           []*discord.File // added to the message
 	AllowedMentions *discord.MessageAllowedMentions
 }
 
-func (p EditProps) webhookEdit() *discord.WebhookEdit {
+func (e MessageEdit) webhookEdit() *discord.WebhookEdit {
 	res := &discord.WebhookEdit{
-		Content:         &p.Content,
-		Files:           p.Attachments,
-		AllowedMentions: p.AllowedMentions,
+		Content:         e.Content,
+		Files:           e.Files,
+		AllowedMentions: e.AllowedMentions,
 	}
-
-	if p.Embeds != nil {
-		res.Embeds = &p.Embeds
+	if e.Embeds != nil {
+		res.Embeds = &e.Embeds
 	}
-
-	if p.Components != nil {
-		res.Components = &p.Components
+	if e.Components != nil {
+		res.Components = &e.Components
 	}
-
 	return res
 }
 
-// EditC is the full edit interaction component structure.
-func (s *SlashContext) EditC(reply EditProps) error {
-	_, err := s.Session.InteractionResponseEdit(s.Interaction, reply.webhookEdit())
-
-	return err
+func (e MessageEdit) responseData() *discord.InteractionResponseData {
+	return &discord.InteractionResponseData{
+		Content:         e.Content,
+		Embeds:          e.Embeds,
+		Components:      e.Components,
+		Files:           e.Files,
+		AllowedMentions: e.AllowedMentions,
+	}
 }
 
-// Delete deletes the interaction response.
-func (s *SlashContext) Delete() error {
-	return s.Session.InteractionResponseDelete(s.Interaction)
+// Modal is a form shown to the user. Its submission goes to the handler set
+// with HandleModal for its CustomID.
+type Modal struct {
+	CustomID   string
+	Title      string
+	Components []discord.MessageComponent
 }
 
-// Followup creates a followup message to the interaction response.
-func (s *SlashContext) Followup(content string) (*FollowupContext, error) {
-	return s.FollowupC(FollowupProps{
-		Content: content,
+// Reply responds to the interaction with a message.
+func (c *Context) Reply(content string) error {
+	return c.ReplyWith(Message{Content: content})
+}
+
+// ReplyWith responds to the interaction with a message.
+func (c *Context) ReplyWith(msg Message) error {
+	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+		Type: discord.InteractionResponseChannelMessageWithSource,
+		Data: msg.responseData(),
 	})
 }
 
-type FollowupProps ReplyProps
+// DeferReply responds to the interaction with a loading state, to be replaced
+// within 15 minutes using Edit. It counts as the response, so Reply cannot be
+// used afterwards. If ephemeral, only the user sees the loading state and the
+// message that replaces it.
+func (c *Context) DeferReply(ephemeral bool) error {
+	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+		Type: discord.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discord.InteractionResponseData{Flags: Message{Ephemeral: ephemeral}.flags()},
+	})
+}
 
-// FollowupC is the full followup component structure.
-func (s *SlashContext) FollowupC(reply FollowupProps) (*FollowupContext, error) {
-	res := &discord.WebhookParams{
-		Content: reply.Content,
-	}
+// ReplyModal responds to the interaction by showing a modal.
+func (c *Context) ReplyModal(modal Modal) error {
+	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+		Type: discord.InteractionResponseModal,
+		Data: &discord.InteractionResponseData{
+			Title:      modal.Title,
+			CustomID:   modal.CustomID,
+			Components: modal.Components,
+		},
+	})
+}
 
-	if len(reply.Embeds) > 0 {
-		res.Embeds = reply.Embeds
-	}
+// Edit replaces the text of the response.
+func (c *Context) Edit(content string) error {
+	return c.EditWith(MessageEdit{Content: &content})
+}
 
-	if len(reply.Components) > 0 {
-		res.Components = reply.Components
-	}
+// EditWith changes the response.
+func (c *Context) EditWith(edit MessageEdit) error {
+	_, err := c.Session.InteractionResponseEdit(c.Interaction, edit.webhookEdit())
+	return err
+}
 
-	if len(reply.Attachments) > 0 {
-		res.Files = reply.Attachments
-	}
+// Delete deletes the response.
+func (c *Context) Delete() error {
+	return c.Session.InteractionResponseDelete(c.Interaction)
+}
 
-	if reply.IsEphemeral {
-		res.Flags = discord.MessageFlagsEphemeral
-	}
+// Followup sends another message after the response.
+func (c *Context) Followup(content string) (*FollowupMessage, error) {
+	return c.FollowupWith(Message{Content: content})
+}
 
-	if reply.AllowedMentions != nil {
-		res.AllowedMentions = reply.AllowedMentions
-	}
-
-	// send follup
-	message, err := s.Session.FollowupMessageCreate(s.Interaction, res)
+// FollowupWith sends another message after the response.
+func (c *Context) FollowupWith(msg Message) (*FollowupMessage, error) {
+	sent, err := c.Session.FollowupMessageCreate(c.Interaction, msg.webhookParams())
 	if err != nil {
 		return nil, err
 	}
 
-	// return new context
-	return &FollowupContext{
-		message:     message,
-		Session:     s.Session,
-		Interaction: s.Interaction,
-		AppID:       s.AppID,
-	}, nil
-}
-
-// general function for sending replies back
-func replyFunc(session *client.Session, interaction *discord.Interaction, reply ReplyProps) error {
-	res := &discord.InteractionResponse{
-		Type: discord.InteractionResponseChannelMessageWithSource,
-		Data: &discord.InteractionResponseData{
-			Content: reply.Content,
-		},
-	}
-
-	if len(reply.Embeds) > 0 {
-		res.Data.Embeds = reply.Embeds
-	}
-
-	if len(reply.Components) > 0 {
-		res.Data.Components = reply.Components
-	}
-
-	if len(reply.Attachments) > 0 {
-		res.Data.Files = reply.Attachments
-	}
-
-	if reply.IsEphemeral {
-		res.Data.Flags = discord.MessageFlagsEphemeral
-	}
-
-	if reply.AllowedMentions != nil {
-		res.Data.AllowedMentions = reply.AllowedMentions
-	}
-
-	// send response
-	return session.InteractionRespond(interaction, res)
-}
-
-type ReplyModalProps struct {
-	Title      string
-	CustomID   string
-	Components []discord.MessageComponent
-}
-
-// ReplyModal returns a modal component as InteractionResponse
-func (s *SlashContext) ReplyModal(reply ReplyModalProps) error {
-	res := &discord.InteractionResponse{
-		Type: discord.InteractionResponseModal,
-		Data: &discord.InteractionResponseData{
-			Title:      reply.Title,
-			CustomID:   reply.CustomID,
-			Components: reply.Components,
-		},
-	}
-
-	return s.Session.InteractionRespond(s.Interaction, res)
+	return &FollowupMessage{Message: sent, session: c.Session, interaction: c.Interaction}, nil
 }

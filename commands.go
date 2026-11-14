@@ -4,117 +4,109 @@ import (
 	"github.com/tbdsux/minidis/discord"
 )
 
-type SlashCommandProps struct {
-	Name        string // Name of the command
-	Description string // Description of the command
+// Command is a slash command.
+//
+// A command with Subcommands or Groups only runs those: its own Execute and
+// Options are not used by Discord.
+type Command struct {
+	Name        string
+	Description string
 
-	NameLocalizations        *map[discord.Locale]string
-	DescriptionLocalizations *map[discord.Locale]string
+	NameLocalizations        map[discord.Locale]string
+	DescriptionLocalizations map[discord.Locale]string
 
 	// DefaultMemberPermissions is the permission bits a member needs. Nil lets
 	// everyone use the command; discord.Int64(0) makes it admin-only.
 	DefaultMemberPermissions *int64
-	DmPermission             bool
 
-	// Contexts says where a global command can be used, and overrides
-	// DmPermission when set. IntegrationTypes says how the app must be installed;
-	// add discord.ApplicationIntegrationUserInstall for a user-installable
-	// command. Discord only accepts both on global commands, so they are not
-	// sent when syncing to guilds.
+	// Contexts says where a global command can be used. Nil means guilds only;
+	// add discord.InteractionContextBotDM to allow DMs with the bot.
+	// IntegrationTypes says how the app must be installed; add
+	// discord.ApplicationIntegrationUserInstall for a user-installable command.
+	// Discord only accepts both on global commands, so they are not sent when
+	// syncing to guilds.
 	Contexts         []discord.InteractionContextType
 	IntegrationTypes []discord.ApplicationIntegrationType
 
 	Options []*discord.ApplicationCommandOption
-	Execute func(c *SlashContext) error
+	Execute func(c *Context) error
 
 	// Autocomplete suggests values for options declared with Autocomplete: true.
 	// Middleware does not run for it, and it must respond within 3 seconds.
 	Autocomplete func(c *AutocompleteContext) error
 
-	subcommandGroups map[string]*SlashSubcommandGroupProps
-	subcommands      map[string]*SlashSubcommandProps
+	Subcommands []*Subcommand
+	Groups      []*SubcommandGroup
 }
 
-type SlashSubcommandProps struct {
+// Subcommand is a subcommand of a Command or of a SubcommandGroup.
+type Subcommand struct {
 	Name         string
 	Description  string
 	Options      []*discord.ApplicationCommandOption
-	Execute      func(c *SlashContext) error
-	Autocomplete func(c *AutocompleteContext) error // see SlashCommandProps.Autocomplete
+	Execute      func(c *Context) error
+	Autocomplete func(c *AutocompleteContext) error // see Command.Autocomplete
 }
 
-type SlashSubcommandGroupProps struct {
+// SubcommandGroup is a group of subcommands, as in "/role add" where role is
+// the group.
+type SubcommandGroup struct {
 	Name        string
 	Description string
-	subcommands map[string]*SlashSubcommandProps
+	Subcommands []*Subcommand
 }
 
-// AddCommand adds a new slash command.
-func (m *Minidis) AddCommand(cmd *SlashCommandProps) *SlashCommandProps {
-	m.Commands[cmd.Name] = cmd
-
-	cmd.subcommandGroups = map[string]*SlashSubcommandGroupProps{}
-	cmd.subcommands = map[string]*SlashSubcommandProps{}
-
-	return cmd
-}
-
-type MessageCommandProps struct {
+// MessageCommand is a command in the context menu of a message.
+type MessageCommand struct {
 	Name    string
 	Execute func(c *MessageCommandContext) error
 
-	// See SlashCommandProps for these. Unset Contexts leaves Discord's default.
+	// See Command for these.
 	DefaultMemberPermissions *int64
 	Contexts                 []discord.InteractionContextType
 	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
-// AddMessageCommand adds a new message command.
-func (m *Minidis) AddMessageCommand(cmd *MessageCommandProps) {
-	m.MessageCommands[cmd.Name] = cmd
-}
-
-type UserCommandProps struct {
+// UserCommand is a command in the context menu of a user.
+type UserCommand struct {
 	Name    string
 	Execute func(c *UserCommandContext) error
 
-	// See SlashCommandProps for these. Unset Contexts leaves Discord's default.
+	// See Command for these.
 	DefaultMemberPermissions *int64
 	Contexts                 []discord.InteractionContextType
 	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
-// AddUserCommand adds a new user command.
-func (m *Minidis) AddUserCommand(cmd *UserCommandProps) {
-	m.UserCommands[cmd.Name] = cmd
-}
+// AddCommand adds slash commands, replacing any of the same name. Discord
+// shows them once they are synced with SyncCommands.
+func (m *Minidis) AddCommand(cmds ...*Command) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-// RegisterCommands is used for adding multiple already defined commands.
-// It does not return anything. It just wrap the `AddCommand` function.
-func (m *Minidis) RegisterCommands(cmds ...*SlashCommandProps) {
-	for _, v := range cmds {
-		m.AddCommand(v)
+	for _, cmd := range cmds {
+		m.commands[cmd.Name] = cmd
 	}
 }
 
-// AddSubcommand adds a new sub command for the parent command.
-// Note: this will make your parent command not execute.
-func (s *SlashCommandProps) AddSubcommand(cmd *SlashSubcommandProps) {
-	s.subcommands[cmd.Name] = cmd
+// AddMessageCommand adds message context menu commands, replacing any of the
+// same name.
+func (m *Minidis) AddMessageCommand(cmds ...*MessageCommand) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, cmd := range cmds {
+		m.messageCommands[cmd.Name] = cmd
+	}
 }
 
-// AddSubcommand adds a new group for sub commands for the parent command.
-// Note: this will make your parent command not execute.
-func (s *SlashCommandProps) AddSubcommandGroup(group *SlashSubcommandGroupProps) *SlashSubcommandGroupProps {
-	s.subcommandGroups[group.Name] = group
+// AddUserCommand adds user context menu commands, replacing any of the same
+// name.
+func (m *Minidis) AddUserCommand(cmds ...*UserCommand) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	group.subcommands = map[string]*SlashSubcommandProps{}
-
-	return group
-}
-
-// AddSubcommand adds a new sub command for the subcommmand group.
-// Note: this will make your parent command not execute.
-func (s *SlashSubcommandGroupProps) AddSubcommand(cmd *SlashSubcommandProps) {
-	s.subcommands[cmd.Name] = cmd
+	for _, cmd := range cmds {
+		m.userCommands[cmd.Name] = cmd
+	}
 }

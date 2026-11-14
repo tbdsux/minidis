@@ -1,108 +1,116 @@
 package minidis
 
 import (
+	"context"
 	"runtime/debug"
+	"time"
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
 )
 
-// INFO: Too much abstraction? Maybe, will see if this is useful in the future.
+// ChannelMessageContext is passed to OnChannelMessageCreate handlers.
+//
+// It is also a context.Context, canceled when the handler returns or the bot
+// closes.
 type ChannelMessageContext struct {
-	ChannelID string
-	MessageID string
+	ctx context.Context
+
 	Session   *client.Session
 	Message   *discord.MessageCreate
+	ChannelID string
+	MessageID string
 }
 
-func (m *Minidis) handleOnMessageCreate(s *client.Session, i *discord.MessageCreate) {
-	// Check if we have the handler set for the channel
-	if handler, ok := m.ChannelMessageHandlers[i.ChannelID]; ok {
-		// If the message is from bot, ignore it
-		if i.Author.ID == s.User().ID {
-			return
-		}
+// Deadline implements context.Context.
+func (c *ChannelMessageContext) Deadline() (time.Time, bool) { return orBackground(c.ctx).Deadline() }
 
-		ctx := &ChannelMessageContext{
-			ChannelID: i.ChannelID,
-			MessageID: i.ID,
-			Session:   s,
-			Message:   i,
-		}
+// Done implements context.Context.
+func (c *ChannelMessageContext) Done() <-chan struct{} { return orBackground(c.ctx).Done() }
 
-		m.runChannelHandler(ctx, handler)
+// Err implements context.Context.
+func (c *ChannelMessageContext) Err() error { return orBackground(c.ctx).Err() }
+
+// Value implements context.Context.
+func (c *ChannelMessageContext) Value(key any) any { return orBackground(c.ctx).Value(key) }
+
+// OnChannelMessageCreate sets the handler for messages in the given channels.
+// The bot's own messages are ignored. Reading message content needs the
+// privileged discord.IntentsMessageContent intent.
+func (m *Minidis) OnChannelMessageCreate(h func(c *ChannelMessageContext) error, channels ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, channel := range channels {
+		m.channelHandlers[channel] = h
+	}
+}
+
+func (m *Minidis) handleChannelMessage(s *client.Session, msg *discord.MessageCreate) {
+	m.mu.RLock()
+	h := m.channelHandlers[msg.ChannelID]
+	m.mu.RUnlock()
+
+	if h == nil || msg.Author == nil {
 		return
 	}
 
-	if m.MessageCreateHandler != nil {
-		m.MessageCreateHandler(s, i)
+	// Replying to its own messages could loop forever.
+	if bot := s.User(); bot != nil && msg.Author.ID == bot.ID {
+		return
 	}
+
+	ctx, cancel := context.WithCancel(m.baseContext())
+	defer cancel()
+
+	m.runChannelHandler(&ChannelMessageContext{
+		ctx:       ctx,
+		Session:   s,
+		Message:   msg,
+		ChannelID: msg.ChannelID,
+		MessageID: msg.ID,
+	}, h)
 }
 
-func (m *Minidis) runChannelHandler(c *ChannelMessageContext, handler func(*ChannelMessageContext) error) {
+func (m *Minidis) runChannelHandler(c *ChannelMessageContext, h func(*ChannelMessageContext) error) {
 	defer func() {
 		if r := recover(); r != nil {
 			m.handleChannelError(c, &PanicError{Value: r, Stack: debug.Stack()})
 		}
 	}()
 
-	if err := handler(c); err != nil {
+	if err := h(c); err != nil {
 		m.handleChannelError(c, err)
 	}
 }
 
-func (m *Minidis) OnChannelMessageCreate(handler func(c *ChannelMessageContext) error, channels ...string) {
-	if m.ChannelMessageHandlers == nil {
-		m.ChannelMessageHandlers = make(map[string]func(*ChannelMessageContext) error)
-	}
-
-	// Could be useful for a bot in multiple different discord servers and channels
-	for _, channel := range channels {
-		m.ChannelMessageHandlers[channel] = handler
+// reference points at the message being handled. It does not fail if the
+// message was deleted in the meantime.
+func (c *ChannelMessageContext) reference() *discord.MessageReference {
+	return &discord.MessageReference{
+		MessageID:       c.Message.ID,
+		ChannelID:       c.ChannelID,
+		GuildID:         c.Message.GuildID,
+		FailIfNotExists: discord.Bool(false),
 	}
 }
 
-// Reply is a wrapper for sending a message to the channel where the message was sent.
-// Setting `doReply` to true will make the message a reply to the original message.
-func (c *ChannelMessageContext) Reply(message string, doReply ...bool) (*discord.Message, error) {
-	failIfNotExists := false
-
-	reply := false
-	if len(doReply) > 0 {
-		reply = doReply[0]
-	}
-
-	if reply {
-		return c.Session.ChannelMessageSendReply(c.ChannelID, message, &discord.MessageReference{
-			MessageID:       c.Message.ID,
-			ChannelID:       c.ChannelID,
-			GuildID:         c.Message.GuildID,
-			FailIfNotExists: &failIfNotExists,
-		})
-
-	}
-
-	return c.Session.ChannelMessageSend(c.ChannelID, message)
+// Send sends a message to the channel.
+func (c *ChannelMessageContext) Send(content string) (*discord.Message, error) {
+	return c.Session.ChannelMessageSend(c.ChannelID, content)
 }
 
-// ReplyEmbed is a wrapper for sending an embed message to the channel where the message was sent.
-// Setting `doReply` to true will make the message a reply to the original message.
-func (c *ChannelMessageContext) ReplyEmbed(embed *discord.MessageEmbed, doReply ...bool) (*discord.Message, error) {
-	failIfNotExists := false
-
-	reply := false
-	if len(doReply) > 0 {
-		reply = doReply[0]
-	}
-
-	if reply {
-		return c.Session.ChannelMessageSendEmbedReply(c.ChannelID, embed, &discord.MessageReference{
-			MessageID:       c.Message.ID,
-			ChannelID:       c.ChannelID,
-			GuildID:         c.Message.GuildID,
-			FailIfNotExists: &failIfNotExists,
-		})
-	}
-
+// SendEmbed sends an embed to the channel.
+func (c *ChannelMessageContext) SendEmbed(embed *discord.MessageEmbed) (*discord.Message, error) {
 	return c.Session.ChannelMessageSendEmbed(c.ChannelID, embed)
+}
+
+// Reply sends a message to the channel as a reply to the message.
+func (c *ChannelMessageContext) Reply(content string) (*discord.Message, error) {
+	return c.Session.ChannelMessageSendReply(c.ChannelID, content, c.reference())
+}
+
+// ReplyEmbed sends an embed to the channel as a reply to the message.
+func (c *ChannelMessageContext) ReplyEmbed(embed *discord.MessageEmbed) (*discord.Message, error) {
+	return c.Session.ChannelMessageSendEmbedReply(c.ChannelID, embed, c.reference())
 }

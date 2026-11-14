@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -24,43 +25,36 @@ func main() {
 	})
 
 	// Message command
-	bot.AddMessageCommand(&minidis.MessageCommandProps{
+	bot.AddMessageCommand(&minidis.MessageCommand{
 		Name: "re-reply",
 		Execute: func(c *minidis.MessageCommandContext) error {
-			return c.ReplyEphemeral(c.Message.Content)
+			return c.ReplyWith(minidis.Message{Content: c.Message.Content, Ephemeral: true})
 		},
 	})
 
 	// User command
-	bot.AddUserCommand(&minidis.UserCommandProps{
+	bot.AddUserCommand(&minidis.UserCommand{
 		Name: "get-user",
 		Execute: func(c *minidis.UserCommandContext) error {
 
-			fmt.Println(c.Member)
-			fmt.Println(c.User)
+			fmt.Println(c.TargetMember)
+			fmt.Println(c.TargetUser)
 
-			return c.ReplyString("hello " + c.User.Username)
+			return c.Reply("hello " + c.TargetUser.Username)
 		},
 	})
-
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
 
 	// Register the commands. This replaces any registered before.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
-	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	// Run until CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Close the session
-	bot.CloseSession()
+	fmt.Println("Bot is running. Press CTRL+C to exit.")
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }

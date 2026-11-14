@@ -5,28 +5,26 @@ import (
 	"github.com/tbdsux/minidis/discord/client"
 )
 
-type FollowupContext struct {
-	message     *discord.Message
-	Interaction *discord.Interaction
-	Session     *client.Session
-	AppID       string
+// FollowupMessage is a message sent with Context.Followup.
+type FollowupMessage struct {
+	Message *discord.Message
+
+	session     *client.Session
+	interaction *discord.Interaction
 }
 
-// Edit edits the followup message.
-func (f *FollowupContext) Edit(content string) error {
-	return f.EditC(EditProps{
-		Content: content,
-	})
+// Edit replaces the text of the followup message.
+func (f *FollowupMessage) Edit(content string) error {
+	return f.EditWith(MessageEdit{Content: &content})
 }
 
-// EditC is the full edit interaction component structure.
-func (f *FollowupContext) EditC(reply EditProps) error {
-	_, err := f.Session.FollowupMessageEdit(f.Interaction, f.message.ID, reply.webhookEdit())
-
+// EditWith changes the followup message.
+func (f *FollowupMessage) EditWith(edit MessageEdit) error {
+	_, err := f.session.FollowupMessageEdit(f.interaction, f.Message.ID, edit.webhookEdit())
 	return err
 }
 
 // Delete deletes the followup message.
-func (f *FollowupContext) Delete() error {
-	return f.Session.FollowupMessageDelete(f.Interaction, f.message.ID)
+func (f *FollowupMessage) Delete() error {
+	return f.session.FollowupMessageDelete(f.interaction, f.Message.ID)
 }

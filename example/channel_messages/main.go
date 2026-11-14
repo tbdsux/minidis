@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -26,7 +27,7 @@ func main() {
 	channels := strings.Split(os.Getenv("CHANNELS"), ",")
 
 	bot.OnChannelMessageCreate(func(c *minidis.ChannelMessageContext) error {
-		message, err := c.Reply("Hello! This is a message from the bot.", true)
+		message, err := c.Reply("Hello! This is a message from the bot.")
 		if err != nil {
 			return err
 		}
@@ -36,24 +37,17 @@ func main() {
 		return nil
 	}, channels...)
 
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
-
 	// Register the commands. This replaces any registered before.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
-	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	// Run until CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Close the session
-	bot.CloseSession()
+	fmt.Println("Bot is running. Press CTRL+C to exit.")
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }

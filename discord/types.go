@@ -11,6 +11,10 @@ import (
 // Bool returns a pointer to v, for optional boolean fields.
 func Bool(v bool) *bool { return &v }
 
+// String returns a pointer to v, for optional text fields such as the Content
+// of an edit.
+func String(v string) *string { return &v }
+
 // Int returns a pointer to v, for optional integer fields.
 func Int(v int) *int { return &v }
 

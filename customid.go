@@ -70,3 +70,30 @@ func (p customIDPattern) match(segments []string) (map[string]string, bool) {
 	}
 	return params, true
 }
+
+// idHandlers maps handler IDs, which may be patterns, to handlers.
+type idHandlers[H any] struct {
+	byID     map[string]H
+	patterns customIDRouter
+}
+
+func (r *idHandlers[H]) add(id string, h H) {
+	if r.byID == nil {
+		r.byID = map[string]H{}
+	}
+	r.byID[id] = h
+	r.patterns.add(id)
+}
+
+// find returns the handler for customID and the captures of its pattern.
+func (r *idHandlers[H]) find(customID string) (H, map[string]string, bool) {
+	if h, ok := r.byID[customID]; ok {
+		return h, nil, true
+	}
+	if id, params, ok := r.patterns.match(customID); ok {
+		return r.byID[id], params, true
+	}
+
+	var zero H
+	return zero, nil, false
+}

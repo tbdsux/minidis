@@ -2,6 +2,7 @@ package minidis
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 type recordedRequest struct {
@@ -48,7 +50,7 @@ func newTestBot(t *testing.T) (*Minidis, func() []recordedRequest) {
 
 	bot := New("token")
 	bot.Session.BaseURL = srv.URL
-	bot.AppID = "app"
+	bot.appID = "app"
 
 	return bot, func() []recordedRequest {
 		mu.Lock()
@@ -78,16 +80,16 @@ func TestNewUsesBotAuthorization(t *testing.T) {
 func TestSlashCommandReply(t *testing.T) {
 	bot, requests := newTestBot(t)
 
-	bot.AddCommand(&SlashCommandProps{
+	bot.AddCommand(&Command{
 		Name: "ping",
-		Execute: func(c *SlashContext) error {
-			if c.Author.ID != "u1" || c.GuildId != "g" || c.IsDM || c.AppID != "app" {
+		Execute: func(c *Context) error {
+			if c.Author.ID != "u1" || c.GuildID != "g" || c.IsDM || c.AppID != "app" {
 				t.Errorf("context = %+v", c)
 			}
 			if got := c.Options["who"].StringValue(); got != "x" {
 				t.Errorf("option = %q", got)
 			}
-			return c.ReplyEphemeral("pong", &discord.MessageEmbed{Title: "t"})
+			return c.ReplyWith(Message{Content: "pong", Embeds: []*discord.MessageEmbed{{Title: "t"}}, Ephemeral: true})
 		},
 	})
 
@@ -108,7 +110,7 @@ func TestDirectMessageContext(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	called := false
-	bot.AddCommand(&SlashCommandProps{Name: "dm", Execute: func(c *SlashContext) error {
+	bot.AddCommand(&Command{Name: "dm", Execute: func(c *Context) error {
 		called = true
 		if !c.IsDM || c.Author.ID != "u2" || c.Member != nil {
 			t.Errorf("context = %+v", c)
@@ -127,13 +129,16 @@ func TestSubcommandRouting(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	var ran []string
-	mark := func(name string) func(*SlashContext) error {
-		return func(*SlashContext) error { ran = append(ran, name); return nil }
+	mark := func(name string) func(*Context) error {
+		return func(*Context) error { ran = append(ran, name); return nil }
 	}
 
-	cmd := bot.AddCommand(&SlashCommandProps{Name: "root", Execute: mark("root")})
-	cmd.AddSubcommand(&SlashSubcommandProps{Name: "sub", Execute: mark("sub")})
-	cmd.AddSubcommandGroup(&SlashSubcommandGroupProps{Name: "grp"}).AddSubcommand(&SlashSubcommandProps{Name: "nested", Execute: mark("nested")})
+	bot.AddCommand(&Command{
+		Name:        "root",
+		Execute:     mark("root"),
+		Subcommands: []*Subcommand{{Name: "sub", Execute: mark("sub")}},
+		Groups:      []*SubcommandGroup{{Name: "grp", Subcommands: []*Subcommand{{Name: "nested", Execute: mark("nested")}}}},
+	})
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"root","type":1}}`))
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"root","type":1,"options":[{"name":"sub","type":1}]}}`))
@@ -149,12 +154,12 @@ func TestContextMenuCommands(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	gotMessage, gotUser := "", ""
-	bot.AddMessageCommand(&MessageCommandProps{Name: "m", Execute: func(c *MessageCommandContext) error {
+	bot.AddMessageCommand(&MessageCommand{Name: "m", Execute: func(c *MessageCommandContext) error {
 		gotMessage = c.Message.Content
 		return nil
 	}})
-	bot.AddUserCommand(&UserCommandProps{Name: "u", Execute: func(c *UserCommandContext) error {
-		gotUser = c.User.Username + "/" + c.Member.Nick
+	bot.AddUserCommand(&UserCommand{Name: "u", Execute: func(c *UserCommandContext) error {
+		gotUser = c.TargetUser.Username + "/" + c.TargetMember.Nick
 		return nil
 	}})
 
@@ -170,18 +175,18 @@ func TestComponentAndModalHandlers(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	var value, fallback, modal string
-	bot.AddComponentHandler(&ComponentInteractionProps{ID: "sel", Execute: func(_ *SlashContext, c *ComponentContext) error {
+	bot.HandleComponent("sel", func(c *ComponentContext) error {
 		value = c.Data.Values[0]
 		return nil
-	}})
-	bot.AddCustomComponentHandler(func(_ *SlashContext, c *ComponentContext) error {
+	})
+	bot.HandleComponentFallback(func(c *ComponentContext) error {
 		fallback = c.Data.CustomID
 		return nil
 	})
-	bot.AddModalSubmitHandler(&ModalInteractionProps{ID: "form", Execute: func(_ *SlashContext, c *ModalSubmitContext) error {
+	bot.HandleModal("form", func(c *ModalSubmitContext) error {
 		modal = c.Data.Components[0].(*discord.Label).Component.(*discord.TextInput).Value
 		return nil
-	}})
+	})
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"sel","component_type":3,"values":["go"]}}`))
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"other_1","component_type":2}}`))
@@ -195,7 +200,7 @@ func TestComponentAndModalHandlers(t *testing.T) {
 func TestResponseLifecycle(t *testing.T) {
 	bot, requests := newTestBot(t)
 
-	bot.AddCommand(&SlashCommandProps{Name: "c", Execute: func(c *SlashContext) error {
+	bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
 		if err := c.DeferReply(true); err != nil {
 			return err
 		}
@@ -244,8 +249,8 @@ func TestResponseLifecycle(t *testing.T) {
 func TestReplyModal(t *testing.T) {
 	bot, requests := newTestBot(t)
 
-	bot.AddCommand(&SlashCommandProps{Name: "m", Execute: func(c *SlashContext) error {
-		return c.ReplyModal(ReplyModalProps{Title: "T", CustomID: "id", Components: []discord.MessageComponent{
+	bot.AddCommand(&Command{Name: "m", Execute: func(c *Context) error {
+		return c.ReplyModal(Modal{Title: "T", CustomID: "id", Components: []discord.MessageComponent{
 			discord.Label{Label: "L", Component: discord.TextInput{CustomID: "x", Style: discord.TextInputShort}},
 		}})
 	}})
@@ -277,19 +282,22 @@ func commandByName(t *testing.T, raw []byte) map[string]map[string]any {
 }
 
 func registerAll(bot *Minidis) {
-	exec := func(*SlashContext) error { return nil }
+	exec := func(*Context) error { return nil }
 
-	bot.AddCommand(&SlashCommandProps{Name: "admin", Description: "d", DefaultMemberPermissions: discord.Int64(0), Execute: exec})
-	bot.AddCommand(&SlashCommandProps{Name: "open", Description: "d", DefaultMemberPermissions: discord.Int64(1 << 31), DmPermission: true, Execute: exec})
-	bot.AddCommand(&SlashCommandProps{Name: "everyone", Description: "d", Execute: exec})
+	bot.AddCommand(&Command{Name: "admin", Description: "d", DefaultMemberPermissions: discord.Int64(0), Execute: exec})
+	bot.AddCommand(&Command{Name: "open", Description: "d", DefaultMemberPermissions: discord.Int64(1 << 31), Execute: exec,
+		Contexts: []discord.InteractionContextType{discord.InteractionContextGuild, discord.InteractionContextBotDM}})
+	bot.AddCommand(&Command{Name: "everyone", Description: "d", Execute: exec})
 
-	parent := bot.AddCommand(&SlashCommandProps{Name: "parent", Description: "d"})
-	parent.AddSubcommand(&SlashSubcommandProps{Name: "sub", Description: "s"})
-	parent.AddSubcommandGroup(&SlashSubcommandGroupProps{Name: "grp", Description: "g"}).
-		AddSubcommand(&SlashSubcommandProps{Name: "nested", Description: "n"})
+	bot.AddCommand(&Command{
+		Name:        "parent",
+		Description: "d",
+		Subcommands: []*Subcommand{{Name: "sub", Description: "s"}},
+		Groups:      []*SubcommandGroup{{Name: "grp", Description: "g", Subcommands: []*Subcommand{{Name: "nested", Description: "n"}}}},
+	})
 
-	bot.AddMessageCommand(&MessageCommandProps{Name: "msg"})
-	bot.AddUserCommand(&UserCommandProps{Name: "usr"})
+	bot.AddMessageCommand(&MessageCommand{Name: "msg"})
+	bot.AddUserCommand(&UserCommand{Name: "usr"})
 }
 
 func TestSyncGlobalCommands(t *testing.T) {
@@ -358,15 +366,19 @@ func TestSubcommandOptionsAreRegisteredAndPassedToHandlers(t *testing.T) {
 	option := []*discord.ApplicationCommandOption{{Type: discord.ApplicationCommandOptionString, Name: "who", Description: "d"}}
 
 	var got []string
-	read := func(c *SlashContext) error {
+	read := func(c *Context) error {
 		got = append(got, c.Options["who"].StringValue())
 		return nil
 	}
 
-	cmd := bot.AddCommand(&SlashCommandProps{Name: "root", Description: "d"})
-	cmd.AddSubcommand(&SlashSubcommandProps{Name: "sub", Description: "s", Options: option, Execute: read})
-	cmd.AddSubcommandGroup(&SlashSubcommandGroupProps{Name: "grp", Description: "g"}).
-		AddSubcommand(&SlashSubcommandProps{Name: "nested", Description: "n", Options: option, Execute: read})
+	bot.AddCommand(&Command{
+		Name:        "root",
+		Description: "d",
+		Subcommands: []*Subcommand{{Name: "sub", Description: "s", Options: option, Execute: read}},
+		Groups: []*SubcommandGroup{{Name: "grp", Description: "g", Subcommands: []*Subcommand{
+			{Name: "nested", Description: "n", Options: option, Execute: read},
+		}}},
+	})
 
 	if err := bot.SyncCommands("g"); err != nil {
 		t.Fatal(err)
@@ -420,7 +432,7 @@ func TestClearCommandsScope(t *testing.T) {
 	}
 }
 
-// TestEndToEnd drives OpenSession and Run against a fake gateway and REST API.
+// TestEndToEnd drives Open against a fake gateway and REST API.
 func TestEndToEnd(t *testing.T) {
 	type sent struct {
 		path string
@@ -480,29 +492,28 @@ func TestEndToEnd(t *testing.T) {
 	bot := New("token")
 	bot.Session.BaseURL = srv.URL
 
-	// Repeated registration must not run handlers twice; the check for an extra
-	// request at the end of this test would catch it.
-	bot.Run()
-	bot.Run()
-
-	bot.AddCommand(&SlashCommandProps{Name: "ping", Execute: func(c *SlashContext) error {
+	bot.AddCommand(&Command{Name: "ping", Execute: func(c *Context) error {
 		if c.Bot.ID != "bot" {
 			t.Errorf("bot user = %+v", c.Bot)
 		}
-		return c.ReplyString("pong")
+		return c.Reply("pong")
 	}})
 	bot.OnChannelMessageCreate(func(c *ChannelMessageContext) error {
-		_, err := c.Reply("hello", true)
+		_, err := c.Reply("hello")
 		return err
 	}, "c1")
 
-	if err := bot.OpenSession(); err != nil {
+	if err := bot.Open(); err != nil {
 		t.Fatal(err)
 	}
-	defer bot.CloseSession()
+	defer bot.Close()
 
-	if bot.AppID != "app" {
-		t.Errorf("AppID = %q", bot.AppID)
+	if err := bot.Open(); !errors.Is(err, client.ErrAlreadyOpen) {
+		t.Errorf("second Open = %v", err)
+	}
+
+	if id := bot.Session.ApplicationID(); id != "app" {
+		t.Errorf("application ID = %q", id)
 	}
 
 	close(release)

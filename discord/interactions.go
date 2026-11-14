@@ -299,12 +299,13 @@ type InteractionResponse struct {
 	Data *InteractionResponseData `json:"data,omitempty"`
 }
 
-// InteractionResponseData is the content of an InteractionResponse. Embeds,
-// Components and Choices are left out when nil; an empty non-nil slice is sent,
-// which clears them on a message update and means "no results" for autocomplete.
+// InteractionResponseData is the content of an InteractionResponse. Content,
+// Embeds, Components and Choices are left out when nil. An empty value that is
+// not nil is sent, which clears it on a message update and, for Choices, means
+// "no results" for autocomplete.
 type InteractionResponseData struct {
 	TTS             bool                              `json:"tts,omitempty"`
-	Content         string                            `json:"content,omitempty"`
+	Content         *string                           `json:"content,omitempty"`
 	Embeds          []*MessageEmbed                   `json:"embeds,omitzero"`
 	AllowedMentions *MessageAllowedMentions           `json:"allowed_mentions,omitempty"`
 	Flags           MessageFlags                      `json:"flags,omitempty"`

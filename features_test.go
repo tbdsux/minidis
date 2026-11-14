@@ -17,13 +17,13 @@ func TestPanicReachesErrorHandler(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	var got error
-	bot.OnError(func(c *SlashContext, err error) {
+	bot.OnError(func(c *Context, err error) {
 		if c.Author.ID != "u1" {
 			t.Errorf("context = %+v", c)
 		}
 		got = err
 	})
-	bot.AddCommand(&SlashCommandProps{Name: "boom", Execute: func(*SlashContext) error { panic("kaput") }})
+	bot.AddCommand(&Command{Name: "boom", Execute: func(*Context) error { panic("kaput") }})
 
 	bot.handleInteraction(bot.Session, interaction(t, slashPayload("boom", "")))
 
@@ -38,8 +38,8 @@ func TestReturnedErrorReachesErrorHandler(t *testing.T) {
 
 	want := errors.New("nope")
 	var got error
-	bot.OnError(func(_ *SlashContext, err error) { got = err })
-	bot.AddCommand(&SlashCommandProps{Name: "fail", Execute: func(*SlashContext) error { return want }})
+	bot.OnError(func(_ *Context, err error) { got = err })
+	bot.AddCommand(&Command{Name: "fail", Execute: func(*Context) error { return want }})
 
 	bot.handleInteraction(bot.Session, interaction(t, slashPayload("fail", "")))
 
@@ -58,13 +58,9 @@ func TestChannelMessagePanicReachesItsErrorHandler(t *testing.T) {
 		}
 		got = err
 	})
-	bot.ChannelMessageHandlers = map[string]func(*ChannelMessageContext) error{
-		"c1": func(*ChannelMessageContext) error { panic("kaput") },
-	}
+	bot.OnChannelMessageCreate(func(*ChannelMessageContext) error { panic("kaput") }, "c1")
 
-	session := bot.Session
-	m := &discord.MessageCreate{Message: &discord.Message{ChannelID: "c1", Author: &discord.User{ID: "other"}}}
-	bot.runChannelHandler(&ChannelMessageContext{ChannelID: m.ChannelID, Session: session, Message: m}, bot.ChannelMessageHandlers["c1"])
+	bot.handleChannelMessage(bot.Session, &discord.MessageCreate{Message: &discord.Message{ChannelID: "c1", Author: &discord.User{ID: "other"}}})
 
 	var p *PanicError
 	if !errors.As(got, &p) {
@@ -92,10 +88,9 @@ func TestStaleCommandsReportNoHandler(t *testing.T) {
 			bot, _ := newTestBot(t)
 
 			var got error
-			bot.OnError(func(_ *SlashContext, err error) { got = err })
+			bot.OnError(func(_ *Context, err error) { got = err })
 
-			parent := bot.AddCommand(&SlashCommandProps{Name: "parent"})
-			parent.AddSubcommand(&SlashSubcommandProps{Name: "sub"})
+			bot.AddCommand(&Command{Name: "parent", Subcommands: []*Subcommand{{Name: "sub"}}})
 
 			bot.handleInteraction(bot.Session, interaction(t, tt.payload))
 
@@ -109,7 +104,7 @@ func TestStaleCommandsReportNoHandler(t *testing.T) {
 func TestUnhandledComponentIsIgnored(t *testing.T) {
 	bot, _ := newTestBot(t)
 
-	bot.OnError(func(_ *SlashContext, err error) { t.Errorf("err = %v", err) })
+	bot.OnError(func(_ *Context, err error) { t.Errorf("err = %v", err) })
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"nope","component_type":2}}`))
 }
@@ -121,7 +116,7 @@ func autocompletePayload(options string) string {
 func TestAutocompleteOnCommand(t *testing.T) {
 	bot, requests := newTestBot(t)
 
-	bot.AddCommand(&SlashCommandProps{
+	bot.AddCommand(&Command{
 		Name: "find",
 		Autocomplete: func(c *AutocompleteContext) error {
 			if c.Focused.Name != "q" || c.Input() != "go" || c.String("other") != "x" {
@@ -159,10 +154,11 @@ func TestAutocompleteOnNestedSubcommands(t *testing.T) {
 			got := ""
 			complete := func(c *AutocompleteContext) error { got = c.Input(); return nil }
 
-			cmd := bot.AddCommand(&SlashCommandProps{Name: "find"})
-			cmd.AddSubcommand(&SlashSubcommandProps{Name: "sub", Autocomplete: complete})
-			cmd.AddSubcommandGroup(&SlashSubcommandGroupProps{Name: "grp"}).
-				AddSubcommand(&SlashSubcommandProps{Name: "nested", Autocomplete: complete})
+			bot.AddCommand(&Command{
+				Name:        "find",
+				Subcommands: []*Subcommand{{Name: "sub", Autocomplete: complete}},
+				Groups:      []*SubcommandGroup{{Name: "grp", Subcommands: []*Subcommand{{Name: "nested", Autocomplete: complete}}}},
+			})
 
 			bot.handleInteraction(bot.Session, interaction(t, autocompletePayload(tt.options)))
 
@@ -188,7 +184,7 @@ func TestAutocompleteInputOfNumberOptions(t *testing.T) {
 			bot, _ := newTestBot(t)
 
 			got := ""
-			bot.AddCommand(&SlashCommandProps{Name: "find", Autocomplete: func(c *AutocompleteContext) error {
+			bot.AddCommand(&Command{Name: "find", Autocomplete: func(c *AutocompleteContext) error {
 				got = c.Input()
 				return nil
 			}})
@@ -221,7 +217,7 @@ func TestAutocompleteResponseLimits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bot, requests := newTestBot(t)
 
-			bot.AddCommand(&SlashCommandProps{Name: "find", Autocomplete: func(c *AutocompleteContext) error {
+			bot.AddCommand(&Command{Name: "find", Autocomplete: func(c *AutocompleteContext) error {
 				return c.Respond(tt.choices...)
 			}})
 
@@ -241,7 +237,7 @@ func TestMiddlewareOrderAndCoverage(t *testing.T) {
 	var ran []string
 	tag := func(name string) Middleware {
 		return func(next HandlerFunc) HandlerFunc {
-			return func(c *SlashContext) error {
+			return func(c *Context) error {
 				ran = append(ran, name+":before")
 				err := next(c)
 				ran = append(ran, name+":after")
@@ -253,17 +249,17 @@ func TestMiddlewareOrderAndCoverage(t *testing.T) {
 
 	mark := func() error { ran = append(ran, "handler"); return nil }
 
-	bot.AddCommand(&SlashCommandProps{
+	bot.AddCommand(&Command{
 		Name:    "find",
-		Execute: func(*SlashContext) error { return mark() },
+		Execute: func(*Context) error { return mark() },
 		Autocomplete: func(*AutocompleteContext) error {
 			t.Log("autocomplete ran")
 			return nil
 		},
 	})
-	bot.AddComponentHandler(&ComponentInteractionProps{ID: "b", Execute: func(*SlashContext, *ComponentContext) error { return mark() }})
-	bot.AddModalSubmitHandler(&ModalInteractionProps{ID: "f", Execute: func(*SlashContext, *ModalSubmitContext) error { return mark() }})
-	bot.AddMessageCommand(&MessageCommandProps{Name: "m", Execute: func(*MessageCommandContext) error { return mark() }})
+	bot.HandleComponent("b", func(*ComponentContext) error { return mark() })
+	bot.HandleModal("f", func(*ModalSubmitContext) error { return mark() })
+	bot.AddMessageCommand(&MessageCommand{Name: "m", Execute: func(*MessageCommandContext) error { return mark() }})
 
 	want := "a:before b:before handler b:after a:after"
 
@@ -292,9 +288,9 @@ func TestMiddlewareCanStopAnInteraction(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	bot.Use(func(HandlerFunc) HandlerFunc {
-		return func(*SlashContext) error { return nil }
+		return func(*Context) error { return nil }
 	})
-	bot.AddCommand(&SlashCommandProps{Name: "c", Execute: func(*SlashContext) error {
+	bot.AddCommand(&Command{Name: "c", Execute: func(*Context) error {
 		t.Error("handler ran")
 		return nil
 	}})
@@ -306,11 +302,11 @@ func TestPanicInMiddlewareIsRecovered(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	var got error
-	bot.OnError(func(_ *SlashContext, err error) { got = err })
+	bot.OnError(func(_ *Context, err error) { got = err })
 	bot.Use(func(HandlerFunc) HandlerFunc {
-		return func(*SlashContext) error { panic("mw") }
+		return func(*Context) error { panic("mw") }
 	})
-	bot.AddCommand(&SlashCommandProps{Name: "c", Execute: func(*SlashContext) error { return nil }})
+	bot.AddCommand(&Command{Name: "c", Execute: func(*Context) error { return nil }})
 
 	bot.handleInteraction(bot.Session, interaction(t, slashPayload("c", "")))
 
@@ -324,10 +320,10 @@ func componentRespond(t *testing.T, respond func(*ComponentContext) error) recor
 	t.Helper()
 
 	bot, requests := newTestBot(t)
-	bot.OnError(func(_ *SlashContext, err error) { t.Error(err) })
-	bot.AddComponentHandler(&ComponentInteractionProps{ID: "b", Execute: func(_ *SlashContext, c *ComponentContext) error {
+	bot.OnError(func(_ *Context, err error) { t.Error(err) })
+	bot.HandleComponent("b", func(c *ComponentContext) error {
 		return respond(c)
-	}})
+	})
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"b","component_type":2}}`))
 
@@ -352,7 +348,7 @@ func TestComponentUpdate(t *testing.T) {
 
 func TestComponentUpdateCanClearComponents(t *testing.T) {
 	req := componentRespond(t, func(c *ComponentContext) error {
-		return c.UpdateC(EditProps{Components: []discord.MessageComponent{}})
+		return c.UpdateWith(MessageEdit{Components: []discord.MessageComponent{}})
 	})
 
 	components, ok := req.Body["data"].(map[string]any)["components"].([]any)
@@ -372,11 +368,11 @@ func TestComponentDeferUpdate(t *testing.T) {
 func TestEditCanClearComponents(t *testing.T) {
 	bot, requests := newTestBot(t)
 
-	bot.AddCommand(&SlashCommandProps{Name: "c", Execute: func(c *SlashContext) error {
+	bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
 		if err := c.Edit("text"); err != nil {
 			return err
 		}
-		return c.EditC(EditProps{Content: "text", Components: []discord.MessageComponent{}})
+		return c.EditWith(MessageEdit{Content: discord.String("text"), Components: []discord.MessageComponent{}})
 	}})
 
 	bot.handleInteraction(bot.Session, interaction(t, slashPayload("c", "")))
@@ -393,17 +389,17 @@ func TestEditCanClearComponents(t *testing.T) {
 func TestContextMenusCanUseTheFullReplyAPI(t *testing.T) {
 	bot, requests := newTestBot(t)
 
-	bot.AddMessageCommand(&MessageCommandProps{Name: "m", Execute: func(c *MessageCommandContext) error {
+	bot.AddMessageCommand(&MessageCommand{Name: "m", Execute: func(c *MessageCommandContext) error {
 		if c.Author.ID != "u1" || c.Message.ID != "t" {
 			t.Errorf("author = %+v message = %+v", c.Author, c.Message)
 		}
 		return c.DeferReply(true)
 	}})
-	bot.AddUserCommand(&UserCommandProps{Name: "u", Execute: func(c *UserCommandContext) error {
-		if c.User.ID != "t" || c.Author.ID != "u1" || c.SlashContext.Member.User.ID != "u1" {
-			t.Errorf("target = %+v author = %+v", c.User, c.Author)
+	bot.AddUserCommand(&UserCommand{Name: "u", Execute: func(c *UserCommandContext) error {
+		if c.TargetUser.ID != "t" || c.Author.ID != "u1" || c.Member.User.ID != "u1" {
+			t.Errorf("target = %+v author = %+v", c.TargetUser, c.Author)
 		}
-		return c.ReplyEphemeral("hi")
+		return c.ReplyWith(Message{Content: "hi", Ephemeral: true})
 	}})
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"m","type":3,"target_id":"t","resolved":{"messages":{"t":{"id":"t"}}}}}`))
@@ -419,9 +415,9 @@ func TestCommandsOfDifferentTypesCanShareAName(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	ran := ""
-	bot.AddCommand(&SlashCommandProps{Name: "x", Execute: func(*SlashContext) error { ran += "slash "; return nil }})
-	bot.AddUserCommand(&UserCommandProps{Name: "x", Execute: func(*UserCommandContext) error { ran += "user "; return nil }})
-	bot.AddMessageCommand(&MessageCommandProps{Name: "x", Execute: func(*MessageCommandContext) error { ran += "message "; return nil }})
+	bot.AddCommand(&Command{Name: "x", Execute: func(*Context) error { ran += "slash "; return nil }})
+	bot.AddUserCommand(&UserCommand{Name: "x", Execute: func(*UserCommandContext) error { ran += "user "; return nil }})
+	bot.AddMessageCommand(&MessageCommand{Name: "x", Execute: func(*MessageCommandContext) error { ran += "message "; return nil }})
 
 	resolved := `"target_id":"t","resolved":{"users":{"t":{"id":"t"}},"messages":{"t":{"id":"t"}}}`
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"x","type":3,`+resolved+`}}`))
@@ -456,16 +452,16 @@ func TestCustomIDPatterns(t *testing.T) {
 			got := ""
 			var params map[string]string
 			add := func(id, name string) {
-				bot.AddComponentHandler(&ComponentInteractionProps{ID: id, Execute: func(_ *SlashContext, c *ComponentContext) error {
+				bot.HandleComponent(id, func(c *ComponentContext) error {
 					got, params = name, c.Params
 					return nil
-				}})
+				})
 			}
 			add("vote:exact", "exact")
 			add("vote:{poll}", "one")
 			add("vote:{poll}:{choice}", "two")
 			add("tag-{x}:{n}", "literal")
-			bot.AddCustomComponentHandler(func(_ *SlashContext, c *ComponentContext) error {
+			bot.HandleComponentFallback(func(c *ComponentContext) error {
 				got, params = "fallback", c.Params
 				return nil
 			})
@@ -484,18 +480,18 @@ func TestReregisteringAPatternReplacesIt(t *testing.T) {
 
 	got := ""
 	add := func(name string) {
-		bot.AddComponentHandler(&ComponentInteractionProps{ID: "a:{b}", Execute: func(*SlashContext, *ComponentContext) error {
+		bot.HandleComponent("a:{b}", func(*ComponentContext) error {
 			got = name
 			return nil
-		}})
+		})
 	}
 	add("first")
 	add("second")
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"a:1","component_type":2}}`))
 
-	if got != "second" || len(bot.componentRoutes) != 1 {
-		t.Errorf("got %q, routes %d", got, len(bot.componentRoutes))
+	if got != "second" || len(bot.components.patterns) != 1 {
+		t.Errorf("got %q, routes %d", got, len(bot.components.patterns))
 	}
 }
 
@@ -503,10 +499,10 @@ func TestModalIDPattern(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	got := ""
-	bot.AddModalSubmitHandler(&ModalInteractionProps{ID: "form:{id}", Execute: func(_ *SlashContext, c *ModalSubmitContext) error {
+	bot.HandleModal("form:{id}", func(c *ModalSubmitContext) error {
 		got = c.Params["id"]
 		return nil
-	}})
+	})
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":5,`+guildFields+`,"data":{"custom_id":"form:7","components":[]}}`))
 
@@ -523,8 +519,8 @@ func TestOptionGetters(t *testing.T) {
 	resolved := `"resolved":{"users":{"10":{"id":"10"}},"members":{"10":{"nick":"n","permissions":"0"}},"channels":{"20":{"id":"20"}},"roles":{"30":{"id":"30","permissions":"0"}},"attachments":{"40":{"id":"40"}}}`
 
 	called := false
-	bot.OnError(func(_ *SlashContext, err error) { t.Error(err) })
-	bot.AddCommand(&SlashCommandProps{Name: "c", Execute: func(c *SlashContext) error {
+	bot.OnError(func(_ *Context, err error) { t.Error(err) })
+	bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
 		called = true
 
 		if c.String("s") != "text" || c.Int("i") != 5 || c.Float("f") != 1.5 || !c.Bool("b") {
@@ -567,10 +563,10 @@ func TestContextsAndIntegrationTypes(t *testing.T) {
 	contexts := []discord.InteractionContextType{discord.InteractionContextPrivateChannel}
 	types := []discord.ApplicationIntegrationType{discord.ApplicationIntegrationUserInstall}
 
-	bot.AddCommand(&SlashCommandProps{Name: "s", Description: "d", DmPermission: true, Contexts: contexts, IntegrationTypes: types})
-	bot.AddMessageCommand(&MessageCommandProps{Name: "m", Contexts: contexts, IntegrationTypes: types, DefaultMemberPermissions: discord.Int64(8)})
-	bot.AddUserCommand(&UserCommandProps{Name: "u", Contexts: contexts, IntegrationTypes: types})
-	bot.AddMessageCommand(&MessageCommandProps{Name: "plain"})
+	bot.AddCommand(&Command{Name: "s", Description: "d", Contexts: contexts, IntegrationTypes: types})
+	bot.AddMessageCommand(&MessageCommand{Name: "m", Contexts: contexts, IntegrationTypes: types, DefaultMemberPermissions: discord.Int64(8)})
+	bot.AddUserCommand(&UserCommand{Name: "u", Contexts: contexts, IntegrationTypes: types})
+	bot.AddMessageCommand(&MessageCommand{Name: "plain"})
 
 	if err := bot.SyncCommands(); err != nil {
 		t.Fatal(err)
@@ -588,8 +584,8 @@ func TestContextsAndIntegrationTypes(t *testing.T) {
 	if global["m"]["default_member_permissions"] != "8" {
 		t.Errorf("m = %v", global["m"])
 	}
-	if _, sent := global["plain"]["contexts"]; sent {
-		t.Errorf("plain = %v", global["plain"])
+	if fmt.Sprint(global["plain"]["contexts"]) != "[0]" {
+		t.Errorf("unset contexts must mean guilds only: %v", global["plain"])
 	}
 
 	for name, c := range commandByName(t, requests()[1].Raw) {

@@ -24,7 +24,7 @@ func (e *PanicError) Error() string {
 
 // HandlerFunc is an interaction handler. Component, modal and context menu
 // handlers are adapted to it so that middleware can wrap them all.
-type HandlerFunc func(c *SlashContext) error
+type HandlerFunc func(c *Context) error
 
 // Middleware wraps an interaction handler. It may run code around next, or
 // return without calling it to stop the interaction. c.Interaction.Type says
@@ -35,12 +35,19 @@ type Middleware func(next HandlerFunc) HandlerFunc
 // added runs first. Autocomplete is excluded because it fires on every
 // keystroke, and channel messages because they are not interactions.
 func (m *Minidis) Use(middleware ...Middleware) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.middleware = append(m.middleware, middleware...)
 }
 
 // chain wraps handler in the middleware.
 func (m *Minidis) chain(handler HandlerFunc) HandlerFunc {
-	for _, mw := range slices.Backward(m.middleware) {
+	m.mu.RLock()
+	middleware := m.middleware
+	m.mu.RUnlock()
+
+	for _, mw := range slices.Backward(middleware) {
 		handler = mw(handler)
 	}
 	return handler
@@ -50,28 +57,42 @@ func (m *Minidis) chain(handler HandlerFunc) HandlerFunc {
 // handlers and middleware, replacing the default of logging them. A panic
 // arrives as a *PanicError. Use it to tell the user something failed, but note
 // that the interaction may already have been responded to.
-func (m *Minidis) OnError(handler func(c *SlashContext, err error)) {
-	m.ErrorHandler = handler
+func (m *Minidis) OnError(h func(c *Context, err error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.onError = h
 }
 
 // OnChannelMessageError sets the function that receives errors from
 // OnChannelMessageCreate handlers, replacing the default of logging them. A
 // panic arrives as a *PanicError.
-func (m *Minidis) OnChannelMessageError(handler func(c *ChannelMessageContext, err error)) {
-	m.ChannelMessageErrorHandler = handler
+func (m *Minidis) OnChannelMessageError(h func(c *ChannelMessageContext, err error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.onChannelError = h
 }
 
-func (m *Minidis) handleError(c *SlashContext, err error) {
-	if m.ErrorHandler != nil {
-		m.ErrorHandler(c, err)
+func (m *Minidis) handleError(c *Context, err error) {
+	m.mu.RLock()
+	h := m.onError
+	m.mu.RUnlock()
+
+	if h != nil {
+		h(c, err)
 		return
 	}
-	logError("interaction "+c.Id, err)
+	logError("interaction "+c.ID, err)
 }
 
 func (m *Minidis) handleChannelError(c *ChannelMessageContext, err error) {
-	if m.ChannelMessageErrorHandler != nil {
-		m.ChannelMessageErrorHandler(c, err)
+	m.mu.RLock()
+	h := m.onChannelError
+	m.mu.RUnlock()
+
+	if h != nil {
+		h(c, err)
 		return
 	}
 	logError("channel message handler for "+c.ChannelID, err)

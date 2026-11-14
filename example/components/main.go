@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -24,13 +25,13 @@ func main() {
 	})
 
 	// Set up a command to show component buttons
-	bot.AddCommand(&minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.Command{
 		Name:        "buttons",
 		Description: "Show buttons component.",
 		Options:     []*discord.ApplicationCommandOption{},
-		Execute: func(c *minidis.SlashContext) error {
-			return c.ReplyC(
-				minidis.ReplyProps{
+		Execute: func(c *minidis.Context) error {
+			return c.ReplyWith(
+				minidis.Message{
 					Content: "Are you cool?",
 					Components: []discord.MessageComponent{
 						discord.ActionsRow{
@@ -69,12 +70,12 @@ func main() {
 		},
 	})
 
-	bot.AddCommand(&minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.Command{
 		Name:        "selects",
 		Description: "Example for select options.",
-		Execute: func(c *minidis.SlashContext) error {
-			return c.ReplyC(
-				minidis.ReplyProps{
+		Execute: func(c *minidis.Context) error {
+			return c.ReplyWith(
+				minidis.Message{
 					Content: "What is your favourite programming language?",
 					Components: []discord.MessageComponent{
 						discord.ActionsRow{
@@ -122,63 +123,40 @@ func main() {
 		},
 	})
 
-	bot.AddComponentHandler(&minidis.ComponentInteractionProps{
-		ID: "select",
-		Execute: func(s *minidis.SlashContext, c *minidis.ComponentContext) error {
-			switch c.Data.Values[0] {
-			case "go":
-				{
-					return c.Update("This is the way.")
-				}
-			default:
-				{
-					return c.Update("It is not the way to go.")
-				}
-
-			}
-		},
+	bot.HandleComponent("select", func(c *minidis.ComponentContext) error {
+		if c.Data.Values[0] == "go" {
+			return c.Update("This is the way.")
+		}
+		return c.Update("It is not the way to go.")
 	})
 
-	bot.AddComponentHandler(&minidis.ComponentInteractionProps{
-		ID: "fd_yes",
-		Execute: func(s *minidis.SlashContext, c *minidis.ComponentContext) error {
-			// An empty, non-nil slice removes the buttons from the message
-			return c.UpdateC(minidis.EditProps{
-				Content:    "Wow Nice!",
-				Components: []discord.MessageComponent{},
-			})
-		},
+	bot.HandleComponent("fd_yes", func(c *minidis.ComponentContext) error {
+		// An empty, non-nil slice removes the buttons from the message
+		return c.UpdateWith(minidis.MessageEdit{
+			Content:    discord.String("Wow Nice!"),
+			Components: []discord.MessageComponent{},
+		})
 	})
 
-	bot.AddComponentHandler(&minidis.ComponentInteractionProps{
-		ID: "fd_no",
-		Execute: func(s *minidis.SlashContext, c *minidis.ComponentContext) error {
-			// An empty, non-nil slice removes the buttons from the message
-			return c.UpdateC(minidis.EditProps{
-				Content:    "Ohhh why???",
-				Components: []discord.MessageComponent{},
-			})
-		},
+	bot.HandleComponent("fd_no", func(c *minidis.ComponentContext) error {
+		// An empty, non-nil slice removes the buttons from the message
+		return c.UpdateWith(minidis.MessageEdit{
+			Content:    discord.String("Ohhh why???"),
+			Components: []discord.MessageComponent{},
+		})
 	})
-
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
 
 	// Register the commands. This replaces any registered before.
 	if err := bot.SyncCommands(guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
-	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	// Run until CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Close the session
-	bot.CloseSession()
+	fmt.Println("Bot is running. Press CTRL+C to exit.")
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }
