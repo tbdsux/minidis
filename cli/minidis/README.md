@@ -26,9 +26,9 @@ In PowerShell, set the variables with `$env:TOKEN="<bot token>"; $env:GUILD="<te
 
 The `go get` runs before any file is written, so if it fails, for example offline, fix the problem and run the same `init` command again, as the error shows.
 
-Inside an existing module, a directory without `-module` becomes a package of that module, for example `minidis init cmd/bot` gives `example.com/yours/cmd/bot`. With `-module` it becomes a module of its own. A new module inside a workspace is set up and checked on its own, and `init` shows the `go work use` command that adds it to the workspace.
+Inside an existing module, a directory without `-module` becomes a package of that module, for example `minidis init cmd/bot` gives `example.com/yours/cmd/bot`. With `-module` it becomes a module of its own. A module inside a workspace that does not use it, new or existing, is set up and checked on its own, and `init` shows the `go work use` command that adds it to the workspace.
 
-Existing Go files are never overwritten unless given `-force`, and neither is a directory that already holds a package other than `main`. `README.md` and `.gitignore` are never overwritten: an existing README is kept, and `.gitignore` only gets the lines it is missing. Everything, including that the module path is one the go command accepts, is checked before anything is written.
+Existing Go files are never overwritten unless given `-force`, and neither is a directory that already holds a package other than `main`, or a `commands` directory with a package other than `commands`. `README.md` and `.gitignore` are never overwritten: an existing README is kept, and `.gitignore` only gets the lines it is missing. Everything, including that the module path is one the go command accepts and does not clash with the standard library, is checked before anything is written.
 
 | Flag | |
 |---|---|

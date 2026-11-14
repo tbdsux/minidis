@@ -225,8 +225,12 @@ func TestInitNeverOverwritesWithoutForce(t *testing.T) {
 		t.Fatal("files were written although init refused")
 	}
 
-	if out, err := minidisInit(t, "-skip-deps", "-force", dir); err != nil {
+	out, err := minidisInit(t, "-skip-deps", "-force", dir)
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "overwrote "+filepath.Join(dir, "main.go")) || !strings.Contains(out, "created "+filepath.Join(dir, "commands", "hello.go")) {
+		t.Errorf("output:\n%s", out)
 	}
 	if main := readFile(t, filepath.Join(dir, "main.go")); !strings.Contains(main, `"example.com/existing/commands"`) {
 		t.Errorf("main.go does not import the existing module's commands:\n%s", main)
@@ -310,7 +314,7 @@ func TestInitModuleMustMatchAnExistingGoMod(t *testing.T) {
 }
 
 func TestInitRejectsInvalidModulePathsBeforeWriting(t *testing.T) {
-	for _, module := range []string{"bøt", "foo@v2", "a;b", "[x]", "-dash", "go", "std/x", "a//b", "a.", ".a", "has space"} {
+	for _, module := range []string{"bøt", "foo@v2", "a;b", "[x]", "-dash", "go", "std", "toolchain", "a//b", "a.", ".a", "has space"} {
 		t.Run(module, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "new")
 
@@ -387,6 +391,10 @@ func TestBinaryName(t *testing.T) {
 		"github.com/me/discord-bot/v2": "discord-bot",
 		"example.com/parent/cmd/bot":   "bot",
 		"v2":                           "v2",
+		"example.com/x/v10":            "x",
+		"example.com/parent/v1":        "v1",
+		"example.com/parent/v0":        "v0",
+		"example.com/parent/v01":       "v01",
 	}
 	for in, want := range tests {
 		if got := binaryName(in); got != want {
@@ -478,6 +486,15 @@ func TestBuildVersion(t *testing.T) {
 		return &debug.BuildInfo{Main: debug.Module{Path: libraryPath, Version: version}, Settings: settings}
 	}
 	revision := debug.BuildSetting{Key: "vcs.revision", Value: "97e43a3dc727"}
+	// tool is minidis built as a tool of another module, which is in version
+	// control: the settings are that module's.
+	tool := func(dep *debug.Module) *debug.BuildInfo {
+		return &debug.BuildInfo{
+			Main:     debug.Module{Path: "example.com/app", Version: "(devel)"},
+			Deps:     []*debug.Module{dep},
+			Settings: []debug.BuildSetting{revision},
+		}
+	}
 
 	tests := []struct {
 		name string
@@ -490,6 +507,9 @@ func TestBuildVersion(t *testing.T) {
 		{"dirty checkout", info("v0.0.0-20261114124625-97e43a3dc727+dirty", revision), "(devel)"},
 		{"-buildvcs=false", info("(devel)"), "(devel)"},
 		{"another main module", &debug.BuildInfo{Main: debug.Module{Path: "example.com/x", Version: "v1.0.0"}}, "(devel)"},
+		{"a tool of another module", tool(&debug.Module{Path: libraryPath, Version: "v1.2.3"}), "v1.2.3"},
+		{"a tool with minidis replaced", tool(&debug.Module{Path: libraryPath, Version: "v1.2.3", Replace: &debug.Module{Path: "../minidis"}}), "(devel)"},
+		{"a tool at a dirty version", tool(&debug.Module{Path: libraryPath, Version: "v0.0.0-20260101000000-abcdef123456+dirty"}), "(devel)"},
 	}
 	for _, tt := range tests {
 		if got := buildVersion(tt.info); got != tt.want {
@@ -577,6 +597,17 @@ func TestCheckImportPath(t *testing.T) {
 		{"example.com/x~y", true, true},
 		{"a+b", true, false},
 		{"example.com/m/a+b", false, true},
+		{"C", true, false},
+		{"example.com/vendor/x", true, false},
+		{"example.com/m/vendor/bot", false, false},
+		{"vendor", true, false},
+		{"go", true, false},
+		{"toolchain", true, false},
+		{"std", true, false},
+		{"cmd", true, false},
+		{"go/bot", true, true},
+		{"cmd/bot", true, true},
+		{"toolchain/bot", true, true},
 	}
 	for _, tt := range tests {
 		if err := checkImportPath(tt.path, tt.module); (err == nil) != tt.ok {
@@ -591,7 +622,7 @@ func TestInitRejectsIgnoredPackageDirs(t *testing.T) {
 	parent := t.TempDir()
 	writeFile(t, filepath.Join(parent, "go.mod"), "module example.com/m\n")
 
-	for _, rel := range []string{"_bot", "cmd/_bot", "testdata/bot", ".bot", "con"} {
+	for _, rel := range []string{"_bot", "cmd/_bot", "testdata/bot", ".bot", "con", "vendor", "vendor/bot"} {
 		t.Run(rel, func(t *testing.T) {
 			dir := filepath.Join(parent, filepath.FromSlash(rel))
 			if _, err := minidisInit(t, "-skip-deps", dir); err == nil {
@@ -649,10 +680,143 @@ func TestInitNeedsTheGoCommand(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	dir := filepath.Join(t.TempDir(), "bot")
-	if _, err := minidisInit(t, dir); err == nil || !strings.Contains(err.Error(), "needs the go command") {
+	if _, err := minidisInit(t, dir); err == nil || !strings.Contains(err.Error(), "needs the go command") || strings.HasPrefix(err.Error(), "minidis") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := os.Stat(dir); err == nil {
 		t.Error("the directory was created")
+	}
+}
+
+func TestInitRefusesStandardLibraryNames(t *testing.T) {
+	requireGo(t)
+
+	tests := []struct {
+		name string
+		args func(base string) []string
+	}{
+		{"directory named time", func(base string) []string { return []string{filepath.Join(base, "time")} }},
+		{"directory named fmt", func(base string) []string { return []string{filepath.Join(base, "fmt")} }},
+		{"-module net/http", func(base string) []string { return []string{"-module", "net/http", filepath.Join(base, "bot")} }},
+		{"-module C", func(base string) []string { return []string{"-module", "C", filepath.Join(base, "bot")} }},
+		{"-module with a vendor element", func(base string) []string {
+			return []string{"-module", "example.com/vendor/x", filepath.Join(base, "bot")}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := t.TempDir()
+			args := append([]string{"-skip-deps"}, tt.args(base)...)
+			if _, err := minidisInit(t, args...); err == nil {
+				t.Fatal("accepted")
+			}
+			if entries, _ := os.ReadDir(base); len(entries) != 0 {
+				t.Errorf("created %v", entries)
+			}
+		})
+	}
+}
+
+func TestInitRefusesAnotherCommandsPackage(t *testing.T) {
+	requireGo(t)
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/bot\n")
+	writeFile(t, filepath.Join(dir, "commands", "x.go"), "package cmds\n")
+
+	_, err := minidisInit(t, "-skip-deps", dir)
+	if err == nil || !strings.Contains(err.Error(), "package cmds") || !strings.Contains(err.Error(), "package commands") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "main.go")); err == nil {
+		t.Error("main.go was written")
+	}
+
+	if out, err := minidisInit(t, "-skip-deps", "-force", dir); err != nil {
+		t.Fatalf("-force: %v\n%s", err, out)
+	}
+}
+
+func TestInitMergesACRLFGitignore(t *testing.T) {
+	requireGo(t)
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/repo\n")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "*.log\r\nsecrets/\r\n")
+
+	if out, err := minidisInit(t, "-skip-deps", dir); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got, want := readFile(t, filepath.Join(dir, ".gitignore")), "*.log\r\nsecrets/\r\n\r\n/repo\r\n/repo.exe\r\n.env\r\n"; got != want {
+		t.Errorf(".gitignore = %q, want %q", got, want)
+	}
+}
+
+// TestInitBuildsInAWorkspaceThatDoesNotUseTheModule covers an existing module
+// in a go.work tree that does not use it, such as on a rerun after go get
+// failed: without GOWORK=off the build check fails.
+func TestInitBuildsInAWorkspaceThatDoesNotUseTheModule(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a generated project")
+	}
+	requireGo(t)
+	offline(t)
+	t.Setenv("GOWORK", "") // find the go.work below
+
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, "go.work"), "go "+goFloor+"\n")
+	dir := filepath.Join(ws, "bot")
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/bot\n\ngo "+goFloor+"\n")
+	useCheckout(t, dir)
+
+	out, err := minidisInit(t, dir)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "go work use") {
+		t.Errorf("no go work use hint:\n%s", out)
+	}
+}
+
+func TestInitLeavesAWorkspaceModuleAlone(t *testing.T) {
+	requireGo(t)
+	offline(t)
+	t.Setenv("GOWORK", "")
+
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, "go.work"), "go "+goFloor+"\n\nuse ./bot\n")
+	writeFile(t, filepath.Join(ws, "bot", "go.mod"), "module example.com/bot\n\ngo "+goFloor+"\n")
+
+	out, err := minidisInit(t, "-skip-deps", filepath.Join(ws, "bot"))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "go work use") {
+		t.Errorf("hint for a module the workspace uses:\n%s", out)
+	}
+}
+
+func TestBuildErrorAdvice(t *testing.T) {
+	failed := errors.New("go build ./...: exit status 1")
+
+	tests := []struct {
+		name    string
+		p       plan
+		pinned  string
+		replace bool // whether the replace advice is given
+	}{
+		{"devel build", plan{}, "latest", true},
+		{"devel build, minidis replaced", plan{minidisReplaced: true}, "latest", false},
+		{"released build", plan{}, "v1.2.3", false},
+	}
+	for _, tt := range tests {
+		err := buildError(failed, tt.p, true, tt.pinned, ".")
+		if got := strings.Contains(err.Error(), "-replace"); got != tt.replace {
+			t.Errorf("%s: replace advice = %v:\n%v", tt.name, got, err)
+		}
+		if tt.replace && !strings.Contains(err.Error(), "possible cause") {
+			t.Errorf("%s: the advice is not presented as a possible cause:\n%v", tt.name, err)
+		}
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 )
 
@@ -103,13 +104,14 @@ type plan struct {
 	minidisVersion  string // the version it requires
 	minidisReplaced bool   // whether a replace directive points minidis elsewhere
 
-	workspace string   // the go.work a new module is in but not part of yet
+	workspace string   // the go.work the module is in but not part of
+	workUse   string   // the path to give "go work use", as the user would type it
 	env       []string // the environment of the go commands, nil for the current one
 }
 
 func initProject(o initOptions, stdout, stderr io.Writer) error {
 	if _, err := exec.LookPath("go"); err != nil {
-		return fmt.Errorf("minidis needs the go command on PATH: %w", err)
+		return fmt.Errorf("init needs the go command on PATH: %w", err)
 	}
 
 	p, err := makePlan(o)
@@ -130,20 +132,21 @@ func initProject(o initOptions, stdout, stderr io.Writer) error {
 	pinned := dependencyVersion()
 	dependency := libraryPath + "@" + pinned
 
+	// A module in a workspace's tree is left out of builds until the workspace
+	// uses it, so the go commands here then ignore the workspace.
+	if err := p.checkWorkspace(o); err != nil {
+		return err
+	}
+	if p.workspace != "" {
+		fmt.Fprintf(stdout, "%s is inside the workspace %s but not part of it; add it with:\n\tgo work use %s\n\n",
+			p.modRoot, p.workspace, shellQuote(runtime.GOOS, p.workUse))
+	}
+
 	if err := os.MkdirAll(p.dir, 0o755); err != nil {
 		return err
 	}
 
 	if p.newModule {
-		// A module in a workspace's tree is left out of builds until the
-		// workspace uses it, so the go commands here ignore the workspace.
-		if work := goWork(p.dir); work != "" {
-			p.workspace = work
-			p.env = append(os.Environ(), "GOWORK=off")
-			fmt.Fprintf(stdout, "%s is inside the workspace %s; add the new module to it with:\n\tgo work use %s\n\n",
-				o.dir, work, shellQuote(runtime.GOOS, o.dir))
-		}
-
 		if err := p.goCommand(p.dir, stderr, "mod", "init", "--", p.modulePath); err != nil {
 			return err
 		}
@@ -221,6 +224,18 @@ func vendored(root string) bool {
 
 // makePlan works out where the project goes and which module it belongs to.
 func makePlan(o initOptions) (plan, error) {
+	p, err := planPaths(o)
+	if err != nil {
+		return plan{}, err
+	}
+	if err := checkNotStandard(p.packagePath); err != nil {
+		return plan{}, fmt.Errorf("%s cannot hold the bot: %w; choose another directory or -module", p.dir, err)
+	}
+	return p, nil
+}
+
+// planPaths is makePlan without the check against the standard library.
+func planPaths(o initOptions) (plan, error) {
 	dir, err := filepath.Abs(o.dir)
 	if err != nil {
 		return plan{}, err
@@ -366,8 +381,13 @@ var (
 // import path of a package when module is false, following the rules of the
 // go command so as to fail before it does.
 func checkImportPath(path string, module bool) error {
-	if path == "" {
+	switch path {
+	case "":
 		return errors.New("it is empty")
+	case "C":
+		return errors.New(`"C" is the import path of cgo`)
+	case "std", "cmd", "go", "toolchain":
+		return fmt.Errorf("%q is reserved by the go command", path)
 	}
 	allowed, chars := importPathElement, "-._~+"
 	if module {
@@ -390,11 +410,9 @@ func checkImportPath(path string, module bool) error {
 			return fmt.Errorf("%q is a reserved file name on Windows", e)
 		case shortFileName.MatchString(short):
 			return fmt.Errorf("%q looks like a Windows short file name", e)
+		case e == "vendor":
+			return errors.New(`the go command does not allow importing packages in "vendor" directories`)
 		}
-	}
-	switch elements[0] {
-	case "std", "cmd", "go", "toolchain":
-		return fmt.Errorf("%q is reserved by the go command", elements[0])
 	}
 
 	if last := elements[len(elements)-1]; module && len(elements) > 1 && majorVersion.MatchString(last) {
@@ -406,7 +424,7 @@ func checkImportPath(path string, module bool) error {
 }
 
 // checkPackageDir rejects a directory, relative to its module root, whose
-// packages the go command ignores.
+// packages the go command ignores or will not build.
 func checkPackageDir(rel string) error {
 	for _, e := range strings.Split(filepath.ToSlash(rel), "/") {
 		switch {
@@ -414,10 +432,37 @@ func checkPackageDir(rel string) error {
 			return fmt.Errorf("the go command ignores directories starting with %q, such as %q", e[:1], e)
 		case e == "testdata":
 			return errors.New("the go command ignores testdata directories")
+		case e == "vendor":
+			return errors.New("vendor directories hold vendored dependencies, not packages of the module")
 		}
 	}
 	return nil
 }
+
+// checkNotStandard rejects an import path for the bot whose package, or its
+// commands package, is also a package of the standard library: imports of it
+// would be ambiguous.
+func checkNotStandard(importPath string) error {
+	root := goRoot()
+	if root == "" {
+		return nil
+	}
+	for _, pkg := range []string{importPath, importPath + "/commands"} {
+		if info, err := os.Stat(filepath.Join(root, "src", filepath.FromSlash(pkg))); err == nil && info.IsDir() {
+			return fmt.Errorf("%q is a package of the standard library", pkg)
+		}
+	}
+	return nil
+}
+
+// goRoot is the GOROOT of the go command, or "" if it cannot be found.
+var goRoot = sync.OnceValue(func() string {
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+})
 
 var majorVersion = regexp.MustCompile(`^v[0-9]+$`)
 
@@ -425,10 +470,16 @@ var majorVersion = regexp.MustCompile(`^v[0-9]+$`)
 // importPath: its last element, skipping a major version suffix.
 func binaryName(importPath string) string {
 	elements := strings.Split(importPath, "/")
-	if n := len(elements); n > 1 && majorVersion.MatchString(elements[n-1]) {
+	if n := len(elements); n > 1 && isVersionElement(elements[n-1]) {
 		return elements[n-2]
 	}
 	return elements[len(elements)-1]
+}
+
+// isVersionElement reports whether s is a major version suffix as go build
+// sees one: v2 or higher, without a leading zero.
+func isVersionElement(s string) bool {
+	return majorVersion.MatchString(s) && s[1] != '0' && s != "v1"
 }
 
 // keptFiles are never overwritten: README.md is left alone, and .gitignore
@@ -437,13 +488,15 @@ var keptFiles = map[string]bool{"README.md": true, ".gitignore": true}
 
 func checkConflicts(dir string, files map[string][]byte, force bool) error {
 	if !force {
-		packages, err := otherPackages(dir)
-		if err != nil {
-			return err
-		}
-		if len(packages) > 0 {
-			return fmt.Errorf("%s holds package %s, but the bot needs package main there; choose another directory, or use -force to write it anyway",
-				dir, strings.Join(packages, ", "))
+		for _, want := range []struct{ dir, pkg string }{{dir, "main"}, {filepath.Join(dir, "commands"), "commands"}} {
+			packages, err := otherPackages(want.dir, want.pkg)
+			if err != nil {
+				return err
+			}
+			if len(packages) > 0 {
+				return fmt.Errorf("%s holds package %s, but the bot needs package %s there; choose another directory, or use -force to write it anyway",
+					want.dir, strings.Join(packages, ", "), want.pkg)
+			}
 		}
 	}
 
@@ -467,9 +520,9 @@ func checkConflicts(dir string, files map[string][]byte, force bool) error {
 	return nil
 }
 
-// otherPackages returns the packages other than main that the Go files in dir
+// otherPackages returns the packages other than want that the Go files in dir
 // belong to, leaving out tests.
-func otherPackages(dir string) ([]string, error) {
+func otherPackages(dir, want string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -488,7 +541,7 @@ func otherPackages(dir string) ([]string, error) {
 		if err != nil {
 			continue // not Go that the build would accept either
 		}
-		if pkg := f.Name.Name; pkg != "main" && !slices.Contains(names, pkg) {
+		if pkg := f.Name.Name; pkg != want && !slices.Contains(names, pkg) {
 			names = append(names, pkg)
 		}
 	}
@@ -501,6 +554,9 @@ func writeFiles(dir, shown string, files map[string][]byte, stdout io.Writer) er
 		file := filepath.Join(dir, name)
 		content := files[name]
 		verb := "created"
+		if _, err := os.Stat(file); err == nil {
+			verb = "overwrote" // only with -force; checkConflicts refused otherwise
+		}
 
 		if keptFiles[name] {
 			existing, err := os.ReadFile(file)
@@ -512,12 +568,16 @@ func writeFiles(dir, shown string, files map[string][]byte, stdout io.Writer) er
 				fmt.Fprintln(stdout, "kept", filepath.Join(shown, name))
 				continue
 			default:
-				missing := missingLines(existing, content)
+				eol := "\n"
+				if bytes.Contains(existing, []byte("\r\n")) {
+					eol = "\r\n"
+				}
+				missing := missingLines(existing, content, eol)
 				if len(missing) == 0 {
 					fmt.Fprintln(stdout, "kept", filepath.Join(shown, name))
 					continue
 				}
-				content = append(bytes.TrimRight(existing, "\n"), '\n', '\n')
+				content = append(bytes.TrimRight(existing, "\r\n"), eol+eol...)
 				content = append(content, missing...)
 				verb = "updated"
 			}
@@ -534,8 +594,9 @@ func writeFiles(dir, shown string, files map[string][]byte, stdout io.Writer) er
 	return nil
 }
 
-// missingLines returns the rule lines of want that have does not contain.
-func missingLines(have, want []byte) []byte {
+// missingLines returns the rule lines of want that have does not contain, each
+// ended with eol.
+func missingLines(have, want []byte, eol string) []byte {
 	present := map[string]bool{}
 	for line := range strings.Lines(string(have)) {
 		present[strings.TrimSpace(line)] = true
@@ -546,7 +607,7 @@ func missingLines(have, want []byte) []byte {
 		rule := strings.TrimSpace(line)
 		if rule != "" && !strings.HasPrefix(rule, "#") && !present[rule] {
 			out = append(out, rule...)
-			out = append(out, '\n')
+			out = append(out, eol...)
 		}
 	}
 	return out
@@ -621,14 +682,15 @@ func buildError(err error, p plan, fetched bool, pinned, dir string) error {
 	}
 
 	switch {
-	case fetched && pinned == "latest":
+	case pinned == "latest" && !p.minidisReplaced:
 		checkout := "<path to your minidis checkout>"
 		if c := sourceCheckout(); c != "" {
 			checkout = shellQuote(runtime.GOOS, c)
 		}
-		return fmt.Errorf("the generated project does not build against the latest version of %s: %w\n\n"+
-			"This minidis was built from a checkout, whose API may be newer. Build against it instead:\n"+
-			"%s\tgo mod edit -replace %s=%s\n\tgo mod tidy", libraryPath, err, cd, libraryPath, checkout)
+		return fmt.Errorf("the generated project does not build: %w\n\n"+
+			"One possible cause: this minidis was built from a checkout, and its templates may use API newer\n"+
+			"than the version of %s the module uses. If so, build against the checkout:\n"+
+			"%s\tgo mod edit -replace %s=%s\n\tgo mod tidy", err, libraryPath, cd, libraryPath, checkout)
 
 	case p.hasMinidis && !fetched && !p.minidisReplaced:
 		if c, ok := compareVersions(p.minidisVersion, pinned); ok && c > 0 {
@@ -685,12 +747,7 @@ func relativeTo(shown string, p plan) string {
 	if p.modRoot == p.dir {
 		return shown
 	}
-	if wd, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(wd, p.modRoot); err == nil {
-			return rel
-		}
-	}
-	return p.modRoot
+	return relativeToWorkingDir(p.modRoot)
 }
 
 func printNextSteps(w io.Writer, o initOptions, p plan, dependency string) {
@@ -701,7 +758,7 @@ func printNextSteps(w io.Writer, o initOptions, p plan, dependency string) {
 	}
 
 	if p.workspace != "" {
-		fmt.Fprintf(w, "\n\tgo work use %s", shellQuote(runtime.GOOS, o.dir))
+		fmt.Fprintf(w, "\n\tgo work use %s", shellQuote(runtime.GOOS, p.workUse))
 	}
 	if o.dir != "." {
 		fmt.Fprintf(w, "\n\tcd %s", shellQuote(runtime.GOOS, o.dir))
@@ -734,6 +791,32 @@ func runCommand(goos string, env [][2]string) string {
 	return b.String()
 }
 
+// checkWorkspace finds the go.work the module's directory is in, if any, and
+// when the workspace does not use the module, runs the go commands with
+// GOWORK=off and records the hint to add it.
+func (p *plan) checkWorkspace(o initOptions) error {
+	work := goWork(nearestExisting(p.modRoot))
+	if work == "" {
+		return nil
+	}
+
+	used, err := workspaceModules(work)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(used, filepath.Clean(p.modRoot)) {
+		return nil
+	}
+
+	p.workspace = work
+	p.env = append(os.Environ(), "GOWORK=off")
+	p.workUse = relativeToWorkingDir(p.modRoot)
+	if p.newModule {
+		p.workUse = o.dir
+	}
+	return nil
+}
+
 // goWork returns the go.work file dir is in, if any.
 func goWork(dir string) string {
 	cmd := exec.Command("go", "env", "GOWORK")
@@ -746,6 +829,58 @@ func goWork(dir string) string {
 		return w
 	}
 	return ""
+}
+
+// workspaceModules returns the absolute directories of the modules a go.work
+// file uses.
+func workspaceModules(work string) ([]string, error) {
+	var stderr bytes.Buffer
+	cmd := exec.Command("go", "work", "edit", "-json", work)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w\n%s", work, err, stderr.Bytes())
+	}
+
+	var w struct {
+		Use []struct{ DiskPath string }
+	}
+	if err := json.Unmarshal(out, &w); err != nil {
+		return nil, fmt.Errorf("reading %s: %w", work, err)
+	}
+
+	dirs := make([]string, 0, len(w.Use))
+	for _, u := range w.Use {
+		d := filepath.FromSlash(u.DiskPath)
+		if !filepath.IsAbs(d) {
+			d = filepath.Join(filepath.Dir(work), d)
+		}
+		dirs = append(dirs, filepath.Clean(d))
+	}
+	return dirs, nil
+}
+
+// nearestExisting returns dir, or the closest directory above it that exists.
+func nearestExisting(dir string) string {
+	for d := dir; ; d = filepath.Dir(d) {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			return d
+		}
+	}
+}
+
+// relativeToWorkingDir returns dir relative to the working directory, or dir
+// itself if it has none.
+func relativeToWorkingDir(dir string) string {
+	if wd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(wd, dir); err == nil {
+			return rel
+		}
+	}
+	return dir
 }
 
 var (

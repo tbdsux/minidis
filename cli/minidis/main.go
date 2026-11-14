@@ -81,6 +81,13 @@ func version() string {
 // nowhere but in that checkout.
 func buildVersion(info *debug.BuildInfo) string {
 	if info.Main.Path != libraryPath {
+		// Installed as a dependency of another module, such as with
+		// "go get -tool": its version is the one that module requires.
+		for _, dep := range info.Deps {
+			if dep.Path == libraryPath && dep.Replace == nil {
+				return releasedVersion(dep.Version)
+			}
+		}
 		return "(devel)"
 	}
 	for _, s := range info.Settings {
