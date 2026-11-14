@@ -55,14 +55,19 @@ type runState struct {
 	ctx    context.Context // the parent of handler contexts
 	cancel context.CancelFunc
 
+	// Guarded by Minidis.runMu. accepting is whether HTTPHandler takes new
+	// interactions; shutdown is set once Shutdown has begun.
+	accepting bool
+	shutdown  bool
+
 	// http tracks handlers of interactions received by HTTPHandler, which the
 	// Session does not know about.
 	http sync.WaitGroup
 }
 
-func newRunState() *runState {
+func newRunState(accepting bool) *runState {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &runState{ctx: ctx, cancel: cancel}
+	return &runState{ctx: ctx, cancel: cancel, accepting: accepting}
 }
 
 // New creates a bot that authenticates with the given bot token.
@@ -73,7 +78,7 @@ func New(token string) *Minidis {
 		messageCommands: map[string]*MessageCommand{},
 		userCommands:    map[string]*UserCommand{},
 		channelHandlers: map[string]func(*ChannelMessageContext) error{},
-		run:             newRunState(),
+		run:             newRunState(true),
 	}
 
 	m.Session.OnInteractionCreate(m.handleInteraction)
@@ -90,32 +95,44 @@ func (m *Minidis) Open(ctx context.Context) error {
 	m.openMu.Lock()
 	defer m.openMu.Unlock()
 
+	// After a Shutdown, a new run takes over; it accepts HTTP interactions only
+	// once the gateway is open, so a failed Open leaves the bot closed.
 	m.runMu.Lock()
 	run := m.run
-	reopening := run.ctx.Err() != nil
+	reopening := run.shutdown
 	if reopening {
-		run = newRunState()
+		run = newRunState(false)
 		m.run = run
 	}
 	m.runMu.Unlock()
 
 	if err := m.Session.Open(ctx); err != nil {
 		if reopening {
-			run.cancel() // stay closed, as before this Open
+			m.runMu.Lock()
+			run.shutdown = true
+			m.runMu.Unlock()
+			run.cancel()
 		}
 		return err
 	}
 
+	m.runMu.Lock()
 	// A Shutdown that ran while the gateway was connecting found no session
 	// to close, so close the one that just opened.
-	if run.ctx.Err() != nil {
+	closed := run.shutdown
+	if !closed {
+		run.accepting = true
+	}
+	m.runMu.Unlock()
+
+	if closed {
 		return errors.Join(errors.New("minidis: closed while opening"), m.Session.Close())
 	}
 	return nil
 }
 
-// Close disconnects from Discord, cancels the context of running handlers, and
-// gives them up to 10 seconds to return. Use Shutdown to choose how long.
+// Close stops the bot and gives running handlers up to 10 seconds to finish.
+// Use Shutdown to choose how long.
 //
 // A handler that calls Close waits for itself, so call it in a new goroutine
 // there. A bot that only receives interactions through HTTPHandler cannot be
@@ -127,15 +144,22 @@ func (m *Minidis) Close() error {
 	return m.Shutdown(ctx)
 }
 
-// Shutdown is Close, waiting for running handlers until ctx ends instead. It
-// also stops an Open in progress.
+// Shutdown stops the bot like http.Server.Shutdown: it disconnects from the
+// gateway and refuses new HTTP interactions, then waits for running handlers
+// to finish. If ctx ends first, it cancels their contexts and returns ctx's
+// error without waiting further. It also stops an Open in progress.
 func (m *Minidis) Shutdown(ctx context.Context) error {
-	// Canceling under the lock means HTTPHandler cannot start a handler after
+	// Refusing under the lock means HTTPHandler cannot start a handler after
 	// the wait below has begun.
 	m.runMu.Lock()
 	run := m.run
-	run.cancel()
+	run.accepting = false
+	run.shutdown = true
 	m.runMu.Unlock()
+
+	// Handler contexts end with the shutdown, whether the handlers finished or
+	// ctx ran out.
+	defer run.cancel()
 
 	err := m.Session.Shutdown(ctx)
 
@@ -196,7 +220,7 @@ func (m *Minidis) OnReady(h func(*client.Session, *discord.Ready)) {
 }
 
 // OnMessageCreate adds a handler for every message the bot can see, including
-// its own and those also handled by OnChannelMessageCreate.
+// its own and those also handled by HandleChannelMessage.
 func (m *Minidis) OnMessageCreate(h func(*client.Session, *discord.MessageCreate)) {
 	m.Session.OnMessageCreate(h)
 }

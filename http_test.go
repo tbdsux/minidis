@@ -1,6 +1,7 @@
 package minidis
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -151,41 +151,85 @@ func TestHTTPHandlerAnswersWhenNothingResponds(t *testing.T) {
 	}
 }
 
-func TestCloseWaitsForHTTPHandlersAndRefusesNewOnes(t *testing.T) {
+func TestShutdownLetsHTTPHandlersFinish(t *testing.T) {
 	bot, _ := newTestBot(t)
 	h, key := newHTTPHandler(t, bot)
 
-	started := make(chan struct{})
-	var mu sync.Mutex
-	var sawCancel bool
+	deferred, release := make(chan struct{}), make(chan struct{})
+	var ctxErr, editErr error
 	bot.AddCommand(&Command{Name: "slow", Execute: func(c *Context) error {
-		close(started)
-		<-c.Done()
-		time.Sleep(50 * time.Millisecond) // still running after the cancel
-
-		mu.Lock()
-		sawCancel = true
-		mu.Unlock()
+		if err := c.DeferReply(false); err != nil {
+			return err
+		}
+		close(deferred)
+		<-release
+		ctxErr, editErr = c.Err(), c.Edit("done")
 		return nil
 	}})
 
 	go h.ServeHTTP(httptest.NewRecorder(), signedRequest(t, key, slashPayload("slow", "")))
-	<-started
+	<-deferred
 
-	if err := bot.Close(); err != nil {
-		t.Fatal(err)
+	shutdown := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		shutdown <- bot.Shutdown(ctx)
+	}()
+
+	select {
+	case err := <-shutdown:
+		t.Fatalf("Shutdown returned before the handler finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if !sawCancel {
-		t.Error("Close returned before the HTTP handler finished")
-	}
-
+	// While draining, new interactions are refused.
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, signedRequest(t, key, strings.Replace(slashPayload("slow", ""), `"id":"i1"`, `"id":"i2"`, 1)))
 	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status after Close = %d", w.Code)
+		t.Errorf("status while shutting down = %d", w.Code)
+	}
+
+	close(release)
+	if err := <-shutdown; err != nil {
+		t.Fatal(err)
+	}
+	if ctxErr != nil || editErr != nil {
+		t.Errorf("the handler was cut short: ctx err = %v, edit err = %v", ctxErr, editErr)
+	}
+}
+
+func TestShutdownDeadlineCancelsHTTPHandlers(t *testing.T) {
+	bot, _ := newTestBot(t)
+	h, key := newHTTPHandler(t, bot)
+
+	deferred, done := make(chan struct{}), make(chan error, 1)
+	bot.AddCommand(&Command{Name: "stuck", Execute: func(c *Context) error {
+		if err := c.DeferReply(false); err != nil {
+			return err
+		}
+		close(deferred)
+		<-c.Done()
+		done <- c.Err()
+		return nil
+	}})
+
+	go h.ServeHTTP(httptest.NewRecorder(), signedRequest(t, key, slashPayload("stuck", "")))
+	<-deferred
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := bot.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Shutdown = %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Errorf("handler ctx err = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the handler was not canceled at the deadline")
 	}
 }
 
@@ -266,5 +310,39 @@ func TestHTTPHandlerFillsInTheBotUser(t *testing.T) {
 
 	if botID != "sent" { // the fake API answers every GET with {"id":"sent"}
 		t.Errorf("c.Bot.ID = %q", botID)
+	}
+}
+
+func TestSignatureFreshness(t *testing.T) {
+	bot, _ := newTestBot(t)
+	h, key := newHTTPHandler(t, bot)
+
+	sign := func(body string, at time.Time) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/interactions", strings.NewReader(body))
+		ts := fmt.Sprint(at.Unix())
+		r.Header.Set("X-Signature-Timestamp", ts)
+		r.Header.Set("X-Signature-Ed25519", hex.EncodeToString(ed25519.Sign(key, []byte(ts+body))))
+		return r
+	}
+
+	ping := `{"type":1,"id":"p","application_id":"app","token":"t"}`
+	tests := []struct {
+		name string
+		req  *http.Request
+		want int
+	}{
+		{"future-dated", sign(slashPayload("x", ""), time.Now().Add(time.Hour)), http.StatusUnauthorized},
+		{"stale", sign(slashPayload("x", ""), time.Now().Add(-time.Hour)), http.StatusUnauthorized},
+		{"a stale ping is still answered", sign(ping, time.Now().Add(-time.Hour)), http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, tt.req)
+			if w.Code != tt.want {
+				t.Errorf("status = %d, want %d", w.Code, tt.want)
+			}
+		})
 	}
 }

@@ -86,17 +86,22 @@ func TestHandlerContextLifetime(t *testing.T) {
 	}
 }
 
-func TestShutdownCancelsHandlerContexts(t *testing.T) {
+func TestShutdownEndsHandlerContexts(t *testing.T) {
 	bot, _ := newTestBot(t)
 
 	started, done := make(chan struct{}), make(chan error)
 	bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
+		if err := c.DeferReply(false); err != nil {
+			return err
+		}
 		close(started)
 		<-c.Done()
 		done <- c.Err()
 		return nil
 	}})
 
+	// Called directly, the handler is not one Shutdown waits for, so the
+	// shutdown ends at once and cancels it.
 	go bot.handleInteraction(bot.Session, interaction(t, slashPayload("c", "")))
 	<-started
 
@@ -109,7 +114,7 @@ func TestShutdownCancelsHandlerContexts(t *testing.T) {
 		if err != context.Canceled {
 			t.Errorf("err = %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Second):
 		t.Fatal("handler context was not canceled")
 	}
 }
@@ -324,15 +329,23 @@ func TestChannelMessageSendWithAndReplyWith(t *testing.T) {
 func TestModalSubmitCanUpdateTheMessage(t *testing.T) {
 	bot, requests := newTestBot(t)
 
+	var errs []error
 	bot.HandleModal("form", func(c *ModalSubmitContext) error {
-		return c.Update("submitted")
+		errs = append(errs, c.Update("submitted"))
+		return nil
 	})
 
+	// Opened from a button, so the submission carries its message.
+	bot.handleInteraction(bot.Session, interaction(t, `{"type":5,`+guildFields+`,"message":{"id":"m1"},"data":{"custom_id":"form","components":[]}}`))
+	// Opened by a command: there is no message to update.
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":5,`+guildFields+`,"data":{"custom_id":"form","components":[]}}`))
 
-	req := requests()[0]
-	if req.Body["type"] != float64(discord.InteractionResponseUpdateMessage) || req.Body["data"].(map[string]any)["content"] != "submitted" {
-		t.Errorf("response = %s", req.Raw)
+	reqs := requests()
+	if len(reqs) != 1 || reqs[0].Body["type"] != float64(discord.InteractionResponseUpdateMessage) || reqs[0].Body["data"].(map[string]any)["content"] != "submitted" {
+		t.Fatalf("requests = %+v", reqs)
+	}
+	if errs[0] != nil || !errors.Is(errs[1], errNoModalMessage) {
+		t.Errorf("errors = %v", errs)
 	}
 }
 
@@ -358,5 +371,88 @@ func TestDefaultContexts(t *testing.T) {
 		if _, sent := cmds[name]["contexts"]; sent {
 			t.Errorf("%s: user-installable commands keep Discord's default contexts: %v", name, cmds[name])
 		}
+	}
+}
+
+func TestErrorHandlerSeesMiddlewareValues(t *testing.T) {
+	bot, _ := newTestBot(t)
+
+	type key struct{}
+	bot.Use(func(next HandlerFunc) HandlerFunc {
+		return func(c *Context) error {
+			return next(c.WithContext(context.WithValue(c, key{}, "rid1")))
+		}
+	})
+	bot.AddCommand(&Command{Name: "fail", Execute: func(*Context) error { return errors.New("nope") }})
+
+	var got any
+	bot.HandleError(func(c *Context, _ error) { got = c.Value(key{}) })
+
+	bot.handleInteraction(bot.Session, interaction(t, slashPayload("fail", "")))
+
+	if got != "rid1" {
+		t.Errorf("error handler saw %v", got)
+	}
+}
+
+func TestSpecificPatternsWin(t *testing.T) {
+	bot, _ := newTestBot(t)
+
+	got := ""
+	bot.HandleComponent("ticket:{action}:{id}", func(*ComponentContext) error { got = "generic"; return nil })
+	bot.HandleComponent("ticket:close:{id}", func(*ComponentContext) error { got = "close"; return nil })
+
+	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"ticket:close:1","component_type":2}}`))
+	if got != "close" {
+		t.Errorf("ticket:close:1 went to %q", got)
+	}
+
+	bot.handleInteraction(bot.Session, interaction(t, `{"type":3,`+guildFields+`,"data":{"custom_id":"ticket:open:1","component_type":2}}`))
+	if got != "generic" {
+		t.Errorf("ticket:open:1 went to %q", got)
+	}
+}
+
+func TestSyncValidation(t *testing.T) {
+	exec := func(*Context) error { return nil }
+	complete := func(*AutocompleteContext) error { return nil }
+	search := &discord.ApplicationCommandOption{Name: "q", Description: "d", Type: discord.ApplicationCommandOptionString, Autocomplete: true}
+
+	tests := []struct {
+		name string
+		cmd  *Command
+		want string // empty when valid
+	}{
+		{"autocomplete answered", &Command{Name: "a", Description: "d", Options: []*discord.ApplicationCommandOption{search}, Autocomplete: complete}, ""},
+		{"autocomplete unanswered", &Command{Name: "a", Description: "d", Options: []*discord.ApplicationCommandOption{search}}, "no Autocomplete handler"},
+		{"unanswered in a subcommand", &Command{Name: "a", Description: "d", Subcommands: []*Subcommand{{Name: "s", Description: "d", Options: []*discord.ApplicationCommandOption{search}}}}, `"a s"`},
+		{"choices and autocomplete", &Command{Name: "a", Description: "d", Autocomplete: complete, Options: []*discord.ApplicationCommandOption{{
+			Name: "q", Description: "d", Type: discord.ApplicationCommandOptionString, Autocomplete: true,
+			Choices: []*discord.ApplicationCommandOptionChoice{{Name: "x", Value: "x"}},
+		}}}, "both Choices and Autocomplete"},
+		{"root Execute with subcommands", &Command{Name: "a", Description: "d", Execute: exec, Subcommands: []*Subcommand{{Name: "s", Description: "d"}}}, "never run"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot, _ := newTestBot(t)
+			bot.AddCommand(tt.cmd)
+
+			err := bot.SyncCommands(t.Context(), "g")
+			if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+				t.Errorf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestClearCommandsRefusesOnlyEmptyIDs(t *testing.T) {
+	bot, requests := newTestBot(t)
+
+	if err := bot.ClearCommands(t.Context(), strings.Split("", ",")...); err == nil {
+		t.Error("an unset variable cleared the global commands")
+	}
+	if len(requests()) != 0 {
+		t.Errorf("requests = %+v", requests())
 	}
 }

@@ -28,17 +28,35 @@ func isCapture(segment string) bool {
 	return ok
 }
 
-// add records id if it is a pattern. Patterns are tried in the order added.
+// add records id if it is a pattern. Patterns with more literal segments are
+// tried first, so "ticket:close:{id}" wins over "ticket:{action}:{id}"; among
+// equals, the one added first.
 func (r *customIDRouter) add(id string) {
 	segments := strings.Split(id, ":")
 	if !slices.ContainsFunc(segments, isCapture) {
 		return
 	}
-
-	known := slices.ContainsFunc(*r, func(p customIDPattern) bool { return p.id == id })
-	if !known {
-		*r = append(*r, customIDPattern{id: id, segments: segments})
+	if slices.ContainsFunc(*r, func(p customIDPattern) bool { return p.id == id }) {
+		return
 	}
+
+	p := customIDPattern{id: id, segments: segments}
+	i := slices.IndexFunc(*r, func(q customIDPattern) bool { return q.literals() < p.literals() })
+	if i < 0 {
+		i = len(*r)
+	}
+	*r = slices.Insert(*r, i, p)
+}
+
+// literals counts the segments that are not captures.
+func (p customIDPattern) literals() int {
+	n := 0
+	for _, s := range p.segments {
+		if !isCapture(s) {
+			n++
+		}
+	}
+	return n
 }
 
 // match returns the ID of the first pattern that fits customID and its captures.

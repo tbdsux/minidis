@@ -1,6 +1,7 @@
 package minidis
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/tbdsux/minidis/discord"
@@ -54,18 +55,28 @@ func (m *Minidis) routeModalSubmit(c *Context) HandlerFunc {
 // Update responds by replacing the text of the message whose component opened
 // the modal. A modal opened by a command has no such message.
 func (c *ModalSubmitContext) Update(content string) error {
-	return c.update(MessageEdit{Content: &content})
+	return c.UpdateWith(MessageEdit{Content: &content})
 }
+
+// errNoModalMessage is returned by the update methods of a modal opened by a
+// command, which has no message to update.
+var errNoModalMessage = errors.New("minidis: the modal was not opened from a message component, so there is no message to update")
 
 // UpdateWith responds by changing the message whose component opened the
 // modal.
 func (c *ModalSubmitContext) UpdateWith(edit MessageEdit) error {
+	if c.Interaction.Message == nil {
+		return errNoModalMessage
+	}
 	return c.update(edit)
 }
 
 // DeferUpdate acknowledges the submission without changing the message whose
 // component opened the modal yet. Change it within 15 minutes using Edit.
 func (c *ModalSubmitContext) DeferUpdate() error {
+	if c.Interaction.Message == nil {
+		return errNoModalMessage
+	}
 	return c.deferUpdate()
 }
 

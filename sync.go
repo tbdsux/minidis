@@ -36,12 +36,17 @@ func (m *Minidis) SyncCommands(ctx context.Context, guildIDs ...string) error {
 }
 
 // ClearCommands removes the application commands from the given guilds.
-// If no guilds are given, the global commands are removed instead, except
-// the entry point command (see SetEntryPoint). Empty IDs are ignored.
+// Called with no guilds, it removes the global commands instead, except the
+// entry point command (see SetEntryPoint). Empty IDs are ignored, but IDs that
+// are all empty are an error rather than a request to clear the global ones.
 func (m *Minidis) ClearCommands(ctx context.Context, guildIDs ...string) error {
-	guildIDs = nonEmpty(guildIDs)
 	if len(guildIDs) == 0 {
 		return m.overwriteCommands(ctx, "", nil)
+	}
+
+	guildIDs = nonEmpty(guildIDs)
+	if len(guildIDs) == 0 {
+		return errors.New("minidis: ClearCommands was given only empty guild IDs; call it with none to clear the global commands")
 	}
 
 	for _, id := range guildIDs {
@@ -63,19 +68,54 @@ func nonEmpty(ids []string) []string {
 	return out
 }
 
-// validateCommands catches what Discord would reject for every command at
-// once, with a clearer message.
+// validateCommands catches what Discord would reject, or what would never
+// run, for every command at once, with clearer messages.
 func (m *Minidis) validateCommands() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var errs []error
+	report := func(format string, args ...any) {
+		errs = append(errs, fmt.Errorf("minidis: "+format, args...))
+	}
+
 	for _, name := range slices.Sorted(maps.Keys(m.commands)) {
-		if cmd := m.commands[name]; cmd.hasSubcommands() && len(cmd.Options) > 0 {
-			errs = append(errs, fmt.Errorf("minidis: command %q has both Options and subcommands; move the options into the subcommands", name))
+		cmd := m.commands[name]
+
+		if !cmd.hasSubcommands() {
+			checkOptions(report, name, cmd.Options, cmd.Autocomplete != nil)
+			continue
+		}
+
+		if len(cmd.Options) > 0 {
+			report("command %q has both Options and subcommands; move the options into the subcommands", name)
+		}
+		if cmd.Execute != nil || cmd.Autocomplete != nil {
+			report("command %q has subcommands, so its own Execute and Autocomplete never run; set them on the subcommands", name)
+		}
+		for _, sub := range cmd.Subcommands {
+			checkOptions(report, name+" "+sub.Name, sub.Options, sub.Autocomplete != nil)
+		}
+		for _, g := range cmd.Groups {
+			for _, sub := range g.Subcommands {
+				checkOptions(report, name+" "+g.Name+" "+sub.Name, sub.Options, sub.Autocomplete != nil)
+			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// checkOptions reports autocomplete options that nothing answers, and options
+// with both choices and autocomplete, which Discord rejects.
+func checkOptions(report func(string, ...any), command string, options []*discord.ApplicationCommandOption, hasAutocomplete bool) {
+	for _, o := range options {
+		switch {
+		case o.Autocomplete && len(o.Choices) > 0:
+			report("option %q of %q has both Choices and Autocomplete", o.Name, command)
+		case o.Autocomplete && !hasAutocomplete:
+			report("option %q of %q has Autocomplete but the command has no Autocomplete handler", o.Name, command)
+		}
+	}
 }
 
 func (m *Minidis) overwriteCommands(ctx context.Context, guildID string, commands []*discord.ApplicationCommand) error {

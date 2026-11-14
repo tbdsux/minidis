@@ -3,6 +3,10 @@ package minidis
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -19,12 +23,17 @@ var ErrNoResponse = errors.New("minidis: the interaction was not responded to wi
 // and to the others inside a type that embeds it, such as ComponentContext. It
 // describes the interaction and the user who caused it, and responds to it.
 //
-// Context is also a context.Context, which the response methods use for their
-// requests. It is canceled when the handler returns, when the bot closes, 15
-// minutes after the interaction arrived (when Discord stops accepting
-// responses), and after 3 seconds if nothing has responded by then, with
-// ErrNoResponse as its cause. Pass it to the calls a handler makes, and use
+// Context is also a context.Context for the handler's own work. It is
+// canceled when the handler returns, 15 minutes after the interaction arrived
+// (when Discord stops accepting responses), after 3 seconds if nothing has
+// responded by then (with ErrNoResponse as its cause), and when a closing bot
+// stops waiting for its handlers. Pass it to the calls a handler makes, and use
 // WithContext in middleware to add values to it.
+//
+// The response methods, such as Reply, Edit and Followup, keep working after
+// the handler returns, until Discord's 15 minutes are up or the bot closes.
+// Respond through them rather than through Session directly: a response sent
+// another way is not seen, so the context is canceled after 3 seconds.
 type Context struct {
 	ctx   context.Context
 	reply *replyState // shared by the copies WithContext makes
@@ -57,14 +66,28 @@ type Context struct {
 
 // replyState tracks the initial response of an interaction.
 type replyState struct {
-	responded atomic.Bool
-	ack       func() // called after the initial response; see runInteraction
+	state atomic.Int32 // pending, responded or tooLate
+	ack   func()       // called after the initial response; see runInteraction
+
+	// api is the context of the requests the response methods make. It
+	// outlives the handler, so that a response can be edited afterwards.
+	api context.Context
+
+	// latest is the copy last made with WithContext, which the error handler
+	// receives so that it sees the values middleware added.
+	latest atomic.Pointer[Context]
 }
 
-func newContext(ctx context.Context, s *client.Session, i *discord.Interaction, bot *discord.User) *Context {
+const (
+	pending int32 = iota
+	responded
+	tooLate // no response within the 3 seconds
+)
+
+func newContext(ctx, api context.Context, s *client.Session, i *discord.Interaction, bot *discord.User) *Context {
 	c := &Context{
 		ctx:         ctx,
-		reply:       &replyState{},
+		reply:       &replyState{api: api},
 		Interaction: i,
 		Session:     s,
 
@@ -123,22 +146,44 @@ func (c *Context) Value(key any) any { return orBackground(c.ctx).Value(key) }
 //
 //	return next(c.WithContext(context.WithValue(c, key, value)))
 //
-// The copy shares the interaction's response state with c.
+// The copy shares the interaction's response state with c, and is what the
+// error handler receives if the handler fails.
 func (c *Context) WithContext(ctx context.Context) *Context {
 	if ctx == nil {
 		panic("minidis: nil context")
 	}
 	copied := *c
 	copied.ctx = ctx
+	c.reply.latest.Store(&copied)
 	return &copied
 }
 
+// forErrors is the Context the error handler receives.
+func (c *Context) forErrors() *Context {
+	if latest := c.reply.latest.Load(); latest != nil {
+		return latest
+	}
+	return c
+}
+
 // Responded reports whether the interaction has been responded to, with a
-// reply, a deferral, a modal, an update or autocomplete choices. After that,
-// a message goes through Followup or Edit instead of Reply. An error handler
-// uses it to tell the user that something failed.
+// reply, a deferral, a modal, an update or autocomplete choices. A response
+// that Discord refused does not count. After a response, a message goes
+// through Followup or Edit instead of Reply; an error handler uses it to pick.
 func (c *Context) Responded() bool {
-	return c.reply != nil && c.reply.responded.Load()
+	return c.reply != nil && c.reply.state.Load() == responded
+}
+
+// errTooLate is returned by the response methods once the 3 seconds passed
+// without a response.
+var errTooLate = fmt.Errorf("minidis: cannot respond: %w", ErrNoResponse)
+
+// api returns the context for a request about the interaction.
+func (c *Context) api() (context.Context, error) {
+	if c.reply.state.Load() == tooLate {
+		return nil, errTooLate
+	}
+	return c.reply.api, nil
 }
 
 // Message is a new message: a reply or a followup.
@@ -213,6 +258,10 @@ func (msg Message) channelMessage() *discord.MessageSend {
 
 // MessageEdit changes a message. A nil field is left unchanged; an empty
 // value clears it, such as an empty non-nil Components to remove the buttons.
+//
+// Mind slices built with append: one that ends up with no elements is still
+// nil, which leaves the field unchanged. Start from an empty slice, such as
+// []discord.MessageComponent{}, when the result may be empty and should clear.
 type MessageEdit struct {
 	Content         *string // use discord.String to set it
 	Embeds          []*discord.MessageEmbed
@@ -220,17 +269,19 @@ type MessageEdit struct {
 	AllowedMentions *discord.MessageAllowedMentions
 
 	// Files are added to the message. Attachments, when not nil, are the
-	// existing files to keep; an empty non-nil slice removes them all.
+	// existing files to keep, and an empty non-nil slice removes them all;
+	// the new Files are kept too.
 	Files       []*discord.File
 	Attachments []*discord.MessageAttachment
 
 	// Poll can only be added when editing a deferred response.
 	Poll *discord.PollCreateRequest
 
-	// Flags adds discord.MessageFlagsSuppressEmbeds or
-	// discord.MessageFlagsIsComponentsV2; zero leaves the flags unchanged.
-	// Turning Components V2 on cannot be undone, and is how a deferred reply
-	// becomes a Components V2 message: the text and poll are then cleared.
+	// Flags replaces the message's flags, so include those to keep; zero
+	// leaves them unchanged. Only discord.MessageFlagsSuppressEmbeds and
+	// discord.MessageFlagsIsComponentsV2 can be set. Turning Components V2 on
+	// cannot be undone, and is how a deferred reply becomes a Components V2
+	// message: its text, embeds and poll are then cleared.
 	Flags discord.MessageFlags
 }
 
@@ -248,7 +299,8 @@ func (e MessageEdit) webhookEdit() *discord.WebhookEdit {
 		res.Components = &e.Components
 	}
 	if e.Attachments != nil {
-		res.Attachments = &e.Attachments
+		kept := e.attachments()
+		res.Attachments = &kept
 	}
 	if e.Flags != 0 {
 		res.Flags = &e.Flags
@@ -267,9 +319,20 @@ func (e MessageEdit) responseData() *discord.InteractionResponseData {
 		Flags:           e.Flags,
 	}
 	if e.Attachments != nil {
-		data.Attachments = &e.Attachments
+		kept := e.attachments()
+		data.Attachments = &kept
 	}
 	return data
+}
+
+// attachments lists the files the message keeps: Discord drops any not
+// listed, including new ones, which are referred to by their index in Files.
+func (e MessageEdit) attachments() []*discord.MessageAttachment {
+	kept := slices.Clone(e.Attachments)
+	for i, f := range e.Files {
+		kept = append(kept, &discord.MessageAttachment{ID: strconv.Itoa(i), Filename: f.Name})
+	}
+	return kept
 }
 
 // Modal is a form shown to the user. Its submission goes to the handler set
@@ -282,18 +345,57 @@ type Modal struct {
 
 // respond sends the initial response to the interaction.
 func (c *Context) respond(res *discord.InteractionResponse) error {
-	// Marked first, so that the 3-second cutoff cannot cancel a response
-	// that is being sent.
-	if c.reply != nil {
-		c.reply.responded.Store(true)
+	return c.sendResponse(func(ctx context.Context) error {
+		return c.Session.InteractionRespond(ctx, c.Interaction, res)
+	})
+}
+
+// SendResponse sends an initial response built by hand, such as a type this
+// package has no method for, and returns what Discord reports about it, such
+// as the message it created or the Activity it launched. Use it rather than
+// Session, so that the response counts for Responded and the 3-second cutoff.
+func (c *Context) SendResponse(res *discord.InteractionResponse) (*discord.InteractionCallbackResponse, error) {
+	var out *discord.InteractionCallbackResponse
+	err := c.sendResponse(func(ctx context.Context) error {
+		var err error
+		out, err = c.Session.InteractionRespondWithResponse(ctx, c.Interaction, res)
+		return err
+	})
+	return out, err
+}
+
+// sendResponse tracks an initial response that send makes.
+func (c *Context) sendResponse(send func(context.Context) error) error {
+	r := c.reply
+
+	// Claimed before sending, so that the 3-second cutoff cannot cancel a
+	// response being sent. A second response is left for Discord to refuse.
+	claimed := r.state.CompareAndSwap(pending, responded)
+	if !claimed && r.state.Load() == tooLate {
+		return errTooLate
 	}
 
-	err := c.Session.InteractionRespond(c, c.Interaction, res)
+	err := send(r.api)
+	if err != nil && claimed && notDelivered(err) {
+		r.state.Store(pending)
+	}
 
-	if c.reply != nil && c.reply.ack != nil {
-		c.reply.ack()
+	if r.ack != nil {
+		r.ack()
 	}
 	return err
+}
+
+// notDelivered reports whether a response certainly did not reach Discord:
+// Discord refused it, other than for an earlier response, or it was never sent.
+func notDelivered(err error) bool {
+	var rest *client.RESTError
+	if errors.As(err, &rest) {
+		const alreadyAcknowledged = 40060
+		return rest.StatusCode >= http.StatusBadRequest && rest.StatusCode < http.StatusInternalServerError &&
+			rest.Code != alreadyAcknowledged
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // Reply responds to the interaction with a message.
@@ -355,7 +457,11 @@ func (c *Context) deferUpdate() error {
 
 // Response fetches the message sent as the response, such as to learn its ID.
 func (c *Context) Response() (*discord.Message, error) {
-	return c.Session.InteractionResponse(c, c.Interaction)
+	ctx, err := c.api()
+	if err != nil {
+		return nil, err
+	}
+	return c.Session.InteractionResponse(ctx, c.Interaction)
 }
 
 // Edit replaces the text of the response.
@@ -365,13 +471,21 @@ func (c *Context) Edit(content string) error {
 
 // EditWith changes the response.
 func (c *Context) EditWith(edit MessageEdit) error {
-	_, err := c.Session.InteractionResponseEdit(c, c.Interaction, edit.webhookEdit())
+	ctx, err := c.api()
+	if err != nil {
+		return err
+	}
+	_, err = c.Session.InteractionResponseEdit(ctx, c.Interaction, edit.webhookEdit())
 	return err
 }
 
 // Delete deletes the response.
 func (c *Context) Delete() error {
-	return c.Session.InteractionResponseDelete(c, c.Interaction)
+	ctx, err := c.api()
+	if err != nil {
+		return err
+	}
+	return c.Session.InteractionResponseDelete(ctx, c.Interaction)
 }
 
 // Followup sends another message after the response.
@@ -381,10 +495,15 @@ func (c *Context) Followup(content string) (*FollowupMessage, error) {
 
 // FollowupWith sends another message after the response.
 func (c *Context) FollowupWith(msg Message) (*FollowupMessage, error) {
-	sent, err := c.Session.FollowupMessageCreate(c, c.Interaction, msg.webhookParams())
+	ctx, err := c.api()
 	if err != nil {
 		return nil, err
 	}
 
-	return &FollowupMessage{Message: sent, ctx: c, session: c.Session, interaction: c.Interaction}, nil
+	sent, err := c.Session.FollowupMessageCreate(ctx, c.Interaction, msg.webhookParams())
+	if err != nil {
+		return nil, err
+	}
+
+	return &FollowupMessage{Message: sent, ctx: ctx, session: c.Session, interaction: c.Interaction}, nil
 }

@@ -68,7 +68,8 @@ func main() {
 		log.Fatalln("Failed to sync commands:", err)
 	}
 
-	// Run until CTRL+C, then close, giving running handlers time to finish
+	// Run until CTRL+C, then close: new interactions stop, and running handlers
+	// get up to 10 seconds to finish before their contexts are canceled
 	if err := bot.Run(ctx); err != nil {
 		log.Fatalln("Bot stopped with an error:", err)
 	}
@@ -113,7 +114,7 @@ bot.AddCommand(&minidis.Command{
 })
 ```
 
-A command with subcommands only runs them, so it cannot have `Options` or an `Execute` of its own; `SyncCommands` reports such a command.
+A command with subcommands only runs them, so it cannot have `Options`, an `Execute` or an `Autocomplete` of its own. `SyncCommands` reports such a command, and also an option with `Autocomplete: true` that no handler answers.
 
 ### Responding
 
@@ -129,18 +130,20 @@ f, err := c.Followup("one more thing")
 c.ReplyModal(minidis.Modal{CustomID: "feedback", Title: "Feedback", Components: ...})
 ```
 
-In a `MessageEdit`, a nil field is left unchanged and an empty one clears it.
+In a `MessageEdit`, a nil field is left unchanged and an empty one clears it. A slice built with `append` that ends up empty is still nil, so start from an empty slice when the result should clear. `Flags` replaces the message's flags, so include those to keep.
 
-`Message` also takes a `Poll`, `TTS` and further `Flags`. Use `discord.MessageFlagsIsComponentsV2` to lay a message out with components such as `discord.Container`, `discord.Section` and `discord.TextDisplay`. A deferred reply becomes one through `c.EditWith(minidis.MessageEdit{Flags: discord.MessageFlagsIsComponentsV2, Components: ...})`. `c.Response()` fetches the message that was sent.
+`Message` also takes a `Poll`, `TTS` and further `Flags`. Use `discord.MessageFlagsIsComponentsV2` to lay a message out with components such as `discord.Container`, `discord.Section` and `discord.TextDisplay`. A deferred reply becomes one through `c.EditWith(minidis.MessageEdit{Flags: discord.MessageFlagsIsComponentsV2, Components: ...})`. `c.Response()` fetches the message that was sent, and `c.SendResponse` sends a response built by hand and returns what Discord reports about it.
 
-Every handler context is also a `context.Context`, which the response methods use for their requests. It is canceled when the handler returns, when the bot closes, 15 minutes after the interaction arrived, when Discord stops accepting responses, and after 3 seconds if nothing responded by then, with `minidis.ErrNoResponse` as its cause. Pass it to the calls the handler makes, including those on `c.Session`:
+Every handler context is also a `context.Context` for the handler's own work. It is canceled when the handler returns, 15 minutes after the interaction arrived (when Discord stops accepting responses), after 3 seconds if nothing responded by then (with `minidis.ErrNoResponse` as its cause), and when a closing bot stops waiting for its handlers. Pass it to the calls the handler makes, including those on `c.Session`:
 
 ```go
 rows, err := db.QueryContext(c, "SELECT ...")
 _, err = c.Session.ChannelMessageSend(c, logChannelID, "ran /ping")
 ```
 
-`c.Responded()` reports whether the interaction has been responded to, so that a message goes through `c.Followup` instead of `c.Reply` afterwards.
+The response methods (`Reply`, `Edit`, `Followup` and the rest) keep working after the handler returns, until Discord's 15 minutes are up or the bot closes, so a followup can be edited later. Respond through them rather than `c.Session`: a response sent another way is not seen, and the context is canceled after 3 seconds.
+
+`c.Responded()` reports whether the interaction has been responded to, so that a message goes through `c.Followup` instead of `c.Reply` afterwards. A response Discord refused does not count.
 
 ### Reading options
 
@@ -176,7 +179,11 @@ bot.Use(func(next minidis.HandlerFunc) minidis.HandlerFunc {
 bot.HandleError(func(c *minidis.Context, err error) {
 	// err is a *minidis.PanicError if a handler panicked (errors.Is and
 	// errors.As see through it), and wraps minidis.ErrNoHandler for a
-	// command or component that is no longer registered
+	// command or component that is no longer registered. c is the copy that
+	// middleware passed on, with its values.
+	if c.Interaction.Type == discord.InteractionApplicationCommandAutocomplete {
+		return // autocomplete cannot show a message
+	}
 	if c.Responded() {
 		c.FollowupWith(minidis.Message{Content: "Something went wrong.", Ephemeral: true})
 	} else {
@@ -189,7 +196,7 @@ Without `HandleError`, errors are logged. A panic in the error handler is logged
 
 ### Components and modals
 
-Handler IDs can capture `:`-separated segments, and modal IDs work the same way.
+Handler IDs can capture `:`-separated segments, and modal IDs work the same way. An exact ID wins over a pattern, and a pattern with more fixed segments over one with fewer, so `ticket:close:{id}` wins over `ticket:{action}:{id}`.
 
 ```go
 bot.HandleComponent("vote:{poll}", func(c *minidis.ComponentContext) error {

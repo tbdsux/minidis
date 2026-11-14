@@ -22,22 +22,23 @@ func (m *Minidis) handleInteraction(s *client.Session, i *discord.InteractionCre
 	m.runInteraction(m.current().ctx, s, i.Interaction, nil)
 }
 
-// runInteraction handles an interaction however it was received. ack, if not
-// nil, is called once the interaction has been responded to.
-func (m *Minidis) runInteraction(parent context.Context, s *client.Session, i *discord.Interaction, ack func()) {
-	ctx, cancel := context.WithTimeout(parent, interactionLifetime)
+// runInteraction handles an interaction however it was received, within the
+// context of the bot's run. ack, if not nil, is called once the interaction
+// has been responded to.
+func (m *Minidis) runInteraction(run context.Context, s *client.Session, i *discord.Interaction, ack func()) {
+	ctx, cancel := context.WithTimeout(run, interactionLifetime)
 	defer cancel()
 
 	ctx, cancelCause := context.WithCancelCause(ctx)
 	defer cancelCause(nil)
 
-	c := newContext(ctx, s, i, m.botUser(s))
+	c := newContext(ctx, run, s, i, m.botUser(s))
 	c.reply.ack = ack
 
 	// Discord drops an interaction that is not responded to in time, so stop
 	// the handler's work rather than let it respond in vain.
 	cutoff := time.AfterFunc(responseWindow, func() {
-		if !c.reply.responded.Load() {
+		if c.reply.state.CompareAndSwap(pending, tooLate) {
 			cancelCause(ErrNoResponse)
 		}
 	})
@@ -45,7 +46,7 @@ func (m *Minidis) runInteraction(parent context.Context, s *client.Session, i *d
 
 	defer func() {
 		if r := recover(); r != nil {
-			m.handleError(c, &PanicError{Value: r, Stack: debug.Stack()})
+			m.handleError(c.forErrors(), &PanicError{Value: r, Stack: debug.Stack()})
 		}
 	}()
 
@@ -60,7 +61,7 @@ func (m *Minidis) runInteraction(parent context.Context, s *client.Session, i *d
 	}
 
 	if err := handler(c); err != nil {
-		m.handleError(c, err)
+		m.handleError(c.forErrors(), err)
 	}
 }
 

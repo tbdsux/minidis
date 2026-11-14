@@ -285,8 +285,8 @@ func TestWebhookEditFlags(t *testing.T) {
 	}{
 		{"unset flags are left out", WebhookEdit{}, `{}`},
 		{"zero clears the flags", WebhookEdit{Flags: &none}, `{"flags":0}`},
-		{"components v2 nulls content and poll", WebhookEdit{Flags: &v2}, `{"flags":32768,"content":null,"poll":null}`},
-		{"components v2 keeps a set content", WebhookEdit{Flags: &v2, Content: String("x")}, `{"flags":32768,"content":"x","poll":null}`},
+		{"components v2 clears content, embeds and poll", WebhookEdit{Flags: &v2}, `{"flags":32768,"content":null,"embeds":[],"poll":null}`},
+		{"components v2 keeps a set content", WebhookEdit{Flags: &v2, Content: String("x")}, `{"flags":32768,"content":"x","embeds":[],"poll":null}`},
 		{"response data does the same", InteractionResponseData{Flags: v2}, `{"flags":32768,"content":null,"poll":null}`},
 		{"other response data is unchanged", InteractionResponseData{Flags: MessageFlagsEphemeral}, `{"flags":64}`},
 	}
@@ -316,4 +316,14 @@ func TestEntryPointCommandEncodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertJSONEqual(t, got, `{"name":"launch","type":4,"handler":2}`)
+}
+
+func TestInteractionPartialGuildLocale(t *testing.T) {
+	var i Interaction
+	if err := json.Unmarshal([]byte(`{"type":2,"guild":{"id":"g","locale":"fr","features":[]},"data":{"name":"c","type":1}}`), &i); err != nil {
+		t.Fatal(err)
+	}
+	if i.Guild == nil || i.Guild.Locale != French {
+		t.Errorf("guild = %+v", i.Guild)
+	}
 }

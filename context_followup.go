@@ -7,8 +7,8 @@ import (
 	"github.com/tbdsux/minidis/discord/client"
 )
 
-// FollowupMessage is a message sent with Context.Followup. Its methods use the
-// context of the handler that sent it.
+// FollowupMessage is a message sent with Context.Followup. Like the response
+// methods of Context, its methods keep working after the handler returns.
 type FollowupMessage struct {
 	Message *discord.Message
 

@@ -62,8 +62,9 @@ type httpHandler struct {
 	m   *Minidis
 	key ed25519.PublicKey
 
-	mu   sync.Mutex
-	seen map[string]time.Time // interaction IDs received within signatureMaxAge
+	mu        sync.Mutex
+	seen      map[string]time.Time // interaction IDs received within signatureMaxAge
+	lastSweep time.Time
 }
 
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -88,12 +89,6 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now()
-	if !fresh(timestamp, now) {
-		http.Error(w, "stale request signature", http.StatusUnauthorized)
-		return
-	}
-
 	i := &discord.Interaction{}
 	if err := json.Unmarshal(body, i); err != nil {
 		http.Error(w, "invalid interaction", http.StatusBadRequest)
@@ -103,6 +98,14 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if i.Type == discord.InteractionPing {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(discord.InteractionResponse{Type: discord.InteractionResponsePong})
+		return
+	}
+
+	// PINGs are exempt, so that the Developer Portal can still verify the URL
+	// from a server whose clock is off; they do nothing when replayed.
+	now := time.Now()
+	if !fresh(timestamp, now) {
+		http.Error(w, "stale request signature; check the server's clock", http.StatusUnauthorized)
 		return
 	}
 
@@ -140,7 +143,8 @@ func fresh(timestamp string, now time.Time) bool {
 
 // firstSight records an interaction ID and reports whether it is new. IDs are
 // kept as long as their signatures stay fresh, so a replay is caught either
-// way.
+// way. The record is per handler: replicas behind a load balancer each keep
+// their own.
 func (h *httpHandler) firstSight(id string, now time.Time) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -150,13 +154,15 @@ func (h *httpHandler) firstSight(id string, now time.Time) bool {
 	}
 
 	// Forget IDs whose requests would now be rejected as stale anyway. The
-	// sweep runs when the map has doubled, so it costs O(1) per request.
-	if len(h.seen) >= 1024 && len(h.seen)&(len(h.seen)-1) == 0 {
+	// sweep runs at most once per signatureMaxAge, so the map holds about the
+	// last 10 minutes of interactions.
+	if now.Sub(h.lastSweep) > signatureMaxAge {
 		for seenID, at := range h.seen {
 			if now.Sub(at) > 2*signatureMaxAge {
 				delete(h.seen, seenID)
 			}
 		}
+		h.lastSweep = now
 	}
 
 	h.seen[id] = now
@@ -169,7 +175,7 @@ func (h *httpHandler) firstSight(id string, now time.Time) bool {
 func (m *Minidis) startHTTPInteraction(i *discord.Interaction) (<-chan struct{}, bool) {
 	m.runMu.RLock()
 	run := m.run
-	if run.ctx.Err() != nil {
+	if !run.accepting {
 		m.runMu.RUnlock()
 		return nil, false
 	}

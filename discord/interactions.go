@@ -473,8 +473,8 @@ type WebhookParams struct {
 // Flags may only hold MessageFlagsSuppressEmbeds and MessageFlagsIsComponentsV2;
 // nil leaves them unchanged, and a pointer to 0 clears SuppressEmbeds.
 // Components V2 can be turned on but not off. Turning it on sends an unset
-// Content and Poll as null, as Discord requires; clear Embeds with an empty
-// slice. A Poll can only be added to a deferred interaction response.
+// Content and Poll as null and unset Embeds as empty, as Discord requires. A
+// Poll can only be added to a deferred interaction response.
 type WebhookEdit struct {
 	Content         *string                 `json:"content,omitempty"`
 	Embeds          *[]*MessageEmbed        `json:"embeds,omitempty"`
@@ -491,6 +491,10 @@ func (e WebhookEdit) MarshalJSON() ([]byte, error) {
 	type alias WebhookEdit
 	if e.Flags == nil || *e.Flags&MessageFlagsIsComponentsV2 == 0 {
 		return json.Marshal(alias(e))
+	}
+	if e.Embeds == nil {
+		cleared := []*MessageEmbed{}
+		e.Embeds = &cleared
 	}
 	// Content and Poll without omitempty shadow those of alias, so nil is null.
 	return json.Marshal(struct {
