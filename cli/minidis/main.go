@@ -44,7 +44,7 @@ var errUsage = errors.New("usage error")
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
-		return errors.New("no command given")
+		return fmt.Errorf("%w: no command given", errUsage)
 	}
 
 	switch args[0] {
@@ -57,8 +57,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprint(stdout, usage)
 		return nil
 	default:
-		fmt.Fprint(stderr, usage)
-		return fmt.Errorf("unknown command %q", args[0])
+		fmt.Fprintf(stderr, "minidis: unknown command %q\n\n%s", args[0], usage)
+		return fmt.Errorf("%w: unknown command %q", errUsage, args[0])
 	}
 }
 
@@ -69,8 +69,24 @@ const libraryPath = "github.com/tbdsux/minidis"
 // from, or "(devel)" when it was built from a checkout.
 func version() string {
 	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Path != libraryPath {
+	if !ok {
 		return "(devel)"
+	}
+	return buildVersion(info)
+}
+
+// buildVersion is version for the given build information. "go install
+// module@version" records no version control settings, while a build in a
+// checkout does, along with a pseudo-version for its commit that may exist
+// nowhere but in that checkout.
+func buildVersion(info *debug.BuildInfo) string {
+	if info.Main.Path != libraryPath {
+		return "(devel)"
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			return "(devel)"
+		}
 	}
 	return releasedVersion(info.Main.Version)
 }

@@ -21,14 +21,14 @@ In PowerShell, set the variables with `$env:TOKEN="<bot token>"; $env:GUILD="<te
 `init` works out where the project goes, then:
 
 1. creates the directory and, unless it is already inside a module, a `go.mod` declaring the same Go version as minidis;
-2. adds minidis at the version the CLI was installed from, so the generated code matches its API. A module that already requires minidis keeps its version;
-3. writes the project, then runs `go mod tidy` and builds it to check that it works.
+2. adds minidis at the version the CLI was installed from, so the generated code matches its API. A module that already requires an older minidis is upgraded to it, never downgraded, and one that replaces minidis is left alone;
+3. writes the project, then runs `go mod tidy` (and `go mod vendor` in a vendored module) and builds it to check that it works.
 
-The `go get` runs before any file is written, so if it fails, for example offline, run `init` again or finish with the commands it prints.
+The `go get` runs before any file is written, so if it fails, for example offline, fix the problem and run the same `init` command again, as the error shows.
 
-Inside an existing module, a directory without `-module` becomes a package of that module, for example `minidis init cmd/bot` gives `example.com/yours/cmd/bot`. With `-module` it becomes a module of its own; in a workspace, `init` reminds you to `go work use` it.
+Inside an existing module, a directory without `-module` becomes a package of that module, for example `minidis init cmd/bot` gives `example.com/yours/cmd/bot`. With `-module` it becomes a module of its own. A new module inside a workspace is set up and checked on its own, and `init` shows the `go work use` command that adds it to the workspace.
 
-Existing Go files are never overwritten unless given `-force`. `README.md` and `.gitignore` are never overwritten: an existing README is kept, and `.gitignore` only gets the lines it is missing. Everything is checked before anything is written.
+Existing Go files are never overwritten unless given `-force`, and neither is a directory that already holds a package other than `main`. `README.md` and `.gitignore` are never overwritten: an existing README is kept, and `.gitignore` only gets the lines it is missing. Everything, including that the module path is one the go command accepts, is checked before anything is written.
 
 | Flag | |
 |---|---|
@@ -39,7 +39,7 @@ Existing Go files are never overwritten unless given `-force`. `README.md` and `
 
 Flags may come before or after the directory.
 
-A CLI built from a checkout, rather than installed from a version, adds the latest release of minidis, which may not match its templates. The build check then explains how to point the project at the checkout instead.
+A CLI built from a checkout, rather than installed with `go install …@version`, adds the latest version of minidis (its `main` branch), which may not match the checkout's templates. The build check then explains how to point the project at the checkout instead.
 
 ## What you get
 
@@ -53,4 +53,4 @@ mybot/
 └── .gitignore            ignores the binary, named after the last element of the module path
 ```
 
-With `-http`, `main.go` also serves the interactions endpoint with an `http.Server` and reads `PUBLIC_KEY` and `ADDR`.
+With `-http`, `main.go` also reads `PUBLIC_KEY` and `ADDR` and serves the interactions endpoint with an `http.Server`. It checks the key, the token and the address before it syncs the commands, so a mistake changes nothing on Discord.

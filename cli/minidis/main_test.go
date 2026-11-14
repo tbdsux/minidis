@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -188,10 +189,11 @@ func TestInitCanBeRerunAfterGoGetFails(t *testing.T) {
 	dependencyVersion = func() string { return "v0.0.0-20000101000000-000000000000" }
 	t.Cleanup(func() { dependencyVersion = saved })
 
-	dir := filepath.Join(t.TempDir(), "mybot")
-	_, err := minidisInit(t, dir)
-	if err == nil || !strings.Contains(err.Error(), "go get "+libraryPath+"@v0.0.0-20000101000000-000000000000") {
-		t.Fatalf("err = %v, want the manual go get", err)
+	dir := filepath.Join(t.TempDir(), "my bot")
+	_, err := minidisInit(t, "-module", "example.com/mybot", dir)
+	if err == nil || !strings.Contains(err.Error(), "run init again") ||
+		!strings.Contains(err.Error(), "minidis init -module example.com/mybot "+shellQuote(runtime.GOOS, dir)) {
+		t.Fatalf("err = %v, want the command to run init again", err)
 	}
 
 	entries, _ := os.ReadDir(dir)
@@ -336,7 +338,7 @@ func TestInitArguments(t *testing.T) {
 		wantErr string
 		usage   bool
 	}{
-		{"two directories", []string{"a", "b"}, "one directory", false},
+		{"two directories", []string{"a", "b"}, "one directory", true},
 		{"flags after the directory", []string{"a", "-module", "has space"}, "not a valid module path", false},
 		{"unknown flag", []string{"-nope"}, "-nope", true},
 	}
@@ -404,6 +406,9 @@ func TestNextStepsAreRunnable(t *testing.T) {
 		{"windows", `C:\bots\mybot`, `C:\bots\mybot`},
 		{"windows", "my bot", "'my bot'"},
 		{"windows", "it's", "'it''s'"},
+		{"windows", "a,b", "'a,b'"},
+		{"windows", "@bot", "'@bot'"},
+		{"linux", "a,b", "a,b"},
 	}
 	for _, q := range quotes {
 		if got := shellQuote(q.goos, q.in); got != q.want {
@@ -424,6 +429,13 @@ func TestNextStepsAreRunnable(t *testing.T) {
 	printNextSteps(&out, initOptions{dir: "my bot", skipDeps: true}, plan{}, libraryPath+"@v1.2.3")
 	if !strings.Contains(out.String(), "go get "+libraryPath+"@v1.2.3") || !strings.Contains(out.String(), "cd "+shellQuote(runtime.GOOS, "my bot")) {
 		t.Errorf("next steps:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "ready") {
+		t.Errorf("with -skip-deps the bot is not ready yet:\n%s", out.String())
+	}
+
+	if got := rerunCommand("linux", []string{"-http", "my bot"}); got != "minidis init -http 'my bot'" {
+		t.Errorf("rerun: %s", got)
 	}
 }
 
@@ -449,13 +461,198 @@ func TestCommands(t *testing.T) {
 		t.Errorf("version: %v %q", err, out.String())
 	}
 
+	// Usage errors exit 2, and main prints nothing more for them.
 	out.Reset()
-	if err := run([]string{"nope"}, &out, &out); err == nil || !strings.Contains(out.String(), "Usage:") {
+	if err := run([]string{"nope"}, &out, &out); !errors.Is(err, errUsage) || !strings.Contains(out.String(), `unknown command "nope"`) || !strings.Contains(out.String(), "Usage:") {
 		t.Errorf("unknown command: %v %q", err, out.String())
 	}
 
 	out.Reset()
-	if err := run(nil, &out, &out); err == nil {
-		t.Error("no command was accepted")
+	if err := run(nil, &out, &out); !errors.Is(err, errUsage) || !strings.Contains(out.String(), "Usage:") {
+		t.Errorf("no command: %v %q", err, out.String())
+	}
+}
+
+func TestBuildVersion(t *testing.T) {
+	info := func(version string, settings ...debug.BuildSetting) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Path: libraryPath, Version: version}, Settings: settings}
+	}
+	revision := debug.BuildSetting{Key: "vcs.revision", Value: "97e43a3dc727"}
+
+	tests := []struct {
+		name string
+		info *debug.BuildInfo
+		want string
+	}{
+		{"go install module@version", info("v1.2.3"), "v1.2.3"},
+		{"go install of a pseudo-version", info("v0.0.0-20260101000000-abcdef123456"), "v0.0.0-20260101000000-abcdef123456"},
+		{"clean checkout, stamped by go build", info("v0.0.0-20261114124625-97e43a3dc727", revision), "(devel)"},
+		{"dirty checkout", info("v0.0.0-20261114124625-97e43a3dc727+dirty", revision), "(devel)"},
+		{"-buildvcs=false", info("(devel)"), "(devel)"},
+		{"another main module", &debug.BuildInfo{Main: debug.Module{Path: "example.com/x", Version: "v1.0.0"}}, "(devel)"},
+	}
+	for _, tt := range tests {
+		if got := buildVersion(tt.info); got != tt.want {
+			t.Errorf("%s: buildVersion = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCompareVersions(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+		ok   bool
+	}{
+		{"v1.2.3", "v1.2.3", 0, true},
+		{"v1.2.3", "v1.10.0", -1, true},
+		{"v2.0.0", "v1.99.99", 1, true},
+		{"v1.0.0-rc.1", "v1.0.0", -1, true},
+		{"v1.0.0-alpha", "v1.0.0-alpha.1", -1, true},
+		{"v1.0.0-alpha.2", "v1.0.0-alpha.10", -1, true},
+		{"v1.0.0-1", "v1.0.0-alpha", -1, true},
+		{"v2.0.0+incompatible", "v2.0.0", 0, true},
+		// Pseudo-versions order by their time.
+		{"v0.0.0-20261108111707-9fedc1855fae", "v0.0.0-20261114124625-97e43a3dc727", -1, true},
+		{"v1.2.4-0.20260101000000-abcdef123456", "v1.2.3", 1, true},
+		{"v1.2.4-0.20260101000000-abcdef123456", "v1.2.4", -1, true},
+		{"latest", "v1.0.0", 0, false},
+		{"v1.2", "v1.0.0", 0, false},
+		{"v01.0.0", "v1.0.0", 0, false},
+	}
+	for _, tt := range tests {
+		got, ok := compareVersions(tt.a, tt.b)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("compareVersions(%q, %q) = %d, %v; want %d, %v", tt.a, tt.b, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestNeedsGoGet(t *testing.T) {
+	const old, pinned, newer = "v0.0.0-20261108111707-9fedc1855fae", "v0.0.0-20261114124625-97e43a3dc727", "v1.0.0"
+
+	tests := []struct {
+		name     string
+		skipDeps bool
+		p        plan
+		pinned   string
+		want     bool
+		from     string
+	}{
+		{"not required yet", false, plan{}, pinned, true, ""},
+		{"skip-deps", true, plan{}, pinned, false, ""},
+		{"older requirement is upgraded", false, plan{hasMinidis: true, minidisVersion: old}, pinned, true, old},
+		{"newer requirement is kept", false, plan{hasMinidis: true, minidisVersion: newer}, pinned, false, ""},
+		{"same requirement is kept", false, plan{hasMinidis: true, minidisVersion: pinned}, pinned, false, ""},
+		{"replaced is kept", false, plan{hasMinidis: true, minidisVersion: old, minidisReplaced: true}, pinned, false, ""},
+		{"a checkout build never changes it", false, plan{hasMinidis: true, minidisVersion: old}, "latest", false, ""},
+	}
+	for _, tt := range tests {
+		get, from := needsGoGet(tt.skipDeps, tt.p, tt.pinned)
+		if get != tt.want || from != tt.from {
+			t.Errorf("%s: needsGoGet = %v, %q; want %v, %q", tt.name, get, from, tt.want, tt.from)
+		}
+	}
+}
+
+func TestCheckImportPath(t *testing.T) {
+	tests := []struct {
+		path   string
+		module bool
+		ok     bool
+	}{
+		{"example.com/bot", true, true},
+		{"example.com/bot/v2", true, true},
+		{"example.com/bot/v10", true, true},
+		{"example.com/bot/v0", true, false},
+		{"example.com/bot/v1", true, false},
+		{"example.com/bot/v02", true, false},
+		{"example.com/m/v1", false, true}, // just a directory name in a package path
+		{"con", true, false},
+		{"example.com/AUX.txt", true, false},
+		{"example.com/lpt9", true, false},
+		{"example.com/com0", true, true},
+		{"example.com/x~1", true, false},
+		{"example.com/x~1.go", true, false},
+		{"example.com/x~y", true, true},
+		{"a+b", true, false},
+		{"example.com/m/a+b", false, true},
+	}
+	for _, tt := range tests {
+		if err := checkImportPath(tt.path, tt.module); (err == nil) != tt.ok {
+			t.Errorf("checkImportPath(%q, module %v) = %v, want ok %v", tt.path, tt.module, err, tt.ok)
+		}
+	}
+}
+
+func TestInitRejectsIgnoredPackageDirs(t *testing.T) {
+	requireGo(t)
+
+	parent := t.TempDir()
+	writeFile(t, filepath.Join(parent, "go.mod"), "module example.com/m\n")
+
+	for _, rel := range []string{"_bot", "cmd/_bot", "testdata/bot", ".bot", "con"} {
+		t.Run(rel, func(t *testing.T) {
+			dir := filepath.Join(parent, filepath.FromSlash(rel))
+			if _, err := minidisInit(t, "-skip-deps", dir); err == nil {
+				t.Error("accepted")
+			}
+			if _, err := os.Stat(dir); err == nil {
+				t.Error("the directory was created")
+			}
+		})
+	}
+}
+
+func TestInitRefusesADirectoryOfAnotherPackage(t *testing.T) {
+	requireGo(t)
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/mod\n")
+	writeFile(t, filepath.Join(dir, "mod.go"), "package mod\n")
+	writeFile(t, filepath.Join(dir, "mod_test.go"), "package mod_test\n")
+
+	_, err := minidisInit(t, "-skip-deps", dir)
+	if err == nil || !strings.Contains(err.Error(), "package mod") || strings.Contains(err.Error(), "mod_test") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "main.go")); err == nil {
+		t.Error("main.go was written")
+	}
+
+	if out, err := minidisInit(t, "-skip-deps", "-force", dir); err != nil {
+		t.Fatalf("-force: %v\n%s", err, out)
+	}
+}
+
+func TestInitInsideAWorkspace(t *testing.T) {
+	requireGo(t)
+	offline(t)
+	t.Setenv("GOWORK", "") // find the go.work below
+
+	ws := t.TempDir()
+	writeFile(t, filepath.Join(ws, "go.work"), "go "+goFloor+"\n")
+
+	out, err := minidisInit(t, "-skip-deps", filepath.Join(ws, "bot"))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "go work use") {
+		t.Errorf("no go work use hint:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(ws, "bot", "go.mod")); err != nil {
+		t.Errorf("go.mod: %v", err)
+	}
+}
+
+func TestInitNeedsTheGoCommand(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	dir := filepath.Join(t.TempDir(), "bot")
+	if _, err := minidisInit(t, dir); err == nil || !strings.Contains(err.Error(), "needs the go command") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("the directory was created")
 	}
 }

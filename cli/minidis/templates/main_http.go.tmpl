@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,22 +33,34 @@ func run() error {
 	if token == "" {
 		return errors.New("set TOKEN to the bot token from the Discord Developer Portal")
 	}
+	// PUBLIC_KEY is on the General Information page of the Developer Portal.
+	publicKey := os.Getenv("PUBLIC_KEY")
+	if publicKey == "" {
+		return errors.New("set PUBLIC_KEY to the public key from the General Information page of the Developer Portal")
+	}
 
 	bot := minidis.New(token)
 	commands.Register(bot)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	context.AfterFunc(ctx, stop) // a second Ctrl+C ends a slow shutdown at once
 
-	// PUBLIC_KEY is on the General Information page of the Developer Portal.
-	// It is checked first, so that a bad one fails before anything changes.
-	interactions, err := bot.HTTPHandler(ctx, os.Getenv("PUBLIC_KEY"))
+	// Everything that can fail is checked before the commands are synced, so
+	// that a mistake fails before anything changes on Discord.
+	interactions, err := bot.HTTPHandler(ctx, publicKey)
 	if err != nil {
-		return fmt.Errorf("PUBLIC_KEY: %w", err)
+		return fmt.Errorf("setting up the interactions endpoint: %w", err)
+	}
+
+	ln, err := net.Listen("tcp", cmp.Or(os.Getenv("ADDR"), ":8080"))
+	if err != nil {
+		return err
 	}
 
 	// Register the commands with Discord, replacing any registered before.
 	if err := bot.SyncCommands(ctx, guildIDs()...); err != nil {
+		ln.Close()
 		return fmt.Errorf("syncing commands: %w", err)
 	}
 
@@ -55,7 +68,6 @@ func run() error {
 	mux.Handle("POST /interactions", interactions)
 
 	srv := &http.Server{
-		Addr:              cmp.Or(os.Getenv("ADDR"), ":8080"),
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -64,8 +76,8 @@ func run() error {
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
-	log.Printf("Listening on %s. Press Ctrl+C to stop.", srv.Addr)
+	go func() { errCh <- srv.Serve(ln) }()
+	log.Printf("Listening on %s. Press Ctrl+C to stop.", ln.Addr())
 
 	select {
 	case err := <-errCh:

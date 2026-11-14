@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"maps"
@@ -19,6 +21,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -36,10 +39,11 @@ type initOptions struct {
 	http     bool
 	force    bool
 	skipDeps bool
+	args     []string // as given, to show how to run init again
 }
 
 func runInit(args []string, stdout, stderr io.Writer) error {
-	var o initOptions
+	o := initOptions{args: slices.Clone(args)}
 
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -71,8 +75,9 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 		args = flags.Args()[1:]
 	}
 	if len(positional) > 1 {
+		fmt.Fprintf(stderr, "minidis: init takes one directory, got %d\n\n", len(positional))
 		flags.Usage()
-		return fmt.Errorf("init takes one directory, got %d", len(positional))
+		return fmt.Errorf("%w: init takes one directory, got %d", errUsage, len(positional))
 	}
 	o.dir = cmp.Or(strings.Join(positional, ""), ".")
 
@@ -93,10 +98,20 @@ type plan struct {
 	modulePath  string
 	packagePath string // the import path of the main package in dir
 	newModule   bool   // whether go mod init runs in dir
-	hasMinidis  bool   // whether the go.mod already requires minidis
+
+	hasMinidis      bool   // whether the go.mod already requires minidis
+	minidisVersion  string // the version it requires
+	minidisReplaced bool   // whether a replace directive points minidis elsewhere
+
+	workspace string   // the go.work a new module is in but not part of yet
+	env       []string // the environment of the go commands, nil for the current one
 }
 
 func initProject(o initOptions, stdout, stderr io.Writer) error {
+	if _, err := exec.LookPath("go"); err != nil {
+		return fmt.Errorf("minidis needs the go command on PATH: %w", err)
+	}
+
 	p, err := makePlan(o)
 	if err != nil {
 		return err
@@ -112,31 +127,48 @@ func initProject(o initOptions, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	dependency := libraryPath + "@" + dependencyVersion()
-	finish := manualSteps(o, p, dependency) // shown if a go command fails
+	pinned := dependencyVersion()
+	dependency := libraryPath + "@" + pinned
 
 	if err := os.MkdirAll(p.dir, 0o755); err != nil {
 		return err
 	}
 
 	if p.newModule {
-		if err := goCommand(p.dir, stderr, "mod", "init", "--", p.modulePath); err != nil {
+		// A module in a workspace's tree is left out of builds until the
+		// workspace uses it, so the go commands here ignore the workspace.
+		if work := goWork(p.dir); work != "" {
+			p.workspace = work
+			p.env = append(os.Environ(), "GOWORK=off")
+			fmt.Fprintf(stdout, "%s is inside the workspace %s; add the new module to it with:\n\tgo work use %s\n\n",
+				o.dir, work, shellQuote(runtime.GOOS, o.dir))
+		}
+
+		if err := p.goCommand(p.dir, stderr, "mod", "init", "--", p.modulePath); err != nil {
 			return err
 		}
-		if err := goCommand(p.dir, stderr, "mod", "edit", "-go="+goFloor); err != nil {
+		if err := p.goCommand(p.dir, stderr, "mod", "edit", "-go="+goFloor); err != nil {
 			return err
 		}
 	}
 
 	// go get runs before the files are written, so that if it fails, for
 	// example offline, nothing but go.mod exists and init can simply be rerun.
-	getDeps := !o.skipDeps && !p.hasMinidis
+	getDeps, upgradeFrom := needsGoGet(o.skipDeps, p, pinned)
 	if getDeps {
-		if dependencyVersion() == "latest" {
-			fmt.Fprintln(stderr, "warning: this minidis was built from a checkout, so the templates may not match the latest release of", libraryPath)
+		if pinned == "latest" {
+			fmt.Fprintln(stderr, "warning: this minidis was built from a checkout, so the templates may not match the latest version of", libraryPath)
 		}
-		if err := goCommand(p.modRoot, stderr, "get", dependency); err != nil {
-			return fmt.Errorf("%w\n\nFinish the setup by hand:\n%s", err, finish)
+		if err := p.goCommand(p.modRoot, stderr, "get", dependency); err != nil {
+			written := "Nothing was written"
+			if p.newModule {
+				written = "Only go.mod was written"
+			}
+			return fmt.Errorf("%w\n\n%s. Once the problem is fixed, for example when back online, run init again:\n\t%s",
+				err, written, rerunCommand(runtime.GOOS, o.args))
+		}
+		if upgradeFrom != "" {
+			fmt.Fprintf(stdout, "upgraded %s from %s to %s\n", libraryPath, upgradeFrom, pinned)
 		}
 	}
 
@@ -145,16 +177,46 @@ func initProject(o initOptions, stdout, stderr io.Writer) error {
 	}
 
 	if !o.skipDeps {
-		if err := goCommand(p.modRoot, stderr, "mod", "tidy"); err != nil {
-			return fmt.Errorf("%w\n\nFinish the setup by hand:\n%s", err, finish)
+		if err := p.goCommand(p.modRoot, stderr, "mod", "tidy"); err != nil {
+			return fmt.Errorf("%w\n\nFinish the setup by hand:\n%s", err, tidySteps(o, p))
 		}
-		if err := goCommand(p.dir, stderr, "build", "./..."); err != nil {
-			return buildError(err, getDeps, relativeTo(o.dir, p))
+		if vendored(p.modRoot) {
+			if err := p.goCommand(p.modRoot, stderr, "mod", "vendor"); err != nil {
+				return fmt.Errorf("%w\n\nFinish the setup by hand:\n%s", err, tidySteps(o, p))
+			}
+		}
+		if err := p.goCommand(p.dir, stderr, "build", "./..."); err != nil {
+			return buildError(err, p, getDeps, pinned, relativeTo(o.dir, p))
 		}
 	}
 
 	printNextSteps(stdout, o, p, dependency)
 	return nil
+}
+
+// needsGoGet reports whether init runs go get for the pinned version of
+// minidis, and the version it upgrades from, if any. A module that already
+// requires minidis is upgraded to the pinned version but never downgraded,
+// and left alone when a replace directive points minidis elsewhere.
+func needsGoGet(skipDeps bool, p plan, pinned string) (bool, string) {
+	switch {
+	case skipDeps:
+		return false, ""
+	case !p.hasMinidis:
+		return true, ""
+	case p.minidisReplaced, pinned == "latest":
+		return false, ""
+	}
+	if c, ok := compareVersions(p.minidisVersion, pinned); ok && c < 0 {
+		return true, p.minidisVersion
+	}
+	return false, ""
+}
+
+// vendored reports whether the module at root vendors its dependencies.
+func vendored(root string) bool {
+	_, err := os.Stat(filepath.Join(root, "vendor", "modules.txt"))
+	return err == nil
 }
 
 // makePlan works out where the project goes and which module it belongs to.
@@ -177,7 +239,7 @@ func makePlan(o initOptions) (plan, error) {
 		}
 		p.modulePath = gomod.Module.Path
 		p.packagePath = gomod.Module.Path
-		p.hasMinidis = gomod.requires(libraryPath)
+		p.setMinidis(gomod)
 		return p, nil
 	case !errors.Is(err, fs.ErrNotExist):
 		return plan{}, err
@@ -201,8 +263,11 @@ func makePlan(o initOptions) (plan, error) {
 			p.modRoot = root
 			p.modulePath = parent.Module.Path
 			p.packagePath = path.Join(parent.Module.Path, filepath.ToSlash(rel))
-			p.hasMinidis = parent.requires(libraryPath)
-			if err := checkImportPath(p.packagePath); err != nil {
+			p.setMinidis(parent)
+			if err := checkPackageDir(rel); err != nil {
+				return plan{}, fmt.Errorf("%s cannot hold a package of module %s: %w", dir, parent.Module.Path, err)
+			}
+			if err := checkImportPath(p.packagePath, false); err != nil {
 				return plan{}, fmt.Errorf("%s would be package %q of module %s, which is not a valid import path: %w", dir, p.packagePath, parent.Module.Path, err)
 			}
 			return p, nil
@@ -212,7 +277,7 @@ func makePlan(o initOptions) (plan, error) {
 	p.newModule = true
 	p.modulePath = cmp.Or(o.module, filepath.Base(dir))
 	p.packagePath = p.modulePath
-	if err := checkImportPath(p.modulePath); err != nil {
+	if err := checkImportPath(p.modulePath, true); err != nil {
 		return plan{}, fmt.Errorf("%q is not a valid module path (%w); choose one with -module, such as -module example.com/mybot", p.modulePath, err)
 	}
 	return p, nil
@@ -224,12 +289,28 @@ type goMod struct {
 		Path string
 	}
 	Require []struct {
-		Path string
+		Path    string
+		Version string
+	}
+	Replace []struct {
+		Old struct {
+			Path string
+		}
 	}
 }
 
-func (m goMod) requires(module string) bool {
-	return slices.ContainsFunc(m.Require, func(r struct{ Path string }) bool { return r.Path == module })
+// setMinidis records what the go.mod of the project says about minidis.
+func (p *plan) setMinidis(m goMod) {
+	for _, r := range m.Require {
+		if r.Path == libraryPath {
+			p.hasMinidis, p.minidisVersion = true, r.Version
+		}
+	}
+	for _, r := range m.Replace {
+		if r.Old.Path == libraryPath {
+			p.minidisReplaced = true
+		}
+	}
 }
 
 // readGoMod parses a go.mod file with the go command, which understands every
@@ -274,30 +355,66 @@ func enclosingModule(dir string) (string, error) {
 	}
 }
 
-var pathElement = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
+var (
+	modulePathElement = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
+	importPathElement = regexp.MustCompile(`^[A-Za-z0-9._~+-]+$`)
+	shortFileName     = regexp.MustCompile(`~[0-9]+$`)
+	windowsReserved   = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
+)
 
-// checkImportPath reports whether path is usable as a module or import path,
-// following the rules of the go command closely enough to fail before it does.
-func checkImportPath(path string) error {
+// checkImportPath reports whether path is usable as a module path, or as the
+// import path of a package when module is false, following the rules of the
+// go command so as to fail before it does.
+func checkImportPath(path string, module bool) error {
 	if path == "" {
 		return errors.New("it is empty")
 	}
+	allowed, chars := importPathElement, "-._~+"
+	if module {
+		allowed, chars = modulePathElement, "-._~"
+	}
+
 	elements := strings.Split(path, "/")
 	for _, e := range elements {
+		short, _, _ := strings.Cut(e, ".")
 		switch {
 		case e == "":
 			return errors.New("it has an empty element")
-		case !pathElement.MatchString(e):
-			return fmt.Errorf("%q may only use letters, digits and -._~", e)
+		case !allowed.MatchString(e):
+			return fmt.Errorf("%q may only use letters, digits and %s", e, chars)
 		case strings.HasPrefix(e, "-"), strings.HasPrefix(e, "."):
 			return fmt.Errorf("%q starts with %q", e, e[:1])
 		case strings.HasSuffix(e, "."):
 			return fmt.Errorf("%q ends with a dot", e)
+		case windowsReserved.MatchString(short):
+			return fmt.Errorf("%q is a reserved file name on Windows", e)
+		case shortFileName.MatchString(short):
+			return fmt.Errorf("%q looks like a Windows short file name", e)
 		}
 	}
 	switch elements[0] {
 	case "std", "cmd", "go", "toolchain":
 		return fmt.Errorf("%q is reserved by the go command", elements[0])
+	}
+
+	if last := elements[len(elements)-1]; module && len(elements) > 1 && majorVersion.MatchString(last) {
+		if n, err := strconv.Atoi(last[1:]); err != nil || n < 2 || last[1] == '0' {
+			return fmt.Errorf("the major version suffix %q must be v2 or higher, without leading zeros", last)
+		}
+	}
+	return nil
+}
+
+// checkPackageDir rejects a directory, relative to its module root, whose
+// packages the go command ignores.
+func checkPackageDir(rel string) error {
+	for _, e := range strings.Split(filepath.ToSlash(rel), "/") {
+		switch {
+		case strings.HasPrefix(e, "_"), strings.HasPrefix(e, "."):
+			return fmt.Errorf("the go command ignores directories starting with %q, such as %q", e[:1], e)
+		case e == "testdata":
+			return errors.New("the go command ignores testdata directories")
+		}
 	}
 	return nil
 }
@@ -319,6 +436,17 @@ func binaryName(importPath string) string {
 var keptFiles = map[string]bool{"README.md": true, ".gitignore": true}
 
 func checkConflicts(dir string, files map[string][]byte, force bool) error {
+	if !force {
+		packages, err := otherPackages(dir)
+		if err != nil {
+			return err
+		}
+		if len(packages) > 0 {
+			return fmt.Errorf("%s holds package %s, but the bot needs package main there; choose another directory, or use -force to write it anyway",
+				dir, strings.Join(packages, ", "))
+		}
+	}
+
 	var existing []string
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		info, err := os.Stat(filepath.Join(dir, name))
@@ -337,6 +465,35 @@ func checkConflicts(dir string, files map[string][]byte, force bool) error {
 		return fmt.Errorf("%s already has %s; use -force to overwrite", dir, strings.Join(existing, ", "))
 	}
 	return nil
+}
+
+// otherPackages returns the packages other than main that the Go files in dir
+// belong to, leaving out tests.
+func otherPackages(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, parser.PackageClauseOnly)
+		if err != nil {
+			continue // not Go that the build would accept either
+		}
+		if pkg := f.Name.Name; pkg != "main" && !slices.Contains(names, pkg) {
+			names = append(names, pkg)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
 func writeFiles(dir, shown string, files map[string][]byte, stdout io.Writer) error {
@@ -435,9 +592,10 @@ func render(data projectData) (map[string][]byte, error) {
 }
 
 // goCommand runs the go command in dir, showing its output.
-func goCommand(dir string, stderr io.Writer, args ...string) error {
+func (p plan) goCommand(dir string, stderr io.Writer, args ...string) error {
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
+	cmd.Env = p.env
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
 
@@ -456,22 +614,33 @@ var dependencyVersion = func() string {
 	return "latest"
 }
 
-func buildError(err error, fetched bool, dir string) error {
-	if !fetched || dependencyVersion() != "latest" {
-		return fmt.Errorf("the generated project does not build: %w", err)
-	}
-
-	checkout := "<path to your minidis checkout>"
-	if c := sourceCheckout(); c != "" {
-		checkout = shellQuote(runtime.GOOS, c)
-	}
+func buildError(err error, p plan, fetched bool, pinned, dir string) error {
 	cd := ""
 	if dir != "." {
 		cd = "\tcd " + shellQuote(runtime.GOOS, dir) + "\n"
 	}
-	return fmt.Errorf("the generated project does not build against the latest release of %s: %w\n\n"+
-		"This minidis was built from a checkout, whose API may be newer. Build against it instead:\n"+
-		"%s\tgo mod edit -replace %s=%s\n\tgo mod tidy", libraryPath, err, cd, libraryPath, checkout)
+
+	switch {
+	case fetched && pinned == "latest":
+		checkout := "<path to your minidis checkout>"
+		if c := sourceCheckout(); c != "" {
+			checkout = shellQuote(runtime.GOOS, c)
+		}
+		return fmt.Errorf("the generated project does not build against the latest version of %s: %w\n\n"+
+			"This minidis was built from a checkout, whose API may be newer. Build against it instead:\n"+
+			"%s\tgo mod edit -replace %s=%s\n\tgo mod tidy", libraryPath, err, cd, libraryPath, checkout)
+
+	case p.hasMinidis && !fetched && !p.minidisReplaced:
+		if c, ok := compareVersions(p.minidisVersion, pinned); ok && c > 0 {
+			return fmt.Errorf("the generated project does not build: %w\n\n"+
+				"The module requires %s %s, newer than %s, which these templates were written for.",
+				err, libraryPath, p.minidisVersion, pinned)
+		}
+		return fmt.Errorf("the generated project does not build: %w\n\n"+
+			"The module requires %s %s, which may be too old for these templates. Upgrade it with:\n"+
+			"%s\tgo get %s@%s", err, libraryPath, p.minidisVersion, cd, libraryPath, pinned)
+	}
+	return fmt.Errorf("the generated project does not build: %w", err)
 }
 
 // sourceCheckout returns the minidis checkout this command was built from, if
@@ -488,18 +657,27 @@ func sourceCheckout() string {
 	return filepath.Clean(root)
 }
 
-// manualSteps are the commands that finish the setup after a go command
-// failed, run from the current directory.
-func manualSteps(o initOptions, p plan, dependency string) string {
+// tidySteps are the commands that finish the setup after go mod tidy failed,
+// run from the current directory.
+func tidySteps(o initOptions, p plan) string {
 	var b strings.Builder
 	if rel := relativeTo(o.dir, p); rel != "." {
 		fmt.Fprintf(&b, "\tcd %s\n", shellQuote(runtime.GOOS, rel))
 	}
-	if !p.hasMinidis {
-		fmt.Fprintf(&b, "\tgo get %s\n", dependency)
-	}
 	b.WriteString("\tgo mod tidy\n")
+	if vendored(p.modRoot) {
+		b.WriteString("\tgo mod vendor\n")
+	}
 	return b.String()
+}
+
+// rerunCommand is "minidis init" with args, quoted for the shell of goos.
+func rerunCommand(goos string, args []string) string {
+	quoted := []string{"minidis", "init"}
+	for _, a := range args {
+		quoted = append(quoted, shellQuote(goos, a))
+	}
+	return strings.Join(quoted, " ")
 }
 
 // relativeTo is the directory the go commands run in, as the user named it.
@@ -516,16 +694,20 @@ func relativeTo(shown string, p plan) string {
 }
 
 func printNextSteps(w io.Writer, o initOptions, p plan, dependency string) {
-	fmt.Fprintln(w, "\nYour bot is ready. Next:")
+	if o.skipDeps {
+		fmt.Fprintln(w, "\nThe files are written. To finish:")
+	} else {
+		fmt.Fprintln(w, "\nYour bot is ready. Next:")
+	}
 
-	if p.newModule && goWork(p.dir) != "" {
+	if p.workspace != "" {
 		fmt.Fprintf(w, "\n\tgo work use %s", shellQuote(runtime.GOOS, o.dir))
 	}
 	if o.dir != "." {
 		fmt.Fprintf(w, "\n\tcd %s", shellQuote(runtime.GOOS, o.dir))
 	}
 	if o.skipDeps {
-		if !p.hasMinidis {
+		if get, _ := needsGoGet(false, p, strings.TrimPrefix(dependency, libraryPath+"@")); get {
 			fmt.Fprintf(w, "\n\tgo get %s", dependency)
 		}
 		fmt.Fprint(w, "\n\tgo mod tidy")
@@ -567,8 +749,11 @@ func goWork(dir string) string {
 }
 
 var (
-	shellSafe   = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
-	windowsSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./\\-]+$`) // backslashes are separators there
+	shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
+
+	// PowerShell gives @ , and others meanings that sh does not; backslashes
+	// are path separators there.
+	windowsSafe = regexp.MustCompile(`^[A-Za-z0-9_+=:./\\-]+$`)
 )
 
 // shellQuote quotes s for the shell of goos when it needs it.

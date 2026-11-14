@@ -39,6 +39,7 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	context.AfterFunc(ctx, stop) // a second Ctrl+C ends a slow shutdown at once
 
 	// Register the commands with Discord, replacing any registered before.
 	if err := bot.SyncCommands(ctx, guildIDs()...); err != nil {
