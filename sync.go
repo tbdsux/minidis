@@ -90,13 +90,11 @@ func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(m.messageCommands)) {
-		v := m.messageCommands[name]
-		all = append(all, menuCommand(v.Name, discord.MessageApplicationCommand, v.DefaultMemberPermissions, v.Contexts, v.IntegrationTypes, global))
+		all = append(all, m.messageCommands[name].build(global))
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(m.userCommands)) {
-		v := m.userCommands[name]
-		all = append(all, menuCommand(v.Name, discord.UserApplicationCommand, v.DefaultMemberPermissions, v.Contexts, v.IntegrationTypes, global))
+		all = append(all, m.userCommands[name].build(global))
 	}
 
 	return all
@@ -109,6 +107,7 @@ func (cmd *Command) build(global bool) *discord.ApplicationCommand {
 		NameLocalizations:        localizations(cmd.NameLocalizations),
 		DescriptionLocalizations: localizations(cmd.DescriptionLocalizations),
 		DefaultMemberPermissions: cmd.DefaultMemberPermissions,
+		NSFW:                     nsfw(cmd.NSFW),
 		Options:                  slices.Clone(cmd.Options), // appended to below
 	}
 
@@ -118,9 +117,11 @@ func (cmd *Command) build(global bool) *discord.ApplicationCommand {
 
 	for _, g := range cmd.Groups {
 		group := &discord.ApplicationCommandOption{
-			Name:        g.Name,
-			Description: g.Description,
-			Type:        discord.ApplicationCommandOptionSubCommandGroup,
+			Name:                     g.Name,
+			Description:              g.Description,
+			NameLocalizations:        g.NameLocalizations,
+			DescriptionLocalizations: g.DescriptionLocalizations,
+			Type:                     discord.ApplicationCommandOptionSubCommandGroup,
 		}
 		for _, sub := range g.Subcommands {
 			group.Options = append(group.Options, sub.option())
@@ -136,23 +137,49 @@ func (cmd *Command) build(global bool) *discord.ApplicationCommand {
 
 func (s *Subcommand) option() *discord.ApplicationCommandOption {
 	return &discord.ApplicationCommandOption{
-		Name:        s.Name,
-		Description: s.Description,
-		Type:        discord.ApplicationCommandOptionSubCommand,
-		Options:     s.Options,
+		Name:                     s.Name,
+		Description:              s.Description,
+		NameLocalizations:        s.NameLocalizations,
+		DescriptionLocalizations: s.DescriptionLocalizations,
+		Type:                     discord.ApplicationCommandOptionSubCommand,
+		Options:                  s.Options,
 	}
 }
 
-func menuCommand(name string, typ discord.ApplicationCommandType, perms *int64, contexts []discord.InteractionContextType, types []discord.ApplicationIntegrationType, global bool) *discord.ApplicationCommand {
+func (cmd *MessageCommand) build(global bool) *discord.ApplicationCommand {
 	res := &discord.ApplicationCommand{
-		Name:                     name,
-		Type:                     typ,
-		DefaultMemberPermissions: perms,
+		Name:                     cmd.Name,
+		NameLocalizations:        localizations(cmd.NameLocalizations),
+		Type:                     discord.MessageApplicationCommand,
+		DefaultMemberPermissions: cmd.DefaultMemberPermissions,
+		NSFW:                     nsfw(cmd.NSFW),
 	}
 	if global {
-		setGlobalScope(res, contexts, types)
+		setGlobalScope(res, cmd.Contexts, cmd.IntegrationTypes)
 	}
 	return res
+}
+
+func (cmd *UserCommand) build(global bool) *discord.ApplicationCommand {
+	res := &discord.ApplicationCommand{
+		Name:                     cmd.Name,
+		NameLocalizations:        localizations(cmd.NameLocalizations),
+		Type:                     discord.UserApplicationCommand,
+		DefaultMemberPermissions: cmd.DefaultMemberPermissions,
+		NSFW:                     nsfw(cmd.NSFW),
+	}
+	if global {
+		setGlobalScope(res, cmd.Contexts, cmd.IntegrationTypes)
+	}
+	return res
+}
+
+// nsfw leaves the field out unless set, as Discord defaults it to false.
+func nsfw(v bool) *bool {
+	if !v {
+		return nil
+	}
+	return discord.Bool(true)
 }
 
 // setGlobalScope sets the fields Discord only accepts on global commands. Nil

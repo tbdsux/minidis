@@ -19,6 +19,9 @@ type Command struct {
 	// everyone use the command; discord.Int64(0) makes it admin-only.
 	DefaultMemberPermissions *int64
 
+	// NSFW commands are only shown in age-restricted channels.
+	NSFW bool
+
 	// Contexts says where a global command can be used. Nil means guilds only;
 	// add discord.InteractionContextBotDM to allow DMs with the bot.
 	// IntegrationTypes says how the app must be installed; add
@@ -41,8 +44,11 @@ type Command struct {
 
 // Subcommand is a subcommand of a Command or of a SubcommandGroup.
 type Subcommand struct {
-	Name         string
-	Description  string
+	Name                     string
+	Description              string
+	NameLocalizations        map[discord.Locale]string
+	DescriptionLocalizations map[discord.Locale]string
+
 	Options      []*discord.ApplicationCommandOption
 	Execute      func(c *Context) error
 	Autocomplete func(c *AutocompleteContext) error // see Command.Autocomplete
@@ -51,29 +57,36 @@ type Subcommand struct {
 // SubcommandGroup is a group of subcommands, as in "/role add" where role is
 // the group.
 type SubcommandGroup struct {
-	Name        string
-	Description string
+	Name                     string
+	Description              string
+	NameLocalizations        map[discord.Locale]string
+	DescriptionLocalizations map[discord.Locale]string
+
 	Subcommands []*Subcommand
 }
 
 // MessageCommand is a command in the context menu of a message.
 type MessageCommand struct {
-	Name    string
-	Execute func(c *MessageCommandContext) error
+	Name              string
+	NameLocalizations map[discord.Locale]string
+	Execute           func(c *MessageCommandContext) error
 
 	// See Command for these.
 	DefaultMemberPermissions *int64
+	NSFW                     bool
 	Contexts                 []discord.InteractionContextType
 	IntegrationTypes         []discord.ApplicationIntegrationType
 }
 
 // UserCommand is a command in the context menu of a user.
 type UserCommand struct {
-	Name    string
-	Execute func(c *UserCommandContext) error
+	Name              string
+	NameLocalizations map[discord.Locale]string
+	Execute           func(c *UserCommandContext) error
 
 	// See Command for these.
 	DefaultMemberPermissions *int64
+	NSFW                     bool
 	Contexts                 []discord.InteractionContextType
 	IntegrationTypes         []discord.ApplicationIntegrationType
 }
