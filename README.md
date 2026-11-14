@@ -199,6 +199,10 @@ c.Checked("agree")    // a discord.Checkbox
 c.Attachments("files") // the files of a discord.FileUpload
 ```
 
+### Activities
+
+`bot.SetEntryPoint` sets the command that launches the app's Activity. With `discord.EntryPointHandlerApp`, its `Execute` runs and responds with `c.LaunchActivity()`. Without one, syncing global commands keeps the entry point Discord created, which it refuses to remove in a bulk update.
+
 ### Channel messages
 
 ```go

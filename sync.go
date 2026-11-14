@@ -28,7 +28,8 @@ func (m *Minidis) SyncCommands(guildIDs ...string) error {
 }
 
 // ClearCommands removes the application commands from the given guilds.
-// If no guilds are given, the global commands are removed instead.
+// If no guilds are given, the global commands are removed instead, except
+// the entry point command (see SetEntryPoint).
 func (m *Minidis) ClearCommands(guildIDs ...string) error {
 	if len(guildIDs) == 0 {
 		return m.overwriteCommands("", nil)
@@ -48,8 +49,38 @@ func (m *Minidis) overwriteCommands(guildID string, commands []*discord.Applicat
 		return err
 	}
 
+	// Discord refuses to remove the entry point command in a bulk update, and
+	// creates one itself for apps with an Activity, so keep it unless replaced.
+	if guildID == "" && !slices.ContainsFunc(commands, isEntryPoint) {
+		existing, err := m.globalEntryPoint(appID)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			commands = append(slices.Clone(commands), existing)
+		}
+	}
+
 	_, err = m.Session.ApplicationCommandBulkOverwrite(appID, guildID, commands)
 	return err
+}
+
+func isEntryPoint(cmd *discord.ApplicationCommand) bool {
+	return cmd.Type == discord.PrimaryEntryPointApplicationCommand
+}
+
+// globalEntryPoint returns the entry point command Discord has, or nil.
+func (m *Minidis) globalEntryPoint(appID string) (*discord.ApplicationCommand, error) {
+	var commands []*discord.ApplicationCommand
+	path := "/applications/" + appID + "/commands?with_localizations=true"
+	if err := m.Session.Request(context.Background(), http.MethodGet, path, nil, &commands); err != nil {
+		return nil, fmt.Errorf("minidis: looking for the entry point command: %w", err)
+	}
+
+	if i := slices.IndexFunc(commands, isEntryPoint); i >= 0 {
+		return commands[i], nil
+	}
+	return nil, nil
 }
 
 // applicationID returns the bot's application ID, asking Discord for it if the
@@ -95,6 +126,11 @@ func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 
 	for _, name := range slices.Sorted(maps.Keys(m.userCommands)) {
 		all = append(all, m.userCommands[name].build(global))
+	}
+
+	// Entry points can only be global.
+	if global && m.entryPoint != nil {
+		all = append(all, m.entryPoint.build())
 	}
 
 	return all
@@ -171,6 +207,21 @@ func (cmd *UserCommand) build(global bool) *discord.ApplicationCommand {
 	if global {
 		setGlobalScope(res, cmd.Contexts, cmd.IntegrationTypes)
 	}
+	return res
+}
+
+func (cmd *EntryPointCommand) build() *discord.ApplicationCommand {
+	res := &discord.ApplicationCommand{
+		Name:                     cmd.Name,
+		Description:              cmd.Description,
+		NameLocalizations:        localizations(cmd.NameLocalizations),
+		DescriptionLocalizations: localizations(cmd.DescriptionLocalizations),
+		Type:                     discord.PrimaryEntryPointApplicationCommand,
+		Handler:                  cmd.Handler,
+		DefaultMemberPermissions: cmd.DefaultMemberPermissions,
+		NSFW:                     nsfw(cmd.NSFW),
+	}
+	setGlobalScope(res, cmd.Contexts, cmd.IntegrationTypes)
 	return res
 }
 

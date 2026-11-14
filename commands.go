@@ -123,3 +123,35 @@ func (m *Minidis) AddUserCommand(cmds ...*UserCommand) {
 		m.userCommands[cmd.Name] = cmd
 	}
 }
+
+// EntryPointCommand is the command that launches the app's Activity, shown in
+// the App Launcher. Discord creates a default one when Activities are enabled.
+type EntryPointCommand struct {
+	Name                     string
+	Description              string
+	NameLocalizations        map[discord.Locale]string
+	DescriptionLocalizations map[discord.Locale]string
+
+	// Handler says who launches the Activity. With
+	// discord.EntryPointHandlerDiscordLaunchActivity, Discord launches it and
+	// Execute is not used. With discord.EntryPointHandlerApp, Execute runs and
+	// responds, usually with c.LaunchActivity.
+	Handler discord.EntryPointHandlerType
+	Execute func(c *Context) error
+
+	// See Command for these.
+	DefaultMemberPermissions *int64
+	NSFW                     bool
+	Contexts                 []discord.InteractionContextType
+	IntegrationTypes         []discord.ApplicationIntegrationType
+}
+
+// SetEntryPoint sets the app's entry point command, which is global only.
+// Without one, syncing global commands keeps the entry point Discord already
+// has, because Discord refuses to remove it in a bulk update.
+func (m *Minidis) SetEntryPoint(cmd *EntryPointCommand) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.entryPoint = cmd
+}

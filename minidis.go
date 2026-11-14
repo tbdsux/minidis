@@ -35,6 +35,7 @@ type Minidis struct {
 	middleware        []Middleware
 	onError           func(*Context, error)
 	onChannelError    func(*ChannelMessageContext, error)
+	entryPoint        *EntryPointCommand
 
 	appIDMu sync.Mutex
 	appID   string // looked up by SyncCommands when the session is not open

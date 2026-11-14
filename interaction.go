@@ -50,6 +50,8 @@ func (m *Minidis) route(c *Context) HandlerFunc {
 
 		// A slash and a context menu command can share a name.
 		switch data.CommandType {
+		case discord.PrimaryEntryPointApplicationCommand:
+			return m.routeEntryPoint(data)
 		case discord.UserApplicationCommand:
 			return m.routeUser(data)
 		case discord.MessageApplicationCommand:

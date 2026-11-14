@@ -34,3 +34,10 @@ func (m *Minidis) routeUser(data discord.ApplicationCommandInteractionData) Hand
 		})
 	}
 }
+
+func (m *Minidis) routeEntryPoint(data discord.ApplicationCommandInteractionData) HandlerFunc {
+	if m.entryPoint == nil || m.entryPoint.Execute == nil {
+		return failWith(fmt.Errorf("%w: entry point command %q", ErrNoHandler, data.Name))
+	}
+	return m.entryPoint.Execute
+}

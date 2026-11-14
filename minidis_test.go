@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,13 @@ func newTestBot(t *testing.T) (*Minidis, func() []recordedRequest) {
 	var requests []recordedRequest
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The entry point lookup of global syncs is answered but not recorded;
+		// TestSyncKeepsTheEntryPoint covers it.
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/commands") {
+			io.WriteString(w, `[]`)
+			return
+		}
+
 		raw, _ := io.ReadAll(r.Body)
 
 		rec := recordedRequest{Method: r.Method, Path: r.URL.Path, Raw: raw}
