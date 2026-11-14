@@ -30,7 +30,10 @@ const (
 
 // Session is a connection to Discord: a REST client plus a Gateway connection.
 //
-// Configure its exported fields before calling Open.
+// Configure its exported fields before calling Open. Event handlers each run
+// in their own goroutine, so a slow handler does not block the gateway, and
+// they may run concurrently. A handler that panics is logged and does not stop
+// the bot.
 type Session struct {
 	Token      string // the full Authorization value, including the "Bot " prefix
 	Intents    discord.Intent
@@ -126,10 +129,6 @@ func addHandler[H any](s *Session, list *[]H, h H) {
 	defer s.handlersMu.Unlock()
 	*list = append(*list, h)
 }
-
-// Handlers each run in their own goroutine, so a slow handler does not block
-// the gateway, and they may run concurrently. A handler that panics is logged
-// and does not stop the bot.
 
 // OnReady registers a handler for the READY event.
 func (s *Session) OnReady(h func(*Session, *discord.Ready)) {

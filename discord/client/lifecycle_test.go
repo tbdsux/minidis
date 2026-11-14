@@ -129,11 +129,13 @@ func TestShutdownCancelsAnOpenInProgress(t *testing.T) {
 
 func TestFatalCloseAfterReadyEndsTheSession(t *testing.T) {
 	var readies atomic.Int32
+	checked := make(chan struct{}) // the test has looked at Err while running
 	s, _ := newFakeGateway(t,
 		func(c *fakeConn) {
 			c.hello(60000)
 			c.read(opIdentify)
 			c.ready(1)
+			<-checked
 			c.closeWith(4014)
 			c.waitClosed()
 		},
@@ -152,6 +154,7 @@ func TestFatalCloseAfterReadyEndsTheSession(t *testing.T) {
 	if err := s.Err(); err != nil {
 		t.Errorf("Err while running = %v", err)
 	}
+	close(checked)
 
 	waitFor(t, s.Done(), "the gateway to stop")
 
@@ -183,5 +186,31 @@ func TestFatalCloseAfterReadyEndsTheSession(t *testing.T) {
 	}
 	if n := readies.Load(); n != 2 {
 		t.Errorf("READY handlers ran %d times, want 2", n)
+	}
+}
+
+func TestShutdownWithNoTimeLeftStillStops(t *testing.T) {
+	// A select between a free lock and a done context picks at random, so try
+	// it often enough to catch the bad pick.
+	for range 20 {
+		s, _ := newFakeGateway(t, func(c *fakeConn) {
+			c.hello(60000)
+			c.read(opIdentify)
+			c.ready(1)
+			c.waitClosed()
+		})
+		if err := s.Open(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = s.Shutdown(ctx)
+
+		select {
+		case <-s.Done():
+		default:
+			t.Fatal("the gateway is still connected after Shutdown")
+		}
 	}
 }

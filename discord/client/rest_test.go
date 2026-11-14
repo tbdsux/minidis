@@ -406,3 +406,19 @@ func TestInteractionRespondWithResponse(t *testing.T) {
 		t.Errorf("response = %+v %+v", res.Interaction, res.Resource)
 	}
 }
+
+func TestRESTErrorMessage(t *testing.T) {
+	tests := []struct {
+		err  RESTError
+		want string
+	}{
+		{RESTError{Method: "GET", Path: "/users/@me", StatusCode: 401, Message: "401: Unauthorized"}, "discord: GET /users/@me: 401 Unauthorized"},
+		{RESTError{Method: "POST", Path: "/x", StatusCode: 400, Message: "Invalid Form Body", Code: 50035}, "discord: POST /x: 400 Invalid Form Body (code 50035)"},
+		{RESTError{Method: "GET", Path: "/x", StatusCode: 502}, "discord: GET /x: 502 Bad Gateway"},
+	}
+	for _, tt := range tests {
+		if got := tt.err.Error(); got != tt.want {
+			t.Errorf("got %q, want %q", got, tt.want)
+		}
+	}
+}

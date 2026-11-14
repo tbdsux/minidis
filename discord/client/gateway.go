@@ -99,6 +99,14 @@ func (r *gatewayRun) stopped() bool {
 
 // lock takes the lifecycle lock, or returns ctx's cause if ctx ends first.
 func (s *Session) lock(ctx context.Context) error {
+	// A free lock is taken even with ctx done: select would otherwise pick
+	// at random between the two.
+	select {
+	case s.lifecycle <- struct{}{}:
+		return nil
+	default:
+	}
+
 	select {
 	case s.lifecycle <- struct{}{}:
 		return nil
@@ -262,24 +270,23 @@ func (s *Session) Shutdown(ctx context.Context) error {
 	}
 	s.openingMu.Unlock()
 
-	waiting, err := s.stop(ctx)
+	waiting := s.stop()
 
 	s.openingMu.Lock()
 	s.pendingShutdowns--
 	s.openingMu.Unlock()
 
-	if err != nil {
-		return err
-	}
 	return s.wait(ctx, waiting)
 }
 
 // stop ends the current run under the lifecycle lock and returns the handlers
 // to wait for.
-func (s *Session) stop(ctx context.Context) ([]*sync.WaitGroup, error) {
-	if err := s.lock(ctx); err != nil {
-		return nil, err
-	}
+//
+// It takes the lock whatever the context, so that a Shutdown with no time left
+// still stops the gateway. That cannot block for long: Shutdown has canceled
+// any Open in progress, and nothing else holds the lock across a wait.
+func (s *Session) stop() []*sync.WaitGroup {
+	s.lifecycle <- struct{}{}
 	defer s.unlock()
 
 	if r := s.run.Load(); r != nil && !r.shutDown.Load() {
@@ -292,7 +299,7 @@ func (s *Session) stop(ctx context.Context) ([]*sync.WaitGroup, error) {
 	// No new handlers can start in these groups now that their gateway
 	// goroutines have stopped. Groups stay listed until a wait sees them
 	// finish, so that every Shutdown waits for the handlers still running.
-	return slices.Clone(s.drain), nil
+	return slices.Clone(s.drain)
 }
 
 // wait waits for the handlers in groups, or for ctx to end.

@@ -36,12 +36,16 @@ type RESTError struct {
 }
 
 func (e *RESTError) Error() string {
-	msg := e.Message
+	// Some messages already start with the status, as in "401: Unauthorized".
+	msg := strings.TrimPrefix(e.Message, strconv.Itoa(e.StatusCode)+": ")
 	if msg == "" {
 		msg = http.StatusText(e.StatusCode)
 	}
 
-	out := fmt.Sprintf("discord: %s %s: %d %s (code %d)", e.Method, e.Path, e.StatusCode, msg, e.Code)
+	out := fmt.Sprintf("discord: %s %s: %d %s", e.Method, e.Path, e.StatusCode, msg)
+	if e.Code != 0 {
+		out += fmt.Sprintf(" (code %d)", e.Code)
+	}
 	if len(e.Errors) > 0 {
 		out += ": " + string(e.Errors)
 	}
@@ -203,9 +207,10 @@ func (s *Session) attempt(ctx context.Context, limited bool, route, major, metho
 }
 
 // idempotent reports whether a request with method can be sent again safely.
+// DELETE is left out: repeating one that went through gets a misleading 404.
 func idempotent(method string) bool {
 	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, http.MethodOptions:
+	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodOptions:
 		return true
 	}
 	return false
