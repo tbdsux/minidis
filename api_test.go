@@ -269,12 +269,16 @@ func TestPanicErrorUnwraps(t *testing.T) {
 	}
 }
 
-func TestSyncIgnoresEmptyGuildIDsAndValidates(t *testing.T) {
+func TestSyncEmptyGuildIDsAndValidation(t *testing.T) {
 	bot, requests := newTestBot(t)
 	bot.AddCommand(&Command{Name: "c", Description: "d"})
 
-	// strings.Split of an unset variable gives [""], which must mean global.
-	if err := bot.SyncCommands(t.Context(), strings.Split("", ",")...); err != nil {
+	// strings.Split of an unset variable gives [""], which must not replace
+	// the global commands by mistake.
+	if err := bot.SyncCommands(t.Context(), strings.Split("", ",")...); err == nil {
+		t.Error("only empty IDs were accepted")
+	}
+	if err := bot.SyncCommands(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := bot.SyncCommands(t.Context(), " g1 ", ""); err != nil {
@@ -332,6 +336,9 @@ func TestModalSubmitCanUpdateTheMessage(t *testing.T) {
 	var errs []error
 	bot.HandleModal("form", func(c *ModalSubmitContext) error {
 		errs = append(errs, c.Update("submitted"))
+		if c.Interaction.Message == nil {
+			errs = append(errs, c.DeferUpdate())
+		}
 		return nil
 	})
 
@@ -344,7 +351,7 @@ func TestModalSubmitCanUpdateTheMessage(t *testing.T) {
 	if len(reqs) != 1 || reqs[0].Body["type"] != float64(discord.InteractionResponseUpdateMessage) || reqs[0].Body["data"].(map[string]any)["content"] != "submitted" {
 		t.Fatalf("requests = %+v", reqs)
 	}
-	if errs[0] != nil || !errors.Is(errs[1], errNoModalMessage) {
+	if len(errs) != 3 || errs[0] != nil || !errors.Is(errs[1], errNoModalMessage) || !errors.Is(errs[2], errNoModalMessage) {
 		t.Errorf("errors = %v", errs)
 	}
 }
@@ -431,6 +438,9 @@ func TestSyncValidation(t *testing.T) {
 			Choices: []*discord.ApplicationCommandOptionChoice{{Name: "x", Value: "x"}},
 		}}}, "both Choices and Autocomplete"},
 		{"root Execute with subcommands", &Command{Name: "a", Description: "d", Execute: exec, Subcommands: []*Subcommand{{Name: "s", Description: "d"}}}, "never run"},
+		{"unanswered in a group", &Command{Name: "a", Description: "d", Groups: []*SubcommandGroup{{Name: "g", Description: "d", Subcommands: []*Subcommand{
+			{Name: "s", Description: "d", Options: []*discord.ApplicationCommandOption{search}},
+		}}}}, `"a g s"`},
 	}
 
 	for _, tt := range tests {

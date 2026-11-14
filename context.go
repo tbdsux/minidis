@@ -16,8 +16,17 @@ import (
 
 // ErrNoResponse is the cause of a handler context canceled because the
 // interaction was not responded to within 3 seconds, after which Discord no
-// longer accepts a response. Check for it with context.Cause.
-var ErrNoResponse = errors.New("minidis: the interaction was not responded to within 3 seconds")
+// longer accepts a response. Check for it with context.Cause. It also matches
+// context.Canceled, so code that ignores cancellations keeps doing so.
+var ErrNoResponse error = noResponse{}
+
+type noResponse struct{}
+
+func (noResponse) Error() string {
+	return "minidis: the interaction was not responded to within 3 seconds"
+}
+
+func (noResponse) Is(target error) bool { return target == context.Canceled }
 
 // Context is passed to every interaction handler: to slash commands directly,
 // and to the others inside a type that embeds it, such as ComponentContext. It
@@ -66,16 +75,19 @@ type Context struct {
 
 // replyState tracks the initial response of an interaction.
 type replyState struct {
-	state atomic.Int32 // pending, responded or tooLate
-	ack   func()       // called after the initial response; see runInteraction
+	state     atomic.Int32 // pending, responded or tooLate
+	delivered atomic.Bool  // a response certainly reached Discord
+	ack       func()       // called once Discord has a response or none can come
+	until     time.Time    // when the response window closes
+	cancel    context.CancelCauseFunc
 
 	// api is the context of the requests the response methods make. It
 	// outlives the handler, so that a response can be edited afterwards.
 	api context.Context
 
-	// latest is the copy last made with WithContext, which the error handler
-	// receives so that it sees the values middleware added.
-	latest atomic.Pointer[Context]
+	// handled is the Context middleware passed to the handler, which the
+	// error handler receives so that it sees the values middleware added.
+	handled atomic.Pointer[Context]
 }
 
 const (
@@ -146,22 +158,25 @@ func (c *Context) Value(key any) any { return orBackground(c.ctx).Value(key) }
 //
 //	return next(c.WithContext(context.WithValue(c, key, value)))
 //
-// The copy shares the interaction's response state with c, and is what the
-// error handler receives if the handler fails.
+// The copy shares the interaction's response state with c. The copy that
+// middleware passes to the handler is also what the error handler receives.
 func (c *Context) WithContext(ctx context.Context) *Context {
 	if ctx == nil {
 		panic("minidis: nil context")
 	}
 	copied := *c
 	copied.ctx = ctx
-	c.reply.latest.Store(&copied)
 	return &copied
 }
 
-// forErrors is the Context the error handler receives.
+// forErrors is the Context the error handler receives: the one the handler
+// got, or c if middleware failed before passing one on.
 func (c *Context) forErrors() *Context {
-	if latest := c.reply.latest.Load(); latest != nil {
-		return latest
+	if c.reply == nil {
+		return c
+	}
+	if handled := c.reply.handled.Load(); handled != nil {
+		return handled
 	}
 	return c
 }
@@ -178,8 +193,12 @@ func (c *Context) Responded() bool {
 // without a response.
 var errTooLate = fmt.Errorf("minidis: cannot respond: %w", ErrNoResponse)
 
-// api returns the context for a request about the interaction.
+// api returns the context for a request about the interaction. A Context
+// made by hand, such as in a test of a handler, uses its own context.
 func (c *Context) api() (context.Context, error) {
+	if c.reply == nil {
+		return orBackground(c.ctx), nil
+	}
 	if c.reply.state.Load() == tooLate {
 		return nil, errTooLate
 	}
@@ -327,10 +346,15 @@ func (e MessageEdit) responseData() *discord.InteractionResponseData {
 
 // attachments lists the files the message keeps: Discord drops any not
 // listed, including new ones, which are referred to by their index in Files.
+// An entry the caller wrote for a new file, such as one with a description, is
+// kept as it is.
 func (e MessageEdit) attachments() []*discord.MessageAttachment {
 	kept := slices.Clone(e.Attachments)
 	for i, f := range e.Files {
-		kept = append(kept, &discord.MessageAttachment{ID: strconv.Itoa(i), Filename: f.Name})
+		id := strconv.Itoa(i)
+		if !slices.ContainsFunc(kept, func(a *discord.MessageAttachment) bool { return a.ID == id }) {
+			kept = append(kept, &discord.MessageAttachment{ID: id, Filename: f.Name})
+		}
 	}
 	return kept
 }
@@ -367,6 +391,9 @@ func (c *Context) SendResponse(res *discord.InteractionResponse) (*discord.Inter
 // sendResponse tracks an initial response that send makes.
 func (c *Context) sendResponse(send func(context.Context) error) error {
 	r := c.reply
+	if r == nil {
+		return send(orBackground(c.ctx)) // a Context made by hand
+	}
 
 	// Claimed before sending, so that the 3-second cutoff cannot cancel a
 	// response being sent. A second response is left for Discord to refuse.
@@ -376,26 +403,36 @@ func (c *Context) sendResponse(send func(context.Context) error) error {
 	}
 
 	err := send(r.api)
-	if err != nil && claimed && notDelivered(err) {
-		r.state.Store(pending)
+	switch {
+	case err == nil:
+		r.delivered.Store(true)
+		r.state.CompareAndSwap(pending, responded) // if another response was refused meanwhile
+	case claimed && notDelivered(err) && !r.delivered.Load():
+		// Free to try again, unless the window closed meanwhile.
+		if time.Now().Before(r.until) {
+			r.state.Store(pending)
+			return err
+		}
+		if r.state.CompareAndSwap(responded, tooLate) {
+			r.cancel(ErrNoResponse)
+		}
 	}
 
-	if r.ack != nil {
-		r.ack()
-	}
+	r.ack()
 	return err
 }
 
 // notDelivered reports whether a response certainly did not reach Discord:
-// Discord refused it, other than for an earlier response, or it was never sent.
+// Discord refused it, other than for an earlier response. A request canceled
+// or timed out may have been delivered, so it does not count.
 func notDelivered(err error) bool {
 	var rest *client.RESTError
-	if errors.As(err, &rest) {
-		const alreadyAcknowledged = 40060
-		return rest.StatusCode >= http.StatusBadRequest && rest.StatusCode < http.StatusInternalServerError &&
-			rest.Code != alreadyAcknowledged
+	if !errors.As(err, &rest) {
+		return false
 	}
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	const alreadyAcknowledged = 40060
+	return rest.StatusCode >= http.StatusBadRequest && rest.StatusCode < http.StatusInternalServerError &&
+		rest.Code != alreadyAcknowledged
 }
 
 // Reply responds to the interaction with a message.

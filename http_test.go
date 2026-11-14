@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -130,24 +131,50 @@ func TestHTTPHandlerRunsHandlers(t *testing.T) {
 	}
 }
 
-func TestHTTPHandlerAnswersWhenNothingResponds(t *testing.T) {
-	bot, _ := newTestBot(t)
+// memoryHTTPBot is an HTTP-interactions bot whose API calls are answered in
+// memory, so that its handlers can run inside a synctest bubble.
+func memoryHTTPBot(t *testing.T) (*Minidis, http.Handler, ed25519.PrivateKey) {
+	t.Helper()
+
+	bot := New("token")
+	bot.Session.HTTPClient = &http.Client{Transport: inMemoryAPI{}}
 	h, key := newHTTPHandler(t, bot)
+	return bot, h, key
+}
 
-	done := make(chan int)
-	go func() {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, signedRequest(t, key, `{"type":3,`+guildFields+`,"data":{"custom_id":"nobody","component_type":2}}`))
-		done <- w.Code
-	}()
+func TestHTTPAnswerWaitsForTheResponse(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    time.Duration
+	}{
+		{"nothing responds: answered at the cutoff", `{"type":3,` + guildFields + `,"data":{"custom_id":"nobody","component_type":2}}`, responseWindow},
+		{"a goroutine responds after the handler returned", slashPayload("later", ""), time.Second},
+	}
 
-	select {
-	case code := <-done:
-		if code != http.StatusAccepted {
-			t.Errorf("status = %d", code)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("waited for the response window although the handler had returned")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A bot per bubble: synctest keeps its WaitGroups to one bubble.
+			bot, h, key := memoryHTTPBot(t)
+			bot.HandleComponentFallback(func(*ComponentContext) error { return nil })
+			bot.AddCommand(&Command{Name: "later", Execute: func(c *Context) error {
+				go func() {
+					time.Sleep(time.Second)
+					_ = c.Reply("from a goroutine")
+				}()
+				return nil
+			}})
+
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, signedRequest(t, key, tt.payload))
+
+				if took := time.Since(start); w.Code != http.StatusAccepted || took != tt.want {
+					t.Errorf("status %d after %v, want 202 after %v", w.Code, took, tt.want)
+				}
+			})
+		})
 	}
 }
 
@@ -274,8 +301,7 @@ func TestHTTPHandlerRejectsReplays(t *testing.T) {
 }
 
 func TestHTTPErrorHandlerPanicIsContained(t *testing.T) {
-	bot, _ := newTestBot(t)
-	h, key := newHTTPHandler(t, bot)
+	bot, h, key := memoryHTTPBot(t)
 
 	calls := 0
 	bot.HandleError(func(*Context, error) {
@@ -286,12 +312,14 @@ func TestHTTPErrorHandlerPanicIsContained(t *testing.T) {
 
 	// Without containment the panic would end the test binary, as the handler
 	// runs in a goroutine of its own.
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, signedRequest(t, key, slashPayload("fail", "")))
+	synctest.Test(t, func(t *testing.T) {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, signedRequest(t, key, slashPayload("fail", "")))
 
-	if w.Code != http.StatusAccepted || calls != 1 {
-		t.Errorf("status = %d, error handler calls = %d", w.Code, calls)
-	}
+		if w.Code != http.StatusAccepted || calls != 1 {
+			t.Errorf("status = %d, error handler calls = %d", w.Code, calls)
+		}
+	})
 }
 
 func TestHTTPHandlerFillsInTheBotUser(t *testing.T) {

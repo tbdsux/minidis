@@ -17,7 +17,7 @@ import (
 var languages = []string{"Go", "JavaScript", "Python", "Rust", "TypeScript", "Zig"}
 
 func main() {
-	guilds := strings.Split(os.Getenv("GUILD"), ",")
+	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds)

@@ -44,7 +44,10 @@ type Minidis struct {
 
 	httpBot atomic.Pointer[discord.User] // looked up by HTTPHandler
 
-	openMu sync.Mutex // serializes Open
+	// openMu serializes Open, and Shutdown's closing of the session against
+	// it; opening cancels an Open in progress, guarded by runMu.
+	openMu  sync.Mutex
+	opening context.CancelFunc
 
 	runMu sync.RWMutex
 	run   *runState // replaced by Open after Shutdown
@@ -61,8 +64,9 @@ type runState struct {
 	shutdown  bool
 
 	// http tracks handlers of interactions received by HTTPHandler, which the
-	// Session does not know about.
-	http sync.WaitGroup
+	// Session does not know about; httpRunning counts them for reporting.
+	http        sync.WaitGroup
+	httpRunning atomic.Int64
 }
 
 func newRunState(accepting bool) *runState {
@@ -97,6 +101,9 @@ func (m *Minidis) Open(ctx context.Context) error {
 
 	// After a Shutdown, a new run takes over; it accepts HTTP interactions only
 	// once the gateway is open, so a failed Open leaves the bot closed.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	m.runMu.Lock()
 	run := m.run
 	reopening := run.shutdown
@@ -104,7 +111,14 @@ func (m *Minidis) Open(ctx context.Context) error {
 		run = newRunState(false)
 		m.run = run
 	}
+	m.opening = cancel
 	m.runMu.Unlock()
+
+	defer func() {
+		m.runMu.Lock()
+		m.opening = nil
+		m.runMu.Unlock()
+	}()
 
 	if err := m.Session.Open(ctx); err != nil {
 		if reopening {
@@ -155,13 +169,20 @@ func (m *Minidis) Shutdown(ctx context.Context) error {
 	run := m.run
 	run.accepting = false
 	run.shutdown = true
+	if m.opening != nil {
+		m.opening()
+	}
 	m.runMu.Unlock()
 
 	// Handler contexts end with the shutdown, whether the handlers finished or
 	// ctx ran out.
 	defer run.cancel()
 
+	// Waiting out the canceled Open means no Open can connect a new run
+	// between this Shutdown deciding what to stop and stopping it.
+	m.openMu.Lock()
 	err := m.Session.Shutdown(ctx)
+	m.openMu.Unlock()
 
 	drained := make(chan struct{})
 	go func() {
@@ -173,7 +194,10 @@ func (m *Minidis) Shutdown(ctx context.Context) error {
 	case <-drained:
 		return err
 	case <-ctx.Done():
-		return errors.Join(err, fmt.Errorf("minidis: HTTP interaction handlers still running: %w", ctx.Err()))
+		if n := run.httpRunning.Load(); n > 0 {
+			err = errors.Join(err, fmt.Errorf("minidis: %d HTTP interaction handlers still running: %w", n, ctx.Err()))
+		}
+		return err
 	}
 }
 
@@ -203,7 +227,8 @@ func (m *Minidis) current() *runState {
 }
 
 // SetIntents sets the gateway events the bot receives. Slash commands and other
-// interactions need none.
+// interactions need none. Call it before Open: unlike the other methods, it is
+// not safe while the bot is connected.
 func (m *Minidis) SetIntents(intents discord.Intent) {
 	m.Session.Intents = intents
 }

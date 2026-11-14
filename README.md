@@ -40,7 +40,7 @@ import (
 )
 
 func main() {
-	guilds := strings.Split(os.Getenv("GUILD"), ",")
+	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	// Set intents (not required when doing only slash commands)
@@ -63,7 +63,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Register the commands. With no guilds (GUILD unset) they are registered globally.
+	// Register the commands. With no guilds (GUILD unset) they are registered
+	// globally; SyncCommands refuses a list of only empty IDs, so an unset
+	// variable never replaces the global commands by mistake.
 	if err := bot.SyncCommands(ctx, guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
 	}
@@ -223,7 +225,7 @@ c.Attachments("files") // the files of a discord.FileUpload
 
 ### Receiving interactions over HTTP
 
-Instead of the gateway, Discord can send interactions to the app's Interactions Endpoint URL. Discord uses one or the other, so pick either `Open`/`Run` or HTTP. `HTTPHandler` verifies requests with the app's public key, rejects replayed and stale ones, answers Discord's PING, and runs the same handlers. It looks up the bot's user for `c.Bot`, since there is no gateway session. `Shutdown` waits for running handlers; after it, an HTTP-only bot cannot be started again, as `Open` would connect the gateway. See the [http example](./example/http/main.go).
+Instead of the gateway, Discord can send interactions to the app's Interactions Endpoint URL. Discord uses one or the other, so pick either `Open`/`Run` or HTTP. `HTTPHandler` verifies requests with the app's public key, rejects replayed and stale ones, answers Discord's PING, and runs the same handlers. Each request is answered once Discord has the response, or when the 3 seconds pass without one. It looks up the bot's user for `c.Bot`, since there is no gateway session. `Shutdown` waits for running handlers; after it, an HTTP-only bot cannot be started again, as `Open` would connect the gateway. See the [http example](./example/http/main.go).
 
 ```go
 handler, err := bot.HTTPHandler(ctx, os.Getenv("PUBLIC_KEY"))

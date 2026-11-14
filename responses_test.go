@@ -1,6 +1,7 @@
 package minidis
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tbdsux/minidis/discord"
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 func TestReplyFlagsPollAndTTS(t *testing.T) {
@@ -260,5 +262,183 @@ func TestEditSendsOnlyWhatIsSet(t *testing.T) {
 	raw := string(reqs[2].Raw)
 	if !strings.Contains(raw, `"attachments":[{"id":"111"`) || !strings.Contains(raw, `{"id":"0","filename":"new.png"`) {
 		t.Errorf("attachments = %s", raw)
+	}
+}
+
+// refusingAPI refuses every interaction callback, in memory.
+type refusingAPI struct{}
+
+func (refusingAPI) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"code":50035,"message":"Invalid Form Body"}`)),
+		Request:    r,
+	}, nil
+}
+
+func TestTheCutoffOutlivesTheHandler(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport http.RoundTripper
+		respondAt time.Duration
+		want      error
+	}{
+		{"a goroutine replying late fails fast", inMemoryAPI{}, responseWindow + time.Second, ErrNoResponse},
+		{"a goroutine replying in time succeeds", inMemoryAPI{}, time.Second, nil},
+		{"a refusal near the end does not reopen the window", refusingAPI{}, responseWindow, ErrNoResponse},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot := New("token")
+			bot.Session.HTTPClient = &http.Client{Transport: tt.transport}
+
+			// Made inside the bubble below: a channel from outside it would
+			// not count as blocking, so time would never advance.
+			var done chan error
+			bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
+				go func() {
+					time.Sleep(tt.respondAt - time.Nanosecond)
+					err := c.Reply("hi")
+					if tt.transport == (refusingAPI{}) {
+						time.Sleep(time.Second) // the window has closed; try again
+						err = c.Reply("again")
+					}
+					done <- err
+				}()
+				return nil
+			}})
+
+			synctest.Test(t, func(t *testing.T) {
+				done = make(chan error, 2)
+				bot.handleInteraction(bot.Session, interaction(t, slashPayload("c", "")))
+				if err := <-done; !errors.Is(err, tt.want) && !(tt.want == nil && err == nil) {
+					t.Errorf("err = %v, want %v", err, tt.want)
+				}
+			})
+		})
+	}
+}
+
+func TestErrorHandlerGetsTheHandlersContext(t *testing.T) {
+	bot, _ := newTestBot(t)
+
+	bot.AddCommand(&Command{Name: "fail", Execute: func(c *Context) error {
+		sub, cancel := context.WithTimeout(c, time.Minute)
+		cancel() // a sub-context the handler made and finished with
+		_ = c.WithContext(sub)
+		return errors.New("nope")
+	}})
+
+	var ctxErr error = errors.New("not called")
+	bot.HandleError(func(c *Context, _ error) { ctxErr = c.Err() })
+
+	bot.handleInteraction(bot.Session, interaction(t, slashPayload("fail", "")))
+
+	if ctxErr != nil {
+		t.Errorf("the error handler got a canceled context: %v", ctxErr)
+	}
+}
+
+func TestShutdownReportsOnlyRealStragglers(t *testing.T) {
+	bot, _ := newTestBot(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already out of time, with nothing running
+
+	if err := bot.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown = %v", err)
+	}
+}
+
+// raceAPI holds the first interaction callback until released, then refuses
+// it; every other request succeeds at once.
+type raceAPI struct {
+	first   sync.Once
+	holding chan struct{} // closed once the first callback is held
+	release chan struct{}
+}
+
+func (a *raceAPI) RoundTrip(r *http.Request) (*http.Response, error) {
+	status, body := http.StatusOK, `{"id":"sent"}`
+	held := false
+	if strings.HasSuffix(r.URL.Path, "/callback") {
+		a.first.Do(func() { held = true })
+	}
+	if held {
+		close(a.holding)
+		<-a.release
+		status, body = http.StatusBadRequest, `{"code":50035,"message":"Invalid Form Body"}`
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+}
+
+func TestARefusalDoesNotUndoADeliveredResponse(t *testing.T) {
+	api := &raceAPI{holding: make(chan struct{}), release: make(chan struct{})}
+	bot := New("token")
+	bot.Session.HTTPClient = &http.Client{Transport: api}
+
+	var responded bool
+	bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
+		first := make(chan error)
+		go func() { first <- c.Reply("A") }()
+		<-api.holding
+
+		if err := c.Reply("B"); err != nil { // delivered while A is in flight
+			return err
+		}
+		close(api.release)
+		<-first // A is refused
+
+		responded = c.Responded()
+		return c.Edit("B, edited")
+	}})
+	bot.HandleError(func(_ *Context, err error) { t.Error(err) })
+
+	bot.handleInteraction(bot.Session, interaction(t, slashPayload("c", "")))
+
+	if !responded {
+		t.Error("a refused response undid one that was delivered")
+	}
+}
+
+func TestHandBuiltContextsWork(t *testing.T) {
+	bot, requests := newTestBot(t)
+	i := interaction(t, slashPayload("c", "")).Interaction
+
+	// As in a unit test of a handler.
+	c := &Context{Session: bot.Session, Interaction: i}
+	if err := c.WithContext(t.Context()).Reply("hi"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Edit("edited"); err != nil {
+		t.Fatal(err)
+	}
+	if c.Responded() {
+		t.Error("a hand-built Context claims a tracked response")
+	}
+	if n := len(requests()); n != 2 {
+		t.Errorf("%d requests", n)
+	}
+}
+
+func TestResponseDetails(t *testing.T) {
+	if !errors.Is(ErrNoResponse, context.Canceled) {
+		t.Error("ErrNoResponse does not match context.Canceled")
+	}
+
+	refusedEarlier := &client.RESTError{StatusCode: http.StatusBadRequest, Code: 40060}
+	if notDelivered(refusedEarlier) || notDelivered(context.DeadlineExceeded) {
+		t.Error("an earlier response or a timeout counted as not delivered")
+	}
+	if !notDelivered(&client.RESTError{StatusCode: http.StatusBadRequest, Code: 50035}) {
+		t.Error("a refused response counted as delivered")
+	}
+
+	described := &discord.MessageAttachment{ID: "0", Description: "alt text"}
+	kept := MessageEdit{Files: []*discord.File{{Name: "a.png"}}, Attachments: []*discord.MessageAttachment{described}}.attachments()
+	if len(kept) != 1 || kept[0] != described {
+		t.Errorf("attachments = %+v", kept)
 	}
 }

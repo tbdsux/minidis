@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	guilds := strings.Split(os.Getenv("GUILD"), ",")
+	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	// Set Intents
@@ -46,7 +46,8 @@ func main() {
 				return err
 			}
 
-			// c is a context.Context, so slow work can stop when the bot closes.
+			// c is a context.Context, so slow work stops if the bot closes and its
+			// shutdown grace period runs out.
 			select {
 			case <-time.After(5 * time.Second):
 			case <-c.Done():

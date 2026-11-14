@@ -24,6 +24,9 @@ const (
 	// signatureMaxAge is how far the signed timestamp may be from now. A
 	// replay inside it is caught by the interaction ID instead.
 	signatureMaxAge = 5 * time.Minute
+
+	// ackTimeout bounds how long a request waits for its response to be sent.
+	ackTimeout = 15 * time.Second
 )
 
 // HTTPHandler returns an http.Handler for the app's Interactions Endpoint URL,
@@ -34,8 +37,8 @@ const (
 // Requests are verified with the public key, replays are rejected, and
 // Discord's PING is answered. Other interactions run through the same handlers
 // and middleware as gateway interactions, which respond through the API. The
-// request is answered once the handler has responded or returned, or after 3
-// seconds.
+// request is answered once Discord has the response, or once the 3 seconds
+// pass without one.
 //
 // HTTPHandler looks up the bot's user, for Context.Bot, using ctx. Use either
 // the gateway or HTTP, not both, as Discord sends interactions to only one.
@@ -120,14 +123,15 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Discord asks to acknowledge a response sent through the API with 202
+	// and no body, after the response. The cutoff signals when none came in
+	// time; the timeout only guards against a response that never finishes.
 	select {
 	case <-responded:
-	case <-time.After(responseWindow):
+	case <-time.After(ackTimeout):
 	case <-r.Context().Done():
 	}
 
-	// The response went through the API, which Discord asks to acknowledge
-	// with 202 and no body.
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -180,6 +184,7 @@ func (m *Minidis) startHTTPInteraction(i *discord.Interaction) (<-chan struct{},
 		return nil, false
 	}
 	run.http.Add(1)
+	run.httpRunning.Add(1)
 	m.runMu.RUnlock()
 
 	responded := make(chan struct{})
@@ -187,7 +192,7 @@ func (m *Minidis) startHTTPInteraction(i *discord.Interaction) (<-chan struct{},
 
 	go func() {
 		defer run.http.Done()
-		defer ack()
+		defer run.httpRunning.Add(-1)
 
 		m.runInteraction(run.ctx, m.Session, i, ack)
 	}()

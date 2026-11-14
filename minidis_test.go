@@ -33,7 +33,7 @@ func newTestBot(t *testing.T) (*Minidis, func() []recordedRequest) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The entry point lookup of global syncs is answered but not recorded;
-		// TestSyncKeepsTheEntryPoint covers it.
+		// TestGlobalOverwritesKeepTheEntryPoint covers it.
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/commands") {
 			io.WriteString(w, `[]`)
 			return

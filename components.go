@@ -32,7 +32,8 @@ func (m *Minidis) HandleComponent(id string, h func(c *ComponentContext) error) 
 // HandleComponentFallback sets the handler for components that no
 // HandleComponent id matches. Without one, they reach the error handler as
 // ErrNoHandler; when other code handles some components, such as a collector
-// on Session.OnInteractionCreate, set one that returns nil.
+// on Session.OnInteractionCreate (which sees gateway interactions only), set
+// one that returns nil.
 func (m *Minidis) HandleComponentFallback(h func(c *ComponentContext) error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

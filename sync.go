@@ -13,17 +13,21 @@ import (
 )
 
 // SyncCommands registers the added commands with Discord, replacing any others.
-// With no guild IDs the commands are registered globally. Empty IDs are
-// ignored, so that splitting an unset environment variable means global. It
-// can be called before Open.
+// Called with no guild IDs, it registers them globally. Empty IDs are ignored,
+// but IDs that are all empty are an error, so that an unset variable does not
+// replace the global commands by mistake. It can be called before Open.
 func (m *Minidis) SyncCommands(ctx context.Context, guildIDs ...string) error {
 	if err := m.validateCommands(); err != nil {
 		return err
 	}
 
-	guildIDs = nonEmpty(guildIDs)
 	if len(guildIDs) == 0 {
 		return m.overwriteCommands(ctx, "", m.buildCommands(true))
+	}
+
+	guildIDs = nonEmpty(guildIDs)
+	if len(guildIDs) == 0 {
+		return errors.New("minidis: SyncCommands was given only empty guild IDs; call it with none to register the commands globally")
 	}
 
 	commands := m.buildCommands(false)

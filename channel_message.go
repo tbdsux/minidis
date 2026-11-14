@@ -11,10 +11,12 @@ import (
 
 // ChannelMessageContext is passed to HandleChannelMessage handlers.
 //
-// It is also a context.Context, canceled when the handler returns or the bot
-// closes.
+// It is also a context.Context for the handler's own work, canceled when the
+// handler returns or a closing bot stops waiting for its handlers. Send and
+// Reply keep working after the handler returns, until the bot closes.
 type ChannelMessageContext struct {
 	ctx context.Context
+	api context.Context // for sends, which outlive the handler like responses
 
 	Session   *client.Session
 	Message   *discord.MessageCreate
@@ -59,11 +61,13 @@ func (m *Minidis) handleChannelMessage(s *client.Session, msg *discord.MessageCr
 		return
 	}
 
-	ctx, cancel := context.WithCancel(m.current().ctx)
+	run := m.current().ctx
+	ctx, cancel := context.WithCancel(run)
 	defer cancel()
 
 	m.runChannelHandler(&ChannelMessageContext{
 		ctx:       ctx,
+		api:       run,
 		Session:   s,
 		Message:   msg,
 		ChannelID: msg.ChannelID,
@@ -102,7 +106,7 @@ func (c *ChannelMessageContext) Send(content string) (*discord.Message, error) {
 // SendWith sends a message to the channel. Use AllowedMentions when the
 // content repeats what users wrote, so that it cannot ping @everyone.
 func (c *ChannelMessageContext) SendWith(msg Message) (*discord.Message, error) {
-	return c.Session.ChannelMessageSendComplex(c, c.ChannelID, msg.channelMessage())
+	return c.Session.ChannelMessageSendComplex(orBackground(c.api), c.ChannelID, msg.channelMessage())
 }
 
 // Reply sends a text message to the channel as a reply to the message.
@@ -114,5 +118,5 @@ func (c *ChannelMessageContext) Reply(content string) (*discord.Message, error) 
 func (c *ChannelMessageContext) ReplyWith(msg Message) (*discord.Message, error) {
 	send := msg.channelMessage()
 	send.Reference = c.reference()
-	return c.Session.ChannelMessageSendComplex(c, c.ChannelID, send)
+	return c.Session.ChannelMessageSendComplex(orBackground(c.api), c.ChannelID, send)
 }
