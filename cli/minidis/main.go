@@ -29,11 +29,17 @@ func main() {
 	err := run(os.Args[1:], os.Stdout, os.Stderr)
 	switch {
 	case err == nil, errors.Is(err, flag.ErrHelp):
+	case errors.Is(err, errUsage): // already explained
+		os.Exit(2)
 	default:
 		fmt.Fprintln(os.Stderr, "minidis:", err)
 		os.Exit(1)
 	}
 }
+
+// errUsage marks an error about how the command was called that has already
+// been printed, such as an unknown flag.
+var errUsage = errors.New("usage error")
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {

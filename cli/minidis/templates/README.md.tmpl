@@ -13,6 +13,12 @@ A Discord bot built with [minidis](https://github.com/tbdsux/minidis).
    ```sh
    TOKEN=<bot token> GUILD=<server ID>{{if .HTTP}} PUBLIC_KEY=<public key>{{end}} go run .
    ```
+
+   In PowerShell:
+
+   ```powershell
+   $env:TOKEN="<bot token>"; $env:GUILD="<server ID>"; {{if .HTTP}}$env:PUBLIC_KEY="<public key>"; {{end}}go run .
+   ```
 {{- if .HTTP}}
 
 3. Make `http://localhost:8080/interactions` reachable over HTTPS, for example with a tunnel, and set it as the Interactions Endpoint URL on the General Information page. Discord checks the URL when you save it, so the bot must be running. Set `ADDR` to listen elsewhere than `:8080`.
