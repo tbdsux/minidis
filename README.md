@@ -188,6 +188,15 @@ bot.HandleModal("feedback", func(c *minidis.ModalSubmitContext) error {
 
 Use `c.UpdateWith` for embeds and components, passing an empty non-nil slice to clear them, and `c.DeferUpdate` for slow work. `HandleComponentFallback` and `HandleModalFallback` receive the IDs that no handler matches.
 
+A submitted modal is read by the custom IDs of its components:
+
+```go
+c.Value("name")       // a text input, or the choice of a discord.RadioGroup
+c.Values("toppings")  // a select menu, a discord.CheckboxGroup, or the IDs of a discord.FileUpload
+c.Checked("agree")    // a discord.Checkbox
+c.Attachments("files") // the files of a discord.FileUpload
+```
+
 ### Channel messages
 
 ```go

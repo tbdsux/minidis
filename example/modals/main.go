@@ -32,11 +32,15 @@ func main() {
 			return err
 		}
 
+		// Read the submitted values by the custom IDs of the components.
 		_, err := c.Session.ChannelMessageSend(ResultsChannel, fmt.Sprintf(
-			"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s",
+			"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s\n\n**Rating**: %s\n**Liked**: %s\n**May contact**: %t",
 			c.Params["user"],
-			c.Data.Components[0].(*discord.Label).Component.(*discord.TextInput).Value,
-			c.Data.Components[1].(*discord.Label).Component.(*discord.TextInput).Value,
+			c.Value("opinion"),
+			c.Value("suggestions"),
+			c.Value("rating"),
+			strings.Join(c.Values("liked"), ", "),
+			c.Checked("contact"),
 		))
 
 		return err
@@ -70,6 +74,32 @@ func main() {
 							Required:  discord.Bool(false),
 							MaxLength: 2000,
 						},
+					},
+					discord.Label{
+						Label: "How would you rate them?",
+						Component: discord.RadioGroup{
+							CustomID: "rating",
+							Options: []discord.GroupOption{
+								{Value: "good", Label: "Good"},
+								{Value: "okay", Label: "Okay"},
+								{Value: "bad", Label: "Bad"},
+							},
+						},
+					},
+					discord.Label{
+						Label: "What did you like?",
+						Component: discord.CheckboxGroup{
+							CustomID: "liked",
+							Required: discord.Bool(false),
+							Options: []discord.GroupOption{
+								{Value: "speed", Label: "Speed"},
+								{Value: "looks", Label: "Looks"},
+							},
+						},
+					},
+					discord.Label{
+						Label:     "May we contact you about your feedback?",
+						Component: discord.Checkbox{CustomID: "contact"},
 					},
 				},
 			})
