@@ -101,16 +101,24 @@ type Message struct {
 	Components      []discord.MessageComponent
 	Files           []*discord.File
 	AllowedMentions *discord.MessageAllowedMentions
+	Poll            *discord.PollCreateRequest
+	TTS             bool
 
 	// Ephemeral messages are only shown to the user who caused the interaction.
 	Ephemeral bool
+
+	// Flags are further message flags: discord.MessageFlagsIsComponentsV2 to
+	// lay the message out with Components only (Content, Embeds and Poll must
+	// then be empty), discord.MessageFlagsSuppressEmbeds, or
+	// discord.MessageFlagsSuppressNotifications.
+	Flags discord.MessageFlags
 }
 
 func (msg Message) flags() discord.MessageFlags {
 	if msg.Ephemeral {
-		return discord.MessageFlagsEphemeral
+		return msg.Flags | discord.MessageFlagsEphemeral
 	}
-	return 0
+	return msg.Flags
 }
 
 func (msg Message) responseData() *discord.InteractionResponseData {
@@ -119,6 +127,8 @@ func (msg Message) responseData() *discord.InteractionResponseData {
 		Components:      msg.Components,
 		Files:           msg.Files,
 		AllowedMentions: msg.AllowedMentions,
+		Poll:            msg.Poll,
+		TTS:             msg.TTS,
 		Flags:           msg.flags(),
 	}
 	if msg.Content != "" {
@@ -134,6 +144,8 @@ func (msg Message) webhookParams() *discord.WebhookParams {
 		Components:      msg.Components,
 		Files:           msg.Files,
 		AllowedMentions: msg.AllowedMentions,
+		Poll:            msg.Poll,
+		TTS:             msg.TTS,
 		Flags:           msg.flags(),
 	}
 }
@@ -146,6 +158,14 @@ type MessageEdit struct {
 	Components      []discord.MessageComponent
 	Files           []*discord.File // added to the message
 	AllowedMentions *discord.MessageAllowedMentions
+
+	// Poll can only be added when editing a deferred response.
+	Poll *discord.PollCreateRequest
+
+	// Flags can turn discord.MessageFlagsIsComponentsV2 on, which cannot be
+	// undone, and discord.MessageFlagsSuppressEmbeds. This is how a deferred
+	// reply becomes a Components V2 message.
+	Flags discord.MessageFlags
 }
 
 func (e MessageEdit) webhookEdit() *discord.WebhookEdit {
@@ -153,6 +173,8 @@ func (e MessageEdit) webhookEdit() *discord.WebhookEdit {
 		Content:         e.Content,
 		Files:           e.Files,
 		AllowedMentions: e.AllowedMentions,
+		Poll:            e.Poll,
+		Flags:           e.Flags,
 	}
 	if e.Embeds != nil {
 		res.Embeds = &e.Embeds
@@ -170,6 +192,8 @@ func (e MessageEdit) responseData() *discord.InteractionResponseData {
 		Components:      e.Components,
 		Files:           e.Files,
 		AllowedMentions: e.AllowedMentions,
+		Poll:            e.Poll,
+		Flags:           e.Flags,
 	}
 }
 
@@ -215,6 +239,16 @@ func (c *Context) ReplyModal(modal Modal) error {
 			Components: modal.Components,
 		},
 	})
+}
+
+// LaunchActivity responds to the interaction by launching the app's Activity.
+func (c *Context) LaunchActivity() error {
+	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{Type: discord.InteractionResponseLaunchActivity})
+}
+
+// Response fetches the message sent as the response, such as to learn its ID.
+func (c *Context) Response() (*discord.Message, error) {
+	return c.Session.InteractionResponse(c.Interaction)
 }
 
 // Edit replaces the text of the response.

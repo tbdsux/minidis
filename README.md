@@ -128,6 +128,8 @@ c.ReplyModal(minidis.Modal{CustomID: "feedback", Title: "Feedback", Components: 
 
 In a `MessageEdit`, a nil field is left unchanged and an empty one clears it.
 
+`Message` also takes a `Poll`, `TTS` and further `Flags`. Use `discord.MessageFlagsIsComponentsV2` to lay a message out with components such as `discord.Container`, `discord.Section` and `discord.TextDisplay`. A deferred reply becomes one through `c.EditWith(minidis.MessageEdit{Flags: discord.MessageFlagsIsComponentsV2, Components: ...})`. `c.Response()` fetches the message that was sent.
+
 Every handler context is also a `context.Context`. It is canceled when the handler returns, when the bot closes, and 15 minutes after the interaction arrived, when Discord stops accepting responses. Pass it to the calls the handler makes:
 
 ```go
