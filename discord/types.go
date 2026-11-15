@@ -11,6 +11,10 @@ import (
 // Bool returns a pointer to v, for optional boolean fields.
 func Bool(v bool) *bool { return &v }
 
+// String returns a pointer to v, for optional text fields such as the Content
+// of an edit.
+func String(v string) *string { return &v }
+
 // Int returns a pointer to v, for optional integer fields.
 func Int(v int) *int { return &v }
 
@@ -96,6 +100,8 @@ const (
 	// IntentsAll includes the privileged intents.
 	IntentsAll = IntentsAllWithoutPrivileged | IntentsPrivileged
 
+	// IntentsNone receives no events beyond the basics, which is enough for
+	// a bot that only handles interactions.
 	IntentsNone Intent = 0
 )
 
@@ -244,12 +250,14 @@ type MessageEmbed struct {
 	Fields      []*MessageEmbedField   `json:"fields,omitempty"`
 }
 
+// MessageEmbedFooter is the footer of an embed.
 type MessageEmbedFooter struct {
 	Text         string `json:"text,omitempty"`
 	IconURL      string `json:"icon_url,omitempty"`
 	ProxyIconURL string `json:"proxy_icon_url,omitempty"`
 }
 
+// MessageEmbedImage is the image of an embed.
 type MessageEmbedImage struct {
 	URL      string `json:"url"`
 	ProxyURL string `json:"proxy_url,omitempty"`
@@ -257,6 +265,7 @@ type MessageEmbedImage struct {
 	Height   int    `json:"height,omitempty"`
 }
 
+// MessageEmbedThumbnail is the thumbnail of an embed.
 type MessageEmbedThumbnail struct {
 	URL      string `json:"url"`
 	ProxyURL string `json:"proxy_url,omitempty"`
@@ -264,17 +273,20 @@ type MessageEmbedThumbnail struct {
 	Height   int    `json:"height,omitempty"`
 }
 
+// MessageEmbedVideo is the video of an embed.
 type MessageEmbedVideo struct {
 	URL    string `json:"url,omitempty"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
 }
 
+// MessageEmbedProvider is the provider of an embed, such as a website.
 type MessageEmbedProvider struct {
 	URL  string `json:"url,omitempty"`
 	Name string `json:"name,omitempty"`
 }
 
+// MessageEmbedAuthor is the author of an embed.
 type MessageEmbedAuthor struct {
 	URL          string `json:"url,omitempty"`
 	Name         string `json:"name,omitempty"`
@@ -282,6 +294,7 @@ type MessageEmbedAuthor struct {
 	ProxyIconURL string `json:"proxy_icon_url,omitempty"`
 }
 
+// MessageEmbedField is a field of an embed.
 type MessageEmbedField struct {
 	Name   string `json:"name"`
 	Value  string `json:"value"`
@@ -337,6 +350,7 @@ type Message struct {
 	Flags             MessageFlags         `json:"flags"`
 	MessageReference  *MessageReference    `json:"message_reference"`
 	ReferencedMessage *Message             `json:"referenced_message"`
+	Poll              *Poll                `json:"poll"`
 }
 
 // MessageSend is the body of a Create Message request.
@@ -349,7 +363,64 @@ type MessageSend struct {
 	Reference       *MessageReference       `json:"message_reference,omitempty"`
 	StickerIDs      []string                `json:"sticker_ids,omitempty"`
 	Flags           MessageFlags            `json:"flags,omitempty"`
+	Poll            *PollCreateRequest      `json:"poll,omitempty"`
 	Files           []*File                 `json:"-"`
+}
+
+// PollLayoutType is how a poll is shown.
+type PollLayoutType int
+
+// PollLayoutDefault is the only layout.
+const PollLayoutDefault PollLayoutType = 1
+
+// PollMedia is the text of a poll question or answer. Questions only support
+// Text, of up to 300 characters; answers up to 55, with an optional Emoji (send
+// only its ID or Name).
+type PollMedia struct {
+	Text  string          `json:"text,omitempty"`
+	Emoji *ComponentEmoji `json:"emoji,omitempty"`
+}
+
+// PollAnswer is one choice of a poll. AnswerID is set by Discord.
+type PollAnswer struct {
+	AnswerID  int       `json:"answer_id,omitempty"`
+	PollMedia PollMedia `json:"poll_media"`
+}
+
+// PollCreateRequest is a poll to send with a message. It can't be combined
+// with MessageFlagsIsComponentsV2.
+type PollCreateRequest struct {
+	Question         PollMedia      `json:"question"`
+	Answers          []PollAnswer   `json:"answers"`                     // up to 10
+	Duration         int            `json:"duration,omitempty"`          // hours, up to 32 days; Discord defaults to 24
+	AllowMultiselect bool           `json:"allow_multiselect,omitempty"` // let users pick more than one answer
+	LayoutType       PollLayoutType `json:"layout_type,omitempty"`
+}
+
+// Poll is a poll on a received message.
+type Poll struct {
+	Question         PollMedia      `json:"question"`
+	Answers          []PollAnswer   `json:"answers"`
+	Expiry           *time.Time     `json:"expiry"`
+	AllowMultiselect bool           `json:"allow_multiselect"`
+	LayoutType       PollLayoutType `json:"layout_type"`
+
+	// Results is nil when the counts are not known, which does not mean that
+	// there are no votes.
+	Results *PollResults `json:"results"`
+}
+
+// PollResults are the vote counts of a poll.
+type PollResults struct {
+	IsFinalized  bool              `json:"is_finalized"`
+	AnswerCounts []PollAnswerCount `json:"answer_counts"` // an answer without votes may be missing
+}
+
+// PollAnswerCount is the number of votes for an answer.
+type PollAnswerCount struct {
+	ID      int  `json:"id"` // the AnswerID
+	Count   int  `json:"count"`
+	MeVoted bool `json:"me_voted"`
 }
 
 // MessageEdit is the body of an Edit Message request. A nil field is left
@@ -386,6 +457,7 @@ type Guild struct {
 	Roles                  []*Role    `json:"roles"`
 	Features               []string   `json:"features"`
 	PreferredLocale        Locale     `json:"preferred_locale"`
+	Locale                 Locale     `json:"locale"` // only on the partial guild of an interaction
 	ApproximateMemberCount int        `json:"approximate_member_count"`
 	Channels               []*Channel `json:"channels"`
 	MemberCount            int        `json:"member_count"`

@@ -13,8 +13,17 @@ import (
 // Every interaction token gets its own webhook bucket, so the map would otherwise grow forever.
 const maxTrackedBuckets = 2048
 
+// globalRequestsPerSecond is Discord's global limit for a bot, which the
+// limiter keeps to ahead of time. A variable so tests can change it.
+var globalRequestsPerSecond = 50.0
+
 type bucket struct {
-	gate sync.Mutex // serializes requests in this bucket; held across the HTTP call
+	// gate serializes requests in this bucket and is held across the HTTP call,
+	// so requests sharing a bucket are sent one at a time even when Discord
+	// would allow several at once. That keeps the limiter simple and never
+	// overshoots a bucket; it only costs latency on a busy route.
+	// It is a channel rather than a mutex so that waiting for it obeys ctx.
+	gate chan struct{}
 
 	// guarded by rateLimiter.mu
 	limited   bool
@@ -29,6 +38,8 @@ type rateLimiter struct {
 	buckets     map[string]*bucket
 	routes      map[string]string
 	globalUntil time.Time
+	globalNext  time.Time // when the global limit next has room; see reserveGlobal
+	sweepAt     int       // the map size that triggers the next sweep
 }
 
 func newRateLimiter() *rateLimiter {
@@ -39,31 +50,49 @@ func (l *rateLimiter) bucketFor(route string) *bucket {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if len(l.buckets) >= maxTrackedBuckets {
+	if len(l.buckets) >= max(l.sweepAt, maxTrackedBuckets) {
 		l.sweep()
+		// Sweep again only once the map has doubled, so that a map full of
+		// live buckets is not scanned on every request.
+		l.sweepAt = 2 * len(l.buckets)
 	}
 
-	key, ok := l.routes[route]
-	if !ok {
-		key = route
-	}
+	return l.getOrCreate(l.keyOf(route))
+}
 
-	return l.getOrCreate(key)
+// keyOf returns the bucket key of route: the shared bucket it was mapped to,
+// or the route itself. l.mu must be held.
+func (l *rateLimiter) keyOf(route string) string {
+	if key, ok := l.routes[route]; ok {
+		return key
+	}
+	return route
+}
+
+// current reports whether b is still the bucket route maps to.
+func (l *rateLimiter) current(route string, b *bucket) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.buckets[l.keyOf(route)] == b
 }
 
 func (l *rateLimiter) getOrCreate(key string) *bucket {
 	b, ok := l.buckets[key]
 	if !ok {
-		b = &bucket{}
+		b = &bucket{gate: make(chan struct{}, 1)}
 		l.buckets[key] = b
 	}
 	return b
 }
 
+// sweep drops buckets whose limit has reset. A bucket in use, with a request
+// in flight or waiting, is kept: dropping it would let a new bucket for the
+// same route send alongside it.
 func (l *rateLimiter) sweep() {
 	now := time.Now()
 	for key, b := range l.buckets {
-		if b.reset.Before(now) {
+		if b.reset.Before(now) && len(b.gate) == 0 {
 			delete(l.buckets, key)
 		}
 	}
@@ -74,10 +103,26 @@ func (l *rateLimiter) sweep() {
 	}
 }
 
-// acquire blocks until a request may be sent for route. The caller must release the bucket.
-func (l *rateLimiter) acquire(ctx context.Context, route string) (*bucket, error) {
-	b := l.bucketFor(route)
-	b.gate.Lock()
+// acquire blocks until a request may be sent for route, counting it against
+// the global limit if global. The caller must release the bucket.
+func (l *rateLimiter) acquire(ctx context.Context, route string, global bool) (*bucket, error) {
+	var b *bucket
+	for {
+		b = l.bucketFor(route)
+		select {
+		case b.gate <- struct{}{}:
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+
+		// While this request waited, the route may have moved to a shared
+		// bucket, or its bucket may have been swept. Queue on the bucket that
+		// now holds its limits instead.
+		if l.current(route, b) {
+			break
+		}
+		<-b.gate
+	}
 
 	l.mu.Lock()
 	wait := time.Until(l.globalUntil)
@@ -87,11 +132,38 @@ func (l *rateLimiter) acquire(ctx context.Context, route string) (*bucket, error
 	l.mu.Unlock()
 
 	if err := sleep(ctx, wait); err != nil {
-		b.gate.Unlock()
+		<-b.gate
 		return nil, err
 	}
 
+	if global {
+		if err := sleep(ctx, l.reserveGlobal()); err != nil {
+			<-b.gate
+			return nil, err
+		}
+	}
+
 	return b, nil
+}
+
+// reserveGlobal takes a slot of the global limit and returns how long to wait
+// for it. It allows a burst of a second's worth of requests, then spaces them
+// evenly; a slot is taken even if the caller then gives up.
+func (l *rateLimiter) reserveGlobal() time.Duration {
+	interval := time.Duration(float64(time.Second) / globalRequestsPerSecond)
+	burst := time.Duration(globalRequestsPerSecond) * interval
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	next := l.globalNext
+	if next.Before(now) {
+		next = now
+	}
+	l.globalNext = next.Add(interval)
+
+	return max(next.Sub(now)-(burst-interval), 0)
 }
 
 // release records the response headers (nil if the request failed) and frees the bucket.
@@ -99,7 +171,7 @@ func (l *rateLimiter) release(b *bucket, route, major string, h http.Header) {
 	if h != nil {
 		l.update(b, route, major, h)
 	}
-	b.gate.Unlock()
+	<-b.gate
 }
 
 func (l *rateLimiter) update(b *bucket, route, major string, h http.Header) {
@@ -139,10 +211,14 @@ func seconds(s float64) time.Duration {
 	return time.Duration(s * float64(time.Second))
 }
 
-// sleep waits for d, returning early with the context's error if it is cancelled.
+// sleep waits for d, returning early with the context's cause if it is
+// canceled.
 func sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
-		return ctx.Err()
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+		return nil
 	}
 
 	t := time.NewTimer(d)
@@ -152,7 +228,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 }
 

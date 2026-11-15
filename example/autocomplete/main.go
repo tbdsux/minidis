@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -16,7 +18,7 @@ import (
 var languages = []string{"Go", "JavaScript", "Python", "Rust", "TypeScript", "Zig"}
 
 func main() {
-	guilds := strings.Split(os.Getenv("GUILD"), ",")
+	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds)
@@ -27,21 +29,35 @@ func main() {
 
 	// Middleware runs around every command, component and modal handler
 	bot.Use(func(next minidis.HandlerFunc) minidis.HandlerFunc {
-		return func(c *minidis.SlashContext) error {
+		return func(c *minidis.Context) error {
 			log.Printf("interaction from %s", c.Author.Username)
 			return next(c)
 		}
 	})
 
 	// Errors and panics from any interaction handler end up here
-	bot.OnError(func(c *minidis.SlashContext, err error) {
+	bot.HandleError(func(c *minidis.Context, err error) {
 		log.Printf("interaction failed: %v", err)
-		if replyErr := c.ReplyEphemeral("Something went wrong."); replyErr != nil {
-			log.Printf("could not tell the user: %v", replyErr)
+
+		// Autocomplete can only answer with choices.
+		if c.Interaction.Type == discord.InteractionApplicationCommandAutocomplete {
+			return
+		}
+
+		// After a reply or a deferral, the user is told in a followup instead.
+		msg := minidis.Message{Content: "Something went wrong.", Ephemeral: true}
+		var tellErr error
+		if c.Responded() {
+			_, tellErr = c.FollowupWith(msg)
+		} else {
+			tellErr = c.ReplyWith(msg)
+		}
+		if tellErr != nil {
+			log.Printf("could not tell the user: %v", tellErr)
 		}
 	})
 
-	bot.AddCommand(&minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.Command{
 		Name:        "language",
 		Description: "Pick a programming language.",
 		Options: []*discord.ApplicationCommandOption{
@@ -65,9 +81,18 @@ func main() {
 
 			return c.Respond(choices...)
 		},
-		Execute: func(c *minidis.SlashContext) error {
-			return c.ReplyC(minidis.ReplyProps{
-				Content: fmt.Sprintf("You picked **%s**. Keep it?", c.String("name")),
+		Execute: func(c *minidis.Context) error {
+			// Autocomplete only suggests: the user may still type anything. The
+			// value goes into a custom ID below, which is limited to 100
+			// characters and whose {language} capture cannot contain ":", so
+			// accept only the known languages.
+			name := c.String("name")
+			if !slices.Contains(languages, name) {
+				return c.ReplyWith(minidis.Message{Content: "Unknown language: pick one of the suggestions.", Ephemeral: true})
+			}
+
+			return c.ReplyWith(minidis.Message{
+				Content: fmt.Sprintf("You picked **%s**. Keep it?", name),
 				Components: []discord.MessageComponent{
 					discord.ActionsRow{
 						Components: []discord.MessageComponent{
@@ -75,7 +100,7 @@ func main() {
 								Label: "Keep",
 								Style: discord.SuccessButton,
 								// {language} is captured into c.Params by the handler below
-								CustomID: "keep:" + c.String("name"),
+								CustomID: "keep:" + name,
 							},
 						},
 					},
@@ -84,35 +109,25 @@ func main() {
 		},
 	})
 
-	bot.AddComponentHandler(&minidis.ComponentInteractionProps{
-		ID: "keep:{language}",
-		Execute: func(s *minidis.SlashContext, c *minidis.ComponentContext) error {
-			// An empty, non-nil slice removes the button from the message
-			return c.UpdateC(minidis.EditProps{
-				Content:    "Kept **" + c.Params["language"] + "**.",
-				Components: []discord.MessageComponent{},
-			})
-		},
+	bot.HandleComponent("keep:{language}", func(c *minidis.ComponentContext) error {
+		// An empty, non-nil slice removes the button from the message
+		return c.UpdateWith(minidis.MessageEdit{
+			Content:    discord.String("Kept **" + c.Params["language"] + "**."),
+			Components: []discord.MessageComponent{},
+		})
 	})
 
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
+	// Stop on CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Register the commands
-	if err := bot.SyncCommands(guilds...); err != nil {
+	// Register the commands. This replaces any registered before.
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
-
-	// Close the session
-	bot.CloseSession()
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }

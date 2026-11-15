@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,6 @@ import (
 )
 
 func main() {
-	guilds := strings.Split(os.Getenv("GUILD"), ",")
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
@@ -23,10 +23,8 @@ func main() {
 		log.Println("Bot is ready!")
 	})
 
-	channels := strings.Split(os.Getenv("CHANNELS"), ",")
-
-	bot.OnChannelMessageCreate(func(c *minidis.ChannelMessageContext) error {
-		message, err := c.Reply("Hello! This is a message from the bot.", true)
+	greet := func(c *minidis.ChannelMessageContext) error {
+		message, err := c.Reply("Hello! This is a message from the bot.")
 		if err != nil {
 			return err
 		}
@@ -34,26 +32,24 @@ func main() {
 		fmt.Println(message.Content)
 
 		return nil
-	}, channels...)
-
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
 	}
 
-	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
-		return
+	// CHANNELS is a comma-separated list of the channels to answer in.
+	for _, channel := range strings.Split(os.Getenv("CHANNELS"), ",") {
+		if channel != "" {
+			bot.HandleChannelMessage(channel, greet)
+		}
 	}
 
-	// Wait for CTRL+C to exit
+	// Stop on CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// This bot has no commands, so it does not call SyncCommands: syncing
+	// would replace the app's registered commands with none.
+
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
-
-	// Close the session
-	bot.CloseSession()
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }

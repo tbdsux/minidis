@@ -5,19 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tbdsux/minidis/discord"
 	"log"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tbdsux/minidis/discord"
 )
 
 const (
@@ -37,10 +39,21 @@ const gatewayWriteTimeout = 10 * time.Second
 // Variables so tests can shorten them.
 var (
 	gatewayOpenTimeout = 30 * time.Second
-	identifyInterval   = 5 * time.Second // one Identify per 5s at max_concurrency 1
+	identifyInterval   = 5 * time.Second // between Identifies in one max_concurrency bucket
 	minReconnectDelay  = time.Second
 	maxReconnectDelay  = time.Minute
 	closeDrainTimeout  = 10 * time.Second
+
+	// After an Invalid Session, Discord asks for a random wait of 1 to 5
+	// seconds before identifying again.
+	invalidSessionMinDelay = time.Second
+	invalidSessionMaxDelay = 5 * time.Second
+
+	// Discord allows 120 gateway events per connection per minute and
+	// disconnects beyond that. Heartbeats are kept out of this budget, which
+	// leaves them room.
+	gatewaySendLimit  = 110
+	gatewaySendWindow = time.Minute
 )
 
 // ErrAlreadyOpen is returned by Open if the session has not been closed.
@@ -60,9 +73,34 @@ func (e *GatewayCloseError) Error() string {
 type gatewayBot struct {
 	URL               string `json:"url"`
 	SessionStartLimit struct {
-		Remaining  int `json:"remaining"`
-		ResetAfter int `json:"reset_after"` // milliseconds
+		Remaining      int `json:"remaining"`
+		ResetAfter     int `json:"reset_after"` // milliseconds
+		MaxConcurrency int `json:"max_concurrency"`
 	} `json:"session_start_limit"`
+}
+
+// identifySlots spaces Identifies across every Session in the process. Discord
+// allows one per identifyInterval in each bucket, and a bot's shard s uses
+// bucket s % max_concurrency, so Sessions for shards of one bot share these.
+var identifySlots = struct {
+	mu   sync.Mutex
+	next map[string]time.Time // bucket key → when its next Identify may go
+}{next: map[string]time.Time{}}
+
+// waitIdentify waits for this Session's turn to Identify. The turn is taken
+// even if ctx ends first.
+func (s *Session) waitIdentify(ctx context.Context) error {
+	key := s.Token + "|" + strconv.Itoa(s.ShardID%max(s.maxConcurrency, 1))
+
+	identifySlots.mu.Lock()
+	at := time.Now()
+	if next := identifySlots.next[key]; next.After(at) {
+		at = next
+	}
+	identifySlots.next[key] = at.Add(identifyInterval)
+	identifySlots.mu.Unlock()
+
+	return sleep(ctx, time.Until(at))
 }
 
 func (s *Session) fetchGatewayBot(ctx context.Context) (*gatewayBot, error) {
@@ -73,53 +111,188 @@ func (s *Session) fetchGatewayBot(ctx context.Context) (*gatewayBot, error) {
 	return info, nil
 }
 
-// Open connects to the Gateway and returns once the session is READY. After
-// that, the connection is maintained in the background until Close.
-func (s *Session) Open() error {
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
+// ErrShuttingDown is returned by an Open that races a Shutdown: one that was
+// canceled by it, or that was waiting while it ran. The session stays closed.
+var ErrShuttingDown = errors.New("discord: session is shutting down")
 
-	if s.cancel != nil {
+// gatewayRun is one Open: the gateway goroutine and the handlers it started.
+type gatewayRun struct {
+	cancel  context.CancelFunc // stops the gateway goroutine
+	done    chan struct{}      // closed when the gateway goroutine has stopped
+	err     error              // why it stopped on its own; written before done closes
+	running *sync.WaitGroup    // the handlers it started
+
+	shutDown atomic.Bool // stopped by Shutdown rather than by Discord
+
+	lastErr atomic.Pointer[error] // why the last attempt before READY failed
+}
+
+func (r *gatewayRun) stopped() bool {
+	select {
+	case <-r.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// lock takes the lifecycle lock, or returns ctx's cause if ctx ends first.
+func (s *Session) lock(ctx context.Context) error {
+	// A free lock is taken even with ctx done: select would otherwise pick
+	// at random between the two.
+	select {
+	case s.lifecycle <- struct{}{}:
+		return nil
+	default:
+	}
+
+	select {
+	case s.lifecycle <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+
+func (s *Session) unlock() { <-s.lifecycle }
+
+// Open connects to the Gateway and returns once the session is READY. After
+// that, the connection is maintained in the background until Shutdown, Close,
+// or a close code from Discord that rules out reconnecting (see Done and Err).
+//
+// Canceling ctx aborts the connection attempt, including waiting for another
+// Open or Shutdown to finish, and returns ctx's error; it has no effect once
+// Open has returned. Open gives up after 30 seconds without READY. A Shutdown
+// or Close called meanwhile cancels it, and an Open that races a Shutdown
+// fails with ErrShuttingDown rather than reopening the session after it.
+func (s *Session) Open(ctx context.Context) error {
+	s.openingMu.Lock()
+	shutdowns := s.shutdowns
+	s.openingMu.Unlock()
+
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer s.unlock()
+
+	if r := s.run.Load(); r != nil && !r.stopped() {
 		return ErrAlreadyOpen
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	openCtx, cancelOpen := context.WithTimeout(ctx, gatewayOpenTimeout)
+	defer cancelOpen()
 
-	info, err := s.fetchGatewayBot(ctx)
+	if !s.startOpening(cancelOpen, shutdowns) {
+		return ErrShuttingDown
+	}
+	defer s.startOpening(nil, 0)
+
+	// From here on Done and Err describe this Open, not the previous one.
+	s.run.Store(nil)
+
+	// A previous connection that Discord ended starts over with a new session.
+	s.resetSession()
+
+	info, err := s.fetchGatewayBot(openCtx)
 	if err != nil {
-		cancel()
-		return err
+		return openError(ctx, openCtx, err)
 	}
 
 	// Discord resets the token of bots that exceed the daily Identify limit.
 	if info.SessionStartLimit.Remaining <= 0 {
-		cancel()
 		return fmt.Errorf("discord: no session starts remaining, resets in %s",
 			time.Duration(info.SessionStartLimit.ResetAfter)*time.Millisecond)
 	}
 
 	s.gatewayURL = info.URL
-	s.running = &sync.WaitGroup{}
+	s.maxConcurrency = info.SessionStartLimit.MaxConcurrency
+	s.identified = false // this fetch covers the first Identify
+
+	// The connection outlives ctx, so it gets a context of its own.
+	runCtx, cancel := context.WithCancel(context.Background())
+	run := &gatewayRun{cancel: cancel, done: make(chan struct{}), running: &sync.WaitGroup{}}
+	s.running = run.running
+
+	// Handlers started by any run are drained by the next Shutdown, including
+	// those of a run that failed below after READY arrived too late.
+	s.drain = append(s.drain, run.running)
 
 	opened := make(chan error, 1)
-	done := make(chan struct{})
-	go s.gatewayLoop(ctx, opened, done)
+	go s.gatewayLoop(runCtx, run, opened)
 
 	select {
 	case err = <-opened:
-	case <-time.After(gatewayOpenTimeout):
-		err = errors.New("discord: timed out waiting for READY")
+	case <-openCtx.Done():
+		err = openError(ctx, openCtx, openCtx.Err())
+		if last := run.lastErr.Load(); last != nil && errors.Is(openCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			err = fmt.Errorf("%w; last attempt: %w", err, *last)
+		}
 	}
 
 	if err != nil {
 		cancel()
-		<-done
+		<-run.done
 		s.resetSession()
 		return err
 	}
 
-	s.cancel, s.done = cancel, done
+	s.run.Store(run)
 	return nil
+}
+
+// openError reports why an Open failed: the caller canceled ctx, the open
+// timeout passed, a Shutdown canceled it, or err.
+func openError(ctx, openCtx context.Context, err error) error {
+	switch {
+	case ctx.Err() != nil:
+		return context.Cause(ctx)
+	case errors.Is(openCtx.Err(), context.DeadlineExceeded):
+		return errors.New("discord: timed out waiting for READY")
+	case openCtx.Err() != nil:
+		return ErrShuttingDown
+	default:
+		return err
+	}
+}
+
+// startOpening records the cancel func of an Open in progress, or clears it
+// when cancel is nil. It reports false if a Shutdown is waiting or ran since
+// the Open began (shutdowns is the count it saw then), in which case the Open
+// should not start.
+func (s *Session) startOpening(cancel context.CancelFunc, shutdowns uint64) bool {
+	s.openingMu.Lock()
+	defer s.openingMu.Unlock()
+
+	if cancel != nil && (s.pendingShutdowns > 0 || s.shutdowns != shutdowns) {
+		return false
+	}
+	s.opening = cancel
+	return true
+}
+
+// Done returns a channel that is closed when the connection made by the last
+// Open stops for good: after Shutdown or Close, or when Discord closes it with
+// a code that rules out reconnecting, such as an invalid token or disallowed
+// intents. Err then says why. Done returns nil before the first Open and
+// after an Open that failed, and after Shutdown the closed channel of the last
+// Open.
+func (s *Session) Done() <-chan struct{} {
+	if r := s.run.Load(); r != nil {
+		return r.done
+	}
+	return nil
+}
+
+// Err returns why the connection made by the last Open stopped on its own,
+// such as a *GatewayCloseError. It is nil while the connection is up, after
+// Shutdown, before the first Open and after an Open that failed. Open can be
+// called again afterwards.
+func (s *Session) Err() error {
+	r := s.run.Load()
+	if r == nil || !r.stopped() || r.shutDown.Load() {
+		return nil
+	}
+	return r.err
 }
 
 // Close disconnects from the Gateway, ends the session, and gives running
@@ -133,41 +306,86 @@ func (s *Session) Close() error {
 
 // Shutdown disconnects from the Gateway, ends the session, and waits for
 // running handlers to finish or for ctx to end, returning ctx's error in that
-// case. Calling it from a handler waits for that handler too, so it would use
-// up the whole of ctx.
+// case. An Open in progress is canceled first. Waiting for handlers does not
+// block other calls: a later Open can start meanwhile, and a later Shutdown
+// waits for the same handlers within its own ctx. Calling Shutdown from a
+// handler waits for that handler too, so it would use up the whole of ctx.
 func (s *Session) Shutdown(ctx context.Context) error {
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
+	s.openingMu.Lock()
+	s.pendingShutdowns++
+	s.shutdowns++
+	if s.opening != nil {
+		s.opening()
+	}
+	s.openingMu.Unlock()
 
-	if s.cancel == nil {
+	waiting := s.stop()
+
+	s.openingMu.Lock()
+	s.pendingShutdowns--
+	s.openingMu.Unlock()
+
+	return s.wait(ctx, waiting)
+}
+
+// stop ends the current run under the lifecycle lock and returns the handlers
+// to wait for.
+//
+// It takes the lock whatever the context, so that a Shutdown with no time left
+// still stops the gateway. That cannot block for long: Shutdown has canceled
+// any Open in progress, and nothing else holds the lock across a wait.
+func (s *Session) stop() []*sync.WaitGroup {
+	s.lifecycle <- struct{}{}
+	defer s.unlock()
+
+	if r := s.run.Load(); r != nil && !r.shutDown.Load() {
+		r.shutDown.Store(true)
+		r.cancel()
+		<-r.done
+		s.resetSession()
+	}
+
+	// No new handlers can start in these groups now that their gateway
+	// goroutines have stopped. Groups stay listed until a wait sees them
+	// finish, so that every Shutdown waits for the handlers still running.
+	return slices.Clone(s.drain)
+}
+
+// wait waits for the handlers in groups, or for ctx to end.
+func (s *Session) wait(ctx context.Context, groups []*sync.WaitGroup) error {
+	if len(groups) == 0 {
 		return nil
 	}
 
-	s.cancel()
-	<-s.done
-
-	s.cancel, s.done = nil, nil
-	s.resetSession()
-
-	// No new handlers can start now that the gateway goroutine has stopped.
 	// yagni: this goroutine outlives ctx until a stuck handler returns.
 	drained := make(chan struct{})
-	go func(running *sync.WaitGroup) {
-		running.Wait()
+	go func() {
+		for _, running := range groups {
+			running.Wait()
+		}
 		close(drained)
-	}(s.running)
+	}()
 
 	select {
 	case <-drained:
-		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("discord: handlers still running: %w", ctx.Err())
+		return fmt.Errorf("discord: handlers still running: %w", context.Cause(ctx))
 	}
+
+	// Forget the groups that are done, unless another call holds the lock.
+	select {
+	case s.lifecycle <- struct{}{}:
+		s.drain = slices.DeleteFunc(s.drain, func(g *sync.WaitGroup) bool { return slices.Contains(groups, g) })
+		s.unlock()
+	default:
+	}
+	return nil
 }
 
 // UpdatePresence sets the bot's status and activities. It may be called at any
 // time; before the connection is ready, and after a reconnect, the presence is
-// applied as soon as the session is ready.
+// applied as soon as the session is ready. Updates beyond Discord's limit on
+// gateway events are combined: the latest is sent once the limit allows.
 func (s *Session) UpdatePresence(p *discord.PresenceUpdate) error {
 	update := *p
 	if update.Status == "" {
@@ -177,23 +395,72 @@ func (s *Session) UpdatePresence(p *discord.PresenceUpdate) error {
 		update.Activities = []*discord.Activity{} // Discord requires an array
 	}
 
+	// Storing and sending under one lock keeps Discord from ending up with an
+	// older presence than the stored one.
+	s.presenceMu.Lock()
+	defer s.presenceMu.Unlock()
+
 	s.presence.Store(&update)
 
 	if c := s.conn.Load(); c != nil {
-		return c.send(opPresenceUpdate, &update)
+		return s.sendPresence(c)
+	}
+	return nil
+}
+
+// sendPresence sends the stored presence on c, or, if c is out of gateway
+// events, schedules it for when there is room. s.presenceMu must be held.
+func (s *Session) sendPresence(c *gatewayConn) error {
+	p := s.presence.Load()
+	err := c.send(opPresenceUpdate, p)
+
+	var over *overBudgetError
+	if !errors.As(err, &over) {
+		if err == nil {
+			c.presenceSent = p
+		}
+		return err
+	}
+
+	if c.presenceTimer == nil {
+		c.presenceTimer = time.AfterFunc(over.wait, func() {
+			s.presenceMu.Lock()
+			defer s.presenceMu.Unlock()
+
+			c.presenceTimer = nil
+			if s.conn.Load() == c && s.presence.Load() != c.presenceSent {
+				_ = s.sendPresence(c)
+			}
+		})
 	}
 	return nil
 }
 
 // markConnected makes c available to UpdatePresence and applies the presence,
-// which covers any update made while there was no connection.
+// unless it went with the Identify, which covers any update made while there
+// was no connection.
 func (s *Session) markConnected(c *gatewayConn) error {
+	s.presenceMu.Lock()
+	defer s.presenceMu.Unlock()
+
 	s.conn.Store(c)
 
-	if p := s.presence.Load(); p != nil {
-		return c.send(opPresenceUpdate, p)
+	if p := s.presence.Load(); p != nil && p != c.presenceSent {
+		return s.sendPresence(c)
 	}
 	return nil
+}
+
+// disconnected forgets c, which has closed.
+func (s *Session) disconnected(c *gatewayConn) {
+	s.presenceMu.Lock()
+	defer s.presenceMu.Unlock()
+
+	s.conn.CompareAndSwap(c, nil)
+	if c.presenceTimer != nil {
+		c.presenceTimer.Stop()
+		c.presenceTimer = nil
+	}
 }
 
 func (s *Session) resetSession() {
@@ -207,13 +474,16 @@ type connOutcome int
 const (
 	reconnect      connOutcome = iota // reconnect, resuming if there is a session
 	reconnectFresh                    // the session is gone: reconnect and Identify
+	invalidSession                    // like reconnectFresh, after Discord's 1–5s wait
 	stopGateway                       // Discord says retrying cannot succeed
 )
 
-// gatewayLoop runs connections until the context ends. It reports the first
-// READY, or the failure before it, on opened.
-func (s *Session) gatewayLoop(ctx context.Context, opened chan<- error, done chan<- struct{}) {
-	defer close(done)
+// gatewayLoop runs connections until the context ends or Discord rules out
+// reconnecting. It reports the first READY, or a failure before it that rules
+// out retrying, on opened, and closes run.done when it returns. Other failures
+// before READY are retried until Open gives up and cancels ctx.
+func (s *Session) gatewayLoop(ctx context.Context, run *gatewayRun, opened chan<- error) {
+	defer close(run.done)
 
 	isOpen := false
 	delay := minReconnectDelay
@@ -233,27 +503,34 @@ func (s *Session) gatewayLoop(ctx context.Context, opened chan<- error, done cha
 			return
 		}
 
-		if !isOpen {
-			if err == nil {
-				err = errors.New("discord: gateway disconnected before READY")
+		if outcome == stopGateway {
+			if !isOpen {
+				opened <- err
+				return
 			}
-			opened <- err
+			log.Printf("discord: gateway stopped: %v", err)
+			run.err = err
 			return
 		}
 
-		switch outcome {
-		case stopGateway:
-			log.Printf("discord: gateway stopped: %v", err)
-			return
-		case reconnectFresh:
+		if outcome == reconnectFresh || outcome == invalidSession {
 			s.resetSession()
 		}
 
-		if err != nil {
+		switch {
+		case !isOpen:
+			if err == nil {
+				err = errors.New("discord: gateway disconnected before READY")
+			}
+			run.lastErr.Store(&err)
+		case err != nil:
 			log.Printf("discord: gateway disconnected, reconnecting: %v", err)
 		}
 
 		wait := delay/2 + rand.N(delay/2+1)
+		if outcome == invalidSession {
+			wait = invalidSessionMinDelay + rand.N(invalidSessionMaxDelay-invalidSessionMinDelay+1)
+		}
 		if sleep(ctx, wait) != nil {
 			return
 		}
@@ -262,27 +539,27 @@ func (s *Session) gatewayLoop(ctx context.Context, opened chan<- error, done cha
 }
 
 // prepareIdentify applies Discord's limits before a new session is started.
-// The first Identify is covered by the check in Open.
+// The session start limit of the first Identify after Open is covered by the
+// check in Open.
 func (s *Session) prepareIdentify(ctx context.Context) error {
-	if !s.identified {
-		return nil
-	}
-
-	info, err := s.fetchGatewayBot(ctx)
-	if err != nil {
-		return err
-	}
-	s.gatewayURL = info.URL
-
-	if info.SessionStartLimit.Remaining <= 0 {
-		wait := time.Duration(info.SessionStartLimit.ResetAfter) * time.Millisecond
-		log.Printf("discord: no session starts remaining, waiting %s", wait)
-		if err := sleep(ctx, wait); err != nil {
+	if s.identified {
+		info, err := s.fetchGatewayBot(ctx)
+		if err != nil {
 			return err
+		}
+		s.gatewayURL = info.URL
+		s.maxConcurrency = info.SessionStartLimit.MaxConcurrency
+
+		if info.SessionStartLimit.Remaining <= 0 {
+			wait := time.Duration(info.SessionStartLimit.ResetAfter) * time.Millisecond
+			log.Printf("discord: no session starts remaining, waiting %s", wait)
+			if err := sleep(ctx, wait); err != nil {
+				return err
+			}
 		}
 	}
 
-	return sleep(ctx, time.Until(s.lastIdentify.Add(identifyInterval)))
+	return s.waitIdentify(ctx)
 }
 
 func gatewayEndpoint(base string) (string, error) {
@@ -311,6 +588,32 @@ type gatewayConn struct {
 	ws      *websocket.Conn
 	writeMu sync.Mutex
 	acked   atomic.Bool
+
+	sent []time.Time // recent sends other than heartbeats, oldest first; guarded by writeMu
+
+	// Guarded by Session.presenceMu.
+	presenceSent  *discord.PresenceUpdate // the last presence sent on this connection
+	presenceTimer *time.Timer             // sends a presence that was over budget
+}
+
+// overBudgetError means a send would exceed Discord's limit on gateway events.
+type overBudgetError struct{ wait time.Duration }
+
+func (e *overBudgetError) Error() string {
+	return fmt.Sprintf("discord: gateway event limit reached, room again in %s", e.wait)
+}
+
+// take records a send against the budget, or reports how long until there is
+// room. c.writeMu must be held.
+func (c *gatewayConn) take(now time.Time) (time.Duration, bool) {
+	cutoff := now.Add(-gatewaySendWindow)
+	c.sent = slices.DeleteFunc(c.sent, func(t time.Time) bool { return !t.After(cutoff) })
+
+	if len(c.sent) >= gatewaySendLimit {
+		return c.sent[0].Sub(cutoff), false
+	}
+	c.sent = append(c.sent, now)
+	return 0, true
 }
 
 func (c *gatewayConn) send(op int, d any) error {
@@ -324,6 +627,12 @@ func (c *gatewayConn) send(op int, d any) error {
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+
+	if op != opHeartbeat {
+		if wait, ok := c.take(time.Now()); !ok {
+			return &overBudgetError{wait: wait}
+		}
+	}
 
 	if err := c.ws.SetWriteDeadline(time.Now().Add(gatewayWriteTimeout)); err != nil {
 		return err
@@ -374,13 +683,14 @@ func (s *Session) sendIdentify(c *gatewayConn) error {
 	}
 
 	identify := struct {
-		Token          string         `json:"token"`
-		Properties     properties     `json:"properties"`
-		Intents        discord.Intent `json:"intents"`
-		LargeThreshold int            `json:"large_threshold"`
-		Shard          *[2]int        `json:"shard,omitempty"`
+		Token          string                  `json:"token"`
+		Properties     properties              `json:"properties"`
+		Intents        discord.Intent          `json:"intents"`
+		LargeThreshold int                     `json:"large_threshold"`
+		Shard          *[2]int                 `json:"shard,omitempty"`
+		Presence       *discord.PresenceUpdate `json:"presence,omitempty"`
 	}{
-		Token:          s.Token,
+		Token:          s.gatewayToken(),
 		Properties:     properties{OS: runtime.GOOS, Browser: libraryName, Device: libraryName},
 		Intents:        s.Intents,
 		LargeThreshold: 250,
@@ -390,7 +700,13 @@ func (s *Session) sendIdentify(c *gatewayConn) error {
 		identify.Shard = &[2]int{s.ShardID, s.ShardCount}
 	}
 
-	s.lastIdentify = time.Now()
+	// The presence goes with the Identify, so that the bot does not show as
+	// plainly online before it is applied.
+	s.presenceMu.Lock()
+	identify.Presence = s.presence.Load()
+	c.presenceSent = identify.Presence
+	s.presenceMu.Unlock()
+
 	s.identified = true
 
 	return c.send(opIdentify, identify)
@@ -401,7 +717,13 @@ func (s *Session) sendResume(c *gatewayConn) error {
 		Token     string `json:"token"`
 		SessionID string `json:"session_id"`
 		Seq       int64  `json:"seq"`
-	}{s.Token, s.sessionID, s.sequence.Load()})
+	}{s.gatewayToken(), s.sessionID, s.sequence.Load()})
+}
+
+// gatewayToken is the token for Identify and Resume, which take it without
+// the "Bot " prefix of the Authorization header.
+func (s *Session) gatewayToken() string {
+	return strings.TrimPrefix(s.Token, "Bot ")
 }
 
 // runConnection opens one websocket and reads from it until it ends.
@@ -433,7 +755,7 @@ func (s *Session) runConnection(ctx context.Context, onReady func()) (connOutcom
 
 	conn := &gatewayConn{ws: ws}
 	conn.acked.Store(true)
-	defer s.conn.Store(nil)
+	defer s.disconnected(conn)
 
 	connCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -497,7 +819,7 @@ func (s *Session) runConnection(ctx context.Context, onReady func()) (connOutcom
 			if resumable {
 				return reconnect, nil
 			}
-			return reconnectFresh, nil
+			return invalidSession, nil
 
 		case opDispatch:
 			if p.S != nil {

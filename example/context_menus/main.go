@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,7 @@ import (
 )
 
 func main() {
-	guilds := strings.Split(os.Getenv("GUILD"), ",")
+	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
@@ -24,43 +25,42 @@ func main() {
 	})
 
 	// Message command
-	bot.AddMessageCommand(&minidis.MessageCommandProps{
+	bot.AddMessageCommand(&minidis.MessageCommand{
 		Name: "re-reply",
 		Execute: func(c *minidis.MessageCommandContext) error {
-			return c.ReplyEphemeral(c.Message.Content)
+			// A message with only embeds or attachments has no text, and Discord
+			// refuses an empty reply.
+			content := c.Message.Content
+			if content == "" {
+				content = "(this message has no text)"
+			}
+			return c.ReplyWith(minidis.Message{Content: content, Ephemeral: true})
 		},
 	})
 
 	// User command
-	bot.AddUserCommand(&minidis.UserCommandProps{
+	bot.AddUserCommand(&minidis.UserCommand{
 		Name: "get-user",
 		Execute: func(c *minidis.UserCommandContext) error {
 
-			fmt.Println(c.Member)
-			fmt.Println(c.User)
+			fmt.Println(c.TargetMember)
+			fmt.Println(c.TargetUser)
 
-			return c.ReplyString("hello " + c.User.Username)
+			return c.Reply("hello " + c.TargetUser.Username)
 		},
 	})
 
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
+	// Stop on CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(guilds...); err != nil {
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
-
-	// Close the session
-	bot.CloseSession()
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }

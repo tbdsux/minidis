@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -18,7 +19,7 @@ var (
 )
 
 func main() {
-	guilds := strings.Split(os.Getenv("GUILD"), ",")
+	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	bot.OnReady(func(s *client.Session, i *discord.Ready) {
@@ -26,30 +27,35 @@ func main() {
 	})
 
 	// {user} is captured from the custom ID into c.Params
-	bot.AddModalSubmitHandler(&minidis.ModalInteractionProps{
-		ID: "modals_survey:{user}",
-		Execute: func(s *minidis.SlashContext, c *minidis.ModalSubmitContext) error {
-			if err := s.ReplyString("Thank you for taking your time to fill the survey"); err != nil {
-				return err
-			}
-
-			_, err := s.Session.ChannelMessageSend(ResultsChannel, fmt.Sprintf(
-				"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s",
-				c.Params["user"],
-				c.Data.Components[0].(*discord.Label).Component.(*discord.TextInput).Value,
-				c.Data.Components[1].(*discord.Label).Component.(*discord.TextInput).Value,
-			))
-
+	bot.HandleModal("modals_survey:{user}", func(c *minidis.ModalSubmitContext) error {
+		if err := c.Reply("Thank you for taking your time to fill the survey"); err != nil {
 			return err
-		},
+		}
+
+		// Read the submitted values by the custom IDs of the components. The
+		// text is the user's own, so mentions in it must not ping anyone.
+		_, err := c.Session.ChannelMessageSendComplex(c, ResultsChannel, &discord.MessageSend{
+			Content: fmt.Sprintf(
+				"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s\n\n**Rating**: %s\n**Liked**: %s\n**May contact**: %t",
+				c.Params["user"],
+				c.Text("opinion"),
+				c.Text("suggestions"),
+				c.Text("rating"),
+				strings.Join(c.Selected("liked"), ", "),
+				c.Checked("contact"),
+			),
+			AllowedMentions: &discord.MessageAllowedMentions{Parse: []discord.AllowedMentionType{}},
+		})
+
+		return err
 	})
 
 	// simple command
-	bot.AddCommand(&minidis.SlashCommandProps{
+	bot.AddCommand(&minidis.Command{
 		Name:        "modals",
 		Description: "Show a modal component example",
-		Execute: func(c *minidis.SlashContext) error {
-			return c.ReplyModal(minidis.ReplyModalProps{
+		Execute: func(c *minidis.Context) error {
+			return c.ReplyModal(minidis.Modal{
 				Title:    "Modals survey",
 				CustomID: "modals_survey:" + c.Author.ID,
 				Components: []discord.MessageComponent{
@@ -73,29 +79,48 @@ func main() {
 							MaxLength: 2000,
 						},
 					},
+					discord.Label{
+						Label: "How would you rate them?",
+						Component: discord.RadioGroup{
+							CustomID: "rating",
+							Options: []discord.GroupOption{
+								{Value: "good", Label: "Good"},
+								{Value: "okay", Label: "Okay"},
+								{Value: "bad", Label: "Bad"},
+							},
+						},
+					},
+					discord.Label{
+						Label: "What did you like?",
+						Component: discord.CheckboxGroup{
+							CustomID: "liked",
+							Required: discord.Bool(false),
+							Options: []discord.GroupOption{
+								{Value: "speed", Label: "Speed"},
+								{Value: "looks", Label: "Looks"},
+							},
+						},
+					},
+					discord.Label{
+						Label:     "May we contact you about your feedback?",
+						Component: discord.Checkbox{CustomID: "contact"},
+					},
 				},
 			})
 		},
 	})
 
-	// Open session
-	if err := bot.OpenSession(); err != nil {
-		log.Fatalln("Failed to open session:", err)
-		return
-	}
+	// Stop on CTRL+C
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(guilds...); err != nil {
+	if err := bot.SyncCommands(ctx, guilds...); err != nil {
 		log.Fatalln("Failed to sync commands:", err)
-		return
 	}
 
-	// Wait for CTRL+C to exit
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
-
-	// Close the session
-	bot.CloseSession()
+	if err := bot.Run(ctx); err != nil {
+		log.Fatalln("Bot stopped with an error:", err)
+	}
 }

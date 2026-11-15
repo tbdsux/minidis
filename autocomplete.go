@@ -12,8 +12,11 @@ const maxAutocompleteChoices = 25
 
 // AutocompleteContext is passed to a command's Autocomplete handler while a user
 // types into an option declared with Autocomplete: true.
+//
+// Respond is the only valid response: the reply, modal and edit methods of
+// the embedded Context fail during autocomplete.
 type AutocompleteContext struct {
-	*SlashContext
+	*Context
 
 	// Focused is the option being typed into. Check Focused.Name when a command
 	// has several autocomplete options.
@@ -48,7 +51,7 @@ func (c *AutocompleteContext) Respond(choices ...*discord.ApplicationCommandOpti
 		choices = []*discord.ApplicationCommandOptionChoice{}
 	}
 
-	return c.Session.InteractionRespond(c.Interaction, &discord.InteractionResponse{
+	return c.respond(&discord.InteractionResponse{
 		Type: discord.InteractionApplicationCommandAutocompleteResult,
 		Data: &discord.InteractionResponseData{Choices: choices},
 	})
@@ -59,17 +62,17 @@ func Choice(name string, value any) *discord.ApplicationCommandOptionChoice {
 	return &discord.ApplicationCommandOptionChoice{Name: name, Value: value}
 }
 
-func (m *Minidis) executeAutocomplete(c *SlashContext) error {
+func (m *Minidis) routeAutocomplete(c *Context) HandlerFunc {
 	data := c.Interaction.ApplicationCommandData()
 
-	cmd, ok := m.Commands[data.Name]
+	cmd, ok := m.commands[data.Name]
 	if !ok {
-		return fmt.Errorf("%w: autocomplete for command %q", ErrNoHandler, data.Name)
+		return failWith(fmt.Errorf("%w: autocomplete for command %q", ErrNoHandler, data.Name))
 	}
 
 	target := cmd.resolve(data.Options)
 	if target.autocomplete == nil {
-		return fmt.Errorf("%w: autocomplete for command %q", ErrNoHandler, data.Name)
+		return failWith(fmt.Errorf("%w: autocomplete for command %q", ErrNoHandler, data.Name))
 	}
 
 	c.setOptions(target.options)
@@ -82,5 +85,7 @@ func (m *Minidis) executeAutocomplete(c *SlashContext) error {
 		}
 	}
 
-	return target.autocomplete(&AutocompleteContext{SlashContext: c, Focused: focused})
+	return func(c *Context) error {
+		return target.autocomplete(&AutocompleteContext{Context: c, Focused: focused})
+	}
 }

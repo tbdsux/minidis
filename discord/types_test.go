@@ -179,3 +179,151 @@ func TestApplicationCommandPermissionsEncoding(t *testing.T) {
 		t.Errorf("permissions = %v", *c.DefaultMemberPermissions)
 	}
 }
+
+func TestDecodeInteractionContextFields(t *testing.T) {
+	var i Interaction
+	if err := json.Unmarshal([]byte(`{"type":2,"id":"1","app_permissions":"0",
+		"guild":{"id":"g","features":["COMMUNITY"],"locale":"en-US"},
+		"channel":{"id":"c","type":0},
+		"entitlements":[{"id":"e","sku_id":"s","application_id":"a","type":8,"deleted":false,"starts_at":"2026-01-02T03:04:05Z","ends_at":null,"consumed":true}],
+		"authorizing_integration_owners":{"0":"g","1":"u"},
+		"attachment_size_limit":10485760,
+		"data":{"id":"cmd","name":"x","type":1}}`), &i); err != nil {
+		t.Fatal(err)
+	}
+
+	if i.Guild.ID != "g" || i.Channel.ID != "c" || i.AttachmentSizeLimit != 10485760 {
+		t.Errorf("interaction = %+v", i)
+	}
+	owners := i.AuthorizingIntegrationOwners
+	if owners[ApplicationIntegrationGuildInstall] != "g" || owners[ApplicationIntegrationUserInstall] != "u" {
+		t.Errorf("owners = %v", owners)
+	}
+	e := i.Entitlements[0]
+	if e.SKUID != "s" || e.Type != EntitlementApplicationSubscription || e.StartsAt == nil || e.EndsAt != nil || e.Consumed == nil || !*e.Consumed {
+		t.Errorf("entitlement = %+v", e)
+	}
+}
+
+func TestDecodeModalGroupComponents(t *testing.T) {
+	var m Interaction
+	if err := json.Unmarshal([]byte(`{"type":5,"app_permissions":"0","data":{"custom_id":"modal","components":[
+		{"type":18,"component":{"type":21,"custom_id":"r","value":"b"}},
+		{"type":18,"component":{"type":21,"custom_id":"r0","value":null}},
+		{"type":18,"component":{"type":22,"custom_id":"g","values":["x","y"]}},
+		{"type":18,"component":{"type":23,"custom_id":"c","value":true}}
+	]}}`), &m); err != nil {
+		t.Fatal(err)
+	}
+
+	child := func(i int) MessageComponent { return m.ModalSubmitData().Components[i].(*Label).Component }
+
+	if r := child(0).(*RadioGroup); r.CustomID != "r" || r.Value == nil || *r.Value != "b" {
+		t.Errorf("radio = %+v", r)
+	}
+	if r := child(1).(*RadioGroup); r.Value != nil {
+		t.Errorf("unpicked radio = %q", *r.Value)
+	}
+	if g := child(2).(*CheckboxGroup); !reflect.DeepEqual(g.Values, []string{"x", "y"}) {
+		t.Errorf("group = %+v", g)
+	}
+	if c := child(3).(*Checkbox); !c.Value {
+		t.Errorf("checkbox = %+v", c)
+	}
+}
+
+func TestGroupComponentsEncode(t *testing.T) {
+	opts := []GroupOption{{Value: "a", Label: "A", Default: true}, {Value: "b", Label: "B", Description: "d"}}
+	got, err := json.Marshal([]MessageComponent{
+		RadioGroup{CustomID: "r", Options: opts, Required: Bool(false)},
+		CheckboxGroup{CustomID: "g", Options: opts, MinValues: Int(0), MaxValues: 2},
+		Checkbox{CustomID: "c", Default: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	options := `[{"value":"a","label":"A","default":true},{"value":"b","label":"B","description":"d"}]`
+	assertJSONEqual(t, got, `[
+		{"type":21,"custom_id":"r","options":`+options+`,"required":false},
+		{"type":22,"custom_id":"g","options":`+options+`,"min_values":0,"max_values":2},
+		{"type":23,"custom_id":"c","default":true}
+	]`)
+}
+
+func TestPollEncodes(t *testing.T) {
+	got, err := json.Marshal(InteractionResponseData{Poll: &PollCreateRequest{
+		Question: PollMedia{Text: "Best?"},
+		Answers:  []PollAnswer{{PollMedia: PollMedia{Text: "Go", Emoji: &ComponentEmoji{Name: "🦦"}}}},
+		Duration: 2,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, got, `{"poll":{"question":{"text":"Best?"},"answers":[{"poll_media":{"text":"Go","emoji":{"name":"🦦"}}}],"duration":2}}`)
+}
+
+func TestDecodeMessagePoll(t *testing.T) {
+	var m Message
+	if err := json.Unmarshal([]byte(`{"id":"m","poll":{"question":{"text":"Q"},"answers":[{"answer_id":1,"poll_media":{"text":"A"}}],
+		"expiry":"2026-01-02T03:04:05Z","allow_multiselect":false,"layout_type":1,
+		"results":{"is_finalized":true,"answer_counts":[{"id":1,"count":3,"me_voted":false}]}}}`), &m); err != nil {
+		t.Fatal(err)
+	}
+	if p := m.Poll; p.Answers[0].AnswerID != 1 || p.Expiry == nil || !p.Results.IsFinalized || p.Results.AnswerCounts[0].Count != 3 {
+		t.Errorf("poll = %+v", p)
+	}
+}
+
+func TestWebhookEditFlags(t *testing.T) {
+	v2, none := MessageFlagsIsComponentsV2, MessageFlags(0)
+
+	tests := []struct {
+		name string
+		edit any
+		want string
+	}{
+		{"unset flags are left out", WebhookEdit{}, `{}`},
+		{"zero clears the flags", WebhookEdit{Flags: &none}, `{"flags":0}`},
+		{"components v2 clears content, embeds and poll", WebhookEdit{Flags: &v2}, `{"flags":32768,"content":null,"embeds":[],"poll":null}`},
+		{"components v2 keeps a set content", WebhookEdit{Flags: &v2, Content: String("x")}, `{"flags":32768,"content":"x","embeds":[],"poll":null}`},
+		{"response data does the same", InteractionResponseData{Flags: v2}, `{"flags":32768,"content":null,"poll":null}`},
+		{"other response data is unchanged", InteractionResponseData{Flags: MessageFlagsEphemeral}, `{"flags":64}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := json.Marshal(tt.edit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertJSONEqual(t, got, tt.want)
+		})
+	}
+}
+
+func TestApplicationCommandEditLeavesNameOut(t *testing.T) {
+	got, err := json.Marshal(ApplicationCommand{Description: "new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, got, `{"description":"new"}`)
+}
+
+func TestEntryPointCommandEncodes(t *testing.T) {
+	got, err := json.Marshal(ApplicationCommand{Name: "launch", Type: PrimaryEntryPointApplicationCommand, Handler: EntryPointHandlerDiscordLaunchActivity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, got, `{"name":"launch","type":4,"handler":2}`)
+}
+
+func TestInteractionPartialGuildLocale(t *testing.T) {
+	var i Interaction
+	if err := json.Unmarshal([]byte(`{"type":2,"guild":{"id":"g","locale":"fr","features":[]},"data":{"name":"c","type":1}}`), &i); err != nil {
+		t.Fatal(err)
+	}
+	if i.Guild == nil || i.Guild.Locale != French {
+		t.Errorf("guild = %+v", i.Guild)
+	}
+}

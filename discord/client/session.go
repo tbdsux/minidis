@@ -4,17 +4,26 @@
 //
 // Endpoints without a typed method can be reached with Session.Request, and
 // gateway events without a typed handler with Session.OnRawEvent.
+//
+// Requests follow Discord's rate limits: per-route buckets, the global limit
+// of 50 requests a second (kept ahead of time), and 429 responses, including
+// Cloudflare's. Requests sharing a bucket are sent one at a time. Once Discord
+// rejects the bot token with 401, further requests fail at once rather than
+// add to Discord's count of invalid requests. Path parameters are escaped, so
+// an ID taken from user input cannot change the path. Use WithAuditLogReason
+// to record a reason in a guild's audit log.
 package client
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/tbdsux/minidis/discord"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/tbdsux/minidis/discord"
 )
 
 const (
@@ -30,7 +39,10 @@ const (
 
 // Session is a connection to Discord: a REST client plus a Gateway connection.
 //
-// Configure its exported fields before calling Open.
+// Configure its exported fields before calling Open. Event handlers each run
+// in their own goroutine, so a slow handler does not block the gateway, and
+// they may run concurrently. A handler that panics is logged and does not stop
+// the bot.
 type Session struct {
 	Token      string // the full Authorization value, including the "Bot " prefix
 	Intents    discord.Intent
@@ -41,7 +53,9 @@ type Session struct {
 	UserAgent  string
 	HTTPClient *http.Client
 
-	limiter *rateLimiter
+	limiter  *rateLimiter
+	rejected atomic.Pointer[rejection] // set once Discord rejects the token
+	invalid  invalidRequests
 
 	handlersMu        sync.RWMutex
 	onReady           []func(*Session, *discord.Ready)
@@ -58,23 +72,38 @@ type Session struct {
 	user  atomic.Pointer[discord.User]
 	appID atomic.Pointer[string]
 
-	conn     atomic.Pointer[gatewayConn] // nil until READY or RESUMED
-	presence atomic.Pointer[discord.PresenceUpdate]
+	conn       atomic.Pointer[gatewayConn] // nil until READY or RESUMED
+	presence   atomic.Pointer[discord.PresenceUpdate]
+	presenceMu sync.Mutex // serializes storing and sending the presence
 
-	lifecycle sync.Mutex // serializes Open, Close and Shutdown
-	cancel    context.CancelFunc
-	done      chan struct{}
+	// lifecycle serializes Open and Shutdown. It is a one-slot channel rather
+	// than a mutex so that waiting for it obeys ctx.
+	lifecycle chan struct{}
+	run       atomic.Pointer[gatewayRun] // the last Open; nil before the first
 
-	// running tracks the handlers started since the last Open. It is replaced
-	// by Open, before the gateway goroutine that uses it starts.
+	// drain holds the handlers of every run whose handlers have not been
+	// waited for by a Shutdown yet. Guarded by lifecycle.
+	drain []*sync.WaitGroup
+
+	// openingMu guards the cancel func of an Open in progress, so that
+	// Shutdown can cancel it without waiting for the lifecycle lock, and the
+	// Shutdown counters, which keep an Open that races a Shutdown from
+	// reopening the session after it.
+	openingMu        sync.Mutex
+	opening          context.CancelFunc
+	pendingShutdowns int
+	shutdowns        uint64 // Shutdowns started so far
+
+	// running tracks the handlers of the current run. It is replaced by Open,
+	// before the gateway goroutine that uses it starts.
 	running *sync.WaitGroup
 
-	// Owned by the gateway goroutine while it runs.
-	gatewayURL   string
-	sessionID    string
-	resumeURL    string
-	lastIdentify time.Time
-	identified   bool
+	// Owned by the gateway goroutine while it runs, and by Open before.
+	gatewayURL     string
+	sessionID      string
+	resumeURL      string
+	maxConcurrency int  // from GET /gateway/bot
+	identified     bool // an Identify was sent since Open
 
 	sequence atomic.Int64 // shared with the heartbeat goroutine; 0 means none yet
 }
@@ -89,6 +118,7 @@ func New(token string) *Session {
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 		limiter:    newRateLimiter(),
 		running:    &sync.WaitGroup{},
+		lifecycle:  make(chan struct{}, 1),
 	}
 }
 
@@ -111,10 +141,6 @@ func addHandler[H any](s *Session, list *[]H, h H) {
 	defer s.handlersMu.Unlock()
 	*list = append(*list, h)
 }
-
-// Handlers each run in their own goroutine, so a slow handler does not block
-// the gateway, and they may run concurrently. A handler that panics is logged
-// and does not stop the bot.
 
 // OnReady registers a handler for the READY event.
 func (s *Session) OnReady(h func(*Session, *discord.Ready)) {

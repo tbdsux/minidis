@@ -23,6 +23,8 @@ type fakeGateway struct {
 	conns  atomic.Int32
 	starts atomic.Int32
 	remain atomic.Int32
+
+	maxConcurrency atomic.Int32
 }
 
 type fakeConn struct {
@@ -93,16 +95,18 @@ func newFakeGateway(t *testing.T, script ...func(c *fakeConn)) (*Session, *fakeG
 	t.Helper()
 
 	identifyInterval, minReconnectDelay = 10*time.Millisecond, 5*time.Millisecond
+	invalidSessionMinDelay, invalidSessionMaxDelay = 5*time.Millisecond, 10*time.Millisecond
 
 	g := &fakeGateway{t: t, script: script}
 	g.remain.Store(1000)
+	g.maxConcurrency.Store(1)
 
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/gateway/bot", func(w http.ResponseWriter, r *http.Request) {
 		g.starts.Add(1)
-		fmt.Fprintf(w, `{"url":"ws://%s/gw","shards":1,"session_start_limit":{"total":1000,"remaining":%d,"reset_after":1000,"max_concurrency":1}}`,
-			r.Host, g.remain.Load())
+		fmt.Fprintf(w, `{"url":"ws://%s/gw","shards":1,"session_start_limit":{"total":1000,"remaining":%d,"reset_after":1000,"max_concurrency":%d}}`,
+			r.Host, g.remain.Load(), g.maxConcurrency.Load())
 	})
 	serveWS := func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)
@@ -162,7 +166,7 @@ func TestOpenIdentifiesAndDispatches(t *testing.T) {
 		if err := json.Unmarshal(c.read(opIdentify).D, &identify); err != nil {
 			t.Error(err)
 		}
-		if identify.Token != "Bot token" || identify.Intents != int(discord.IntentsGuilds) || identify.Properties.Browser != "minidis" {
+		if identify.Token != "token" || identify.Intents != int(discord.IntentsGuilds) || identify.Properties.Browser != "minidis" {
 			t.Errorf("identify = %+v", identify)
 		}
 
@@ -211,14 +215,14 @@ func TestOpenIdentifiesAndDispatches(t *testing.T) {
 		}
 	})
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
 	if s.User().ID != "42" || s.ApplicationID() != "99" {
 		t.Errorf("after Open: user=%+v app=%q", s.User(), s.ApplicationID())
 	}
-	if err := s.Open(); !errors.Is(err, ErrAlreadyOpen) {
+	if err := s.Open(t.Context()); !errors.Is(err, ErrAlreadyOpen) {
 		t.Errorf("second Open = %v", err)
 	}
 
@@ -242,7 +246,7 @@ func TestOpenFailsOnFatalCloseCode(t *testing.T) {
 	})
 
 	var closeErr *GatewayCloseError
-	if err := s.Open(); !errors.As(err, &closeErr) || closeErr.Code != 4014 {
+	if err := s.Open(t.Context()); !errors.As(err, &closeErr) || closeErr.Code != 4014 {
 		t.Fatalf("Open = %v, want close code 4014", err)
 	}
 	if n := g.conns.Load(); n != 1 {
@@ -254,7 +258,7 @@ func TestOpenRefusesWithoutSessionStarts(t *testing.T) {
 	s, g := newFakeGateway(t)
 	g.remain.Store(0)
 
-	if err := s.Open(); err == nil || !strings.Contains(err.Error(), "no session starts") {
+	if err := s.Open(t.Context()); err == nil || !strings.Contains(err.Error(), "no session starts") {
 		t.Fatalf("Open = %v", err)
 	}
 	if n := g.conns.Load(); n != 0 {
@@ -278,7 +282,7 @@ func resumeScript(t *testing.T, seq int64, done chan struct{}) func(c *fakeConn)
 		if err := json.Unmarshal(c.read(opResume).D, &resume); err != nil {
 			t.Error(err)
 		}
-		if resume.SessionID != "sess-1" || resume.Seq != seq || resume.Token != "Bot token" {
+		if resume.SessionID != "sess-1" || resume.Seq != seq || resume.Token != "token" {
 			t.Errorf("resume = %+v", resume)
 		}
 
@@ -299,7 +303,7 @@ func TestReconnectOpResumes(t *testing.T) {
 		c.waitClosed()
 	}, resumeScript(t, 5, done))
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -318,7 +322,7 @@ func TestResumableCloseCodeResumes(t *testing.T) {
 		c.waitClosed()
 	}, resumeScript(t, 9, done))
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -336,7 +340,7 @@ func TestMissedHeartbeatACKResumes(t *testing.T) {
 		c.waitClosed() // never ACKs
 	}, resumeScript(t, 3, done))
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -370,7 +374,7 @@ func TestInvalidSessionIdentifiesAgain(t *testing.T) {
 				c.waitClosed()
 			})
 
-			if err := s.Open(); err != nil {
+			if err := s.Open(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close()
@@ -408,7 +412,7 @@ func TestHeartbeatSendsLastSequenceAndAnswersServerRequest(t *testing.T) {
 		c.waitClosed()
 	})
 
-	if err := s.Open(); err != nil {
+	if err := s.Open(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
@@ -427,7 +431,7 @@ func TestCloseAllowsReopen(t *testing.T) {
 	s, g := newFakeGateway(t, script, script)
 
 	for range 2 {
-		if err := s.Open(); err != nil {
+		if err := s.Open(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.Close(); err != nil {

@@ -7,30 +7,37 @@ import (
 )
 
 func (m *Minidis) routeMessage(data discord.ApplicationCommandInteractionData) HandlerFunc {
-	cmd, ok := m.MessageCommands[data.Name]
+	cmd, ok := m.messageCommands[data.Name]
 	if !ok || cmd.Execute == nil {
 		return failWith(fmt.Errorf("%w: message command %q", ErrNoHandler, data.Name))
 	}
 
-	return func(c *SlashContext) error {
+	return func(c *Context) error {
 		return cmd.Execute(&MessageCommandContext{
-			SlashContext: c,
-			Message:      data.Resolved.Messages[data.TargetID],
+			Context: c,
+			Message: data.Resolved.Messages[data.TargetID],
 		})
 	}
 }
 
 func (m *Minidis) routeUser(data discord.ApplicationCommandInteractionData) HandlerFunc {
-	cmd, ok := m.UserCommands[data.Name]
+	cmd, ok := m.userCommands[data.Name]
 	if !ok || cmd.Execute == nil {
 		return failWith(fmt.Errorf("%w: user command %q", ErrNoHandler, data.Name))
 	}
 
-	return func(c *SlashContext) error {
+	return func(c *Context) error {
 		return cmd.Execute(&UserCommandContext{
-			SlashContext: c,
-			Member:       data.Resolved.Members[data.TargetID],
-			User:         data.Resolved.Users[data.TargetID],
+			Context:      c,
+			TargetMember: data.Resolved.Members[data.TargetID],
+			TargetUser:   data.Resolved.Users[data.TargetID],
 		})
 	}
+}
+
+func (m *Minidis) routeEntryPoint(data discord.ApplicationCommandInteractionData) HandlerFunc {
+	if m.entryPoint == nil || m.entryPoint.Execute == nil {
+		return failWith(fmt.Errorf("%w: entry point command %q", ErrNoHandler, data.Name))
+	}
+	return m.entryPoint.Execute
 }
