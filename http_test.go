@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/tbdsux/minidis/discord/client"
 )
 
 // signedRequest builds an interaction request as Discord would send it.
@@ -372,5 +375,117 @@ func TestSignatureFreshness(t *testing.T) {
 				t.Errorf("status = %d, want %d", w.Code, tt.want)
 			}
 		})
+	}
+}
+
+// scriptedAPI answers interaction callbacks in order from script, waiting
+// each one's delay first; other requests succeed at once. It runs in memory,
+// for synctest bubbles.
+type scriptedAPI struct {
+	mu     sync.Mutex
+	script []scriptedReply
+}
+
+type scriptedReply struct {
+	delay  time.Duration
+	status int
+}
+
+func (a *scriptedAPI) RoundTrip(r *http.Request) (*http.Response, error) {
+	reply := scriptedReply{status: http.StatusOK}
+	if strings.HasSuffix(r.URL.Path, "/callback") {
+		a.mu.Lock()
+		reply, a.script = a.script[0], a.script[1:]
+		a.mu.Unlock()
+	}
+	time.Sleep(reply.delay)
+
+	body := `{"id":"sent"}`
+	if reply.status != http.StatusOK {
+		body = `{"code":50035,"message":"Invalid Form Body"}`
+	}
+	return &http.Response{StatusCode: reply.status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+}
+
+func TestConcurrentResponses(t *testing.T) {
+	tests := []struct {
+		name   string
+		script []scriptedReply // first: the response sent from a goroutine; second: the one after
+		answer time.Duration   // when the request gets its 202
+	}{
+		// A second response refused at once must not answer the request
+		// while the first is still on its way.
+		{"refused second while the first is sent", []scriptedReply{{time.Second, http.StatusOK}, {0, http.StatusBadRequest}}, time.Second},
+		// The first is refused early, the second lands after the cutoff: it
+		// still counts, and the request waits for it.
+		{"delivered after the cutoff", []scriptedReply{{500 * time.Millisecond, http.StatusBadRequest}, {3600 * time.Millisecond, http.StatusOK}}, 3600 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot := New("token")
+			bot.Session.HTTPClient = &http.Client{Transport: &scriptedAPI{script: tt.script}}
+			h, key := newHTTPHandler(t, bot)
+
+			var responded bool
+			var cause, editErr error
+			bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
+				first := make(chan error, 1)
+				go func() { first <- c.Reply("A") }()
+				time.Sleep(time.Millisecond) // A is on its way
+				_ = c.Reply("B")
+				<-first
+
+				responded, cause, editErr = c.Responded(), context.Cause(c), c.Edit("edited")
+				return nil
+			}})
+
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, signedRequest(t, key, slashPayload("c", "")))
+
+				if took := time.Since(start); took < tt.answer {
+					t.Errorf("answered after %v, before the response landed at %v", took, tt.answer)
+				}
+				synctest.Wait()
+			})
+
+			if !responded || cause != nil || editErr != nil {
+				t.Errorf("responded = %v, cause = %v, edit err = %v", responded, cause, editErr)
+			}
+		})
+	}
+}
+
+func TestOpenDuringShutdownFails(t *testing.T) {
+	bot, _ := newTestBot(t)
+	h, key := newHTTPHandler(t, bot)
+
+	deferred, release := make(chan struct{}), make(chan struct{})
+	bot.AddCommand(&Command{Name: "slow", Execute: func(c *Context) error {
+		if err := c.DeferReply(false); err != nil {
+			return err
+		}
+		close(deferred)
+		<-release
+		return nil
+	}})
+
+	go h.ServeHTTP(httptest.NewRecorder(), signedRequest(t, key, slashPayload("slow", "")))
+	<-deferred
+
+	shutdown := make(chan error, 1)
+	go func() { shutdown <- bot.Shutdown(context.Background()) }()
+	time.Sleep(50 * time.Millisecond) // Shutdown is draining the handler
+
+	// An Open now would reopen what is being closed.
+	if err := bot.Open(t.Context()); !errors.Is(err, client.ErrShuttingDown) {
+		t.Errorf("Open during Shutdown = %v", err)
+	}
+
+	close(release)
+	if err := <-shutdown; err != nil {
+		t.Fatal(err)
 	}
 }

@@ -2,6 +2,7 @@ package minidis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -440,5 +441,20 @@ func TestResponseDetails(t *testing.T) {
 	kept := MessageEdit{Files: []*discord.File{{Name: "a.png"}}, Attachments: []*discord.MessageAttachment{described}}.attachments()
 	if len(kept) != 1 || kept[0] != described {
 		t.Errorf("attachments = %+v", kept)
+	}
+}
+
+func TestUpdateToComponentsV2ClearsEmbeds(t *testing.T) {
+	data, err := json.Marshal(MessageEdit{
+		Flags:      discord.MessageFlagsIsComponentsV2,
+		Components: []discord.MessageComponent{discord.TextDisplay{Content: "v2"}},
+	}.responseData())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"embeds":[]`, `"content":null`, `"poll":null`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("update = %s, missing %s", data, want)
+		}
 	}
 }

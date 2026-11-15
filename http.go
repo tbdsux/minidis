@@ -174,8 +174,8 @@ func (h *httpHandler) firstSight(id string, now time.Time) bool {
 }
 
 // startHTTPInteraction runs the handler for i in the background. The returned
-// channel is closed once it has responded or returned. It reports false if the
-// bot has been closed.
+// channel is closed once Discord has the response, or once the 3 seconds pass
+// without one. It reports false if the bot has been closed.
 func (m *Minidis) startHTTPInteraction(i *discord.Interaction) (<-chan struct{}, bool) {
 	m.runMu.RLock()
 	run := m.run

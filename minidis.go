@@ -49,6 +49,10 @@ type Minidis struct {
 	openMu  sync.Mutex
 	opening context.CancelFunc
 
+	// shutdowns counts the Shutdowns in progress, guarded by runMu. An Open
+	// that starts during one fails rather than reopen what it is closing.
+	shutdowns int
+
 	runMu sync.RWMutex
 	run   *runState // replaced by Open after Shutdown
 }
@@ -105,6 +109,10 @@ func (m *Minidis) Open(ctx context.Context) error {
 	defer cancel()
 
 	m.runMu.Lock()
+	if m.shutdowns > 0 {
+		m.runMu.Unlock()
+		return client.ErrShuttingDown
+	}
 	run := m.run
 	reopening := run.shutdown
 	if reopening {
@@ -131,16 +139,16 @@ func (m *Minidis) Open(ctx context.Context) error {
 	}
 
 	m.runMu.Lock()
-	// A Shutdown that ran while the gateway was connecting found no session
-	// to close, so close the one that just opened.
 	closed := run.shutdown
 	if !closed {
 		run.accepting = true
 	}
 	m.runMu.Unlock()
 
+	// A Shutdown began while the gateway was connecting. It closes the session
+	// once this Open has returned, within its own deadline.
 	if closed {
-		return errors.Join(errors.New("minidis: closed while opening"), m.Session.Close())
+		return client.ErrShuttingDown
 	}
 	return nil
 }
@@ -169,10 +177,17 @@ func (m *Minidis) Shutdown(ctx context.Context) error {
 	run := m.run
 	run.accepting = false
 	run.shutdown = true
+	m.shutdowns++
 	if m.opening != nil {
 		m.opening()
 	}
 	m.runMu.Unlock()
+
+	defer func() {
+		m.runMu.Lock()
+		m.shutdowns--
+		m.runMu.Unlock()
+	}()
 
 	// Handler contexts end with the shutdown, whether the handlers finished or
 	// ctx ran out.
@@ -239,7 +254,8 @@ func (m *Minidis) SetPresence(status discord.Status, activities ...*discord.Acti
 	return m.Session.UpdatePresence(&discord.PresenceUpdate{Status: status, Activities: activities})
 }
 
-// OnReady adds a handler that runs each time the bot connects.
+// OnReady adds a handler that runs each time the bot starts a gateway session:
+// on Open and after a reconnect that could not resume, but not on a resume.
 func (m *Minidis) OnReady(h func(*client.Session, *discord.Ready)) {
 	m.Session.OnReady(h)
 }

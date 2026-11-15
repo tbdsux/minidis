@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,13 +74,18 @@ type Context struct {
 	Options map[string]*discord.ApplicationCommandInteractionDataOption
 }
 
-// replyState tracks the initial response of an interaction.
+// replyState tracks the initial response of an interaction. Responses may be
+// sent concurrently, and the 3-second cutoff fires on its own timer, so what
+// they decide together is guarded by mu.
 type replyState struct {
-	state     atomic.Int32 // pending, responded or tooLate
-	delivered atomic.Bool  // a response certainly reached Discord
-	ack       func()       // called once Discord has a response or none can come
-	until     time.Time    // when the response window closes
-	cancel    context.CancelCauseFunc
+	mu        sync.Mutex
+	state     int  // pending, responded or tooLate
+	inFlight  int  // responses being sent
+	delivered bool // a response certainly reached Discord
+	closed    bool // the 3-second window has passed
+
+	ack    func() // called once Discord has a response or none can come
+	cancel context.CancelCauseFunc
 
 	// api is the context of the requests the response methods make. It
 	// outlives the handler, so that a response can be edited afterwards.
@@ -91,10 +97,34 @@ type replyState struct {
 }
 
 const (
-	pending int32 = iota
-	responded
-	tooLate // no response within the 3 seconds
+	pending   = iota
+	responded // a response was delivered, or is being sent
+	tooLate   // no response within the 3 seconds
 )
+
+// load returns the state.
+func (r *replyState) load() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.state
+}
+
+// closeWindow is called when the 3 seconds have passed. Unless a response
+// was delivered or is being sent, Discord will take none now.
+func (r *replyState) closeWindow() {
+	r.mu.Lock()
+	r.closed = true
+	expired := r.state == pending && r.inFlight == 0
+	if expired {
+		r.state = tooLate
+	}
+	r.mu.Unlock()
+
+	if expired {
+		r.cancel(ErrNoResponse)
+		r.ack()
+	}
+}
 
 func newContext(ctx, api context.Context, s *client.Session, i *discord.Interaction, bot *discord.User) *Context {
 	c := &Context{
@@ -186,7 +216,7 @@ func (c *Context) forErrors() *Context {
 // that Discord refused does not count. After a response, a message goes
 // through Followup or Edit instead of Reply; an error handler uses it to pick.
 func (c *Context) Responded() bool {
-	return c.reply != nil && c.reply.state.Load() == responded
+	return c.reply != nil && c.reply.load() == responded
 }
 
 // errTooLate is returned by the response methods once the 3 seconds passed
@@ -199,7 +229,7 @@ func (c *Context) api() (context.Context, error) {
 	if c.reply == nil {
 		return orBackground(c.ctx), nil
 	}
-	if c.reply.state.Load() == tooLate {
+	if c.reply.load() == tooLate {
 		return nil, errTooLate
 	}
 	return c.reply.api, nil
@@ -297,7 +327,9 @@ type MessageEdit struct {
 	Poll *discord.PollCreateRequest
 
 	// Flags replaces the message's flags, so include those to keep; zero
-	// leaves them unchanged. Only discord.MessageFlagsSuppressEmbeds and
+	// leaves them unchanged, so it cannot clear SuppressEmbeds (send a
+	// discord.WebhookEdit through Session for that). Only
+	// discord.MessageFlagsSuppressEmbeds and
 	// discord.MessageFlagsIsComponentsV2 can be set. Turning Components V2 on
 	// cannot be undone, and is how a deferred reply becomes a Components V2
 	// message: its text, embeds and poll are then cleared.
@@ -340,6 +372,11 @@ func (e MessageEdit) responseData() *discord.InteractionResponseData {
 	if e.Attachments != nil {
 		kept := e.attachments()
 		data.Attachments = &kept
+	}
+	// Turning an existing message into Components V2 needs its embeds cleared,
+	// as WebhookEdit does for edits; text and poll are sent as null.
+	if e.Flags&discord.MessageFlagsIsComponentsV2 != 0 && data.Embeds == nil {
+		data.Embeds = []*discord.MessageEmbed{}
 	}
 	return data
 }
@@ -395,30 +432,47 @@ func (c *Context) sendResponse(send func(context.Context) error) error {
 		return send(orBackground(c.ctx)) // a Context made by hand
 	}
 
-	// Claimed before sending, so that the 3-second cutoff cannot cancel a
-	// response being sent. A second response is left for Discord to refuse.
-	claimed := r.state.CompareAndSwap(pending, responded)
-	if !claimed && r.state.Load() == tooLate {
+	// Counted as responded while it is sent, so that the 3-second cutoff
+	// cannot cancel a response on its way. A second response is sent anyway
+	// and left for Discord to refuse.
+	r.mu.Lock()
+	if r.state == tooLate {
+		r.mu.Unlock()
 		return errTooLate
 	}
+	r.state = responded
+	r.inFlight++
+	r.mu.Unlock()
 
 	err := send(r.api)
+
+	r.mu.Lock()
+	r.inFlight--
+	acked, expired := false, false
 	switch {
 	case err == nil:
-		r.delivered.Store(true)
-		r.state.CompareAndSwap(pending, responded) // if another response was refused meanwhile
-	case claimed && notDelivered(err) && !r.delivered.Load():
-		// Free to try again, unless the window closed meanwhile.
-		if time.Now().Before(r.until) {
-			r.state.Store(pending)
-			return err
-		}
-		if r.state.CompareAndSwap(responded, tooLate) {
-			r.cancel(ErrNoResponse)
-		}
+		r.delivered = true
+		r.state = responded // even past the cutoff: Discord took it
+		acked = true
+	case !notDelivered(err):
+		// Possibly delivered, or refused because another response was.
+		acked = true
+	case r.delivered || r.inFlight > 0:
+		// Refused, but another response landed or may still land.
+	case r.closed:
+		r.state = tooLate
+		acked, expired = true, true
+	default:
+		r.state = pending // free to try again within the window
 	}
+	r.mu.Unlock()
 
-	r.ack()
+	if expired {
+		r.cancel(ErrNoResponse)
+	}
+	if acked {
+		r.ack()
+	}
 	return err
 }
 
