@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -81,8 +82,17 @@ func main() {
 			return c.Respond(choices...)
 		},
 		Execute: func(c *minidis.Context) error {
+			// Autocomplete only suggests: the user may still type anything. The
+			// value goes into a custom ID below, which is limited to 100
+			// characters and whose {language} capture cannot contain ":", so
+			// accept only the known languages.
+			name := c.String("name")
+			if !slices.Contains(languages, name) {
+				return c.ReplyWith(minidis.Message{Content: "Unknown language: pick one of the suggestions.", Ephemeral: true})
+			}
+
 			return c.ReplyWith(minidis.Message{
-				Content: fmt.Sprintf("You picked **%s**. Keep it?", c.String("name")),
+				Content: fmt.Sprintf("You picked **%s**. Keep it?", name),
 				Components: []discord.MessageComponent{
 					discord.ActionsRow{
 						Components: []discord.MessageComponent{
@@ -90,7 +100,7 @@ func main() {
 								Label: "Keep",
 								Style: discord.SuccessButton,
 								// {language} is captured into c.Params by the handler below
-								CustomID: "keep:" + c.String("name"),
+								CustomID: "keep:" + name,
 							},
 						},
 					},

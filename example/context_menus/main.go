@@ -28,7 +28,13 @@ func main() {
 	bot.AddMessageCommand(&minidis.MessageCommand{
 		Name: "re-reply",
 		Execute: func(c *minidis.MessageCommandContext) error {
-			return c.ReplyWith(minidis.Message{Content: c.Message.Content, Ephemeral: true})
+			// A message with only embeds or attachments has no text, and Discord
+			// refuses an empty reply.
+			content := c.Message.Content
+			if content == "" {
+				content = "(this message has no text)"
+			}
+			return c.ReplyWith(minidis.Message{Content: content, Ephemeral: true})
 		},
 	})
 

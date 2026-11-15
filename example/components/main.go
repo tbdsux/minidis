@@ -56,7 +56,7 @@ func main() {
 									Label:    "I don't know",
 									Style:    discord.LinkButton,
 									Disabled: false,
-									// Link buttons don't require CustomID and do not trigger the gateway/HTTP event
+									// Link buttons must not have a CustomID and do not trigger the gateway/HTTP event
 									URL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
 									Emoji: &discord.ComponentEmoji{
 										Name: "🤷",

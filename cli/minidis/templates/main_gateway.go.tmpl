@@ -31,6 +31,11 @@ func run() error {
 	}
 
 	bot := minidis.New(token)
+
+	// Interactions need no intents. Add others, such as
+	// discord.IntentsGuildMessages, to receive message or member events.
+	bot.SetIntents(discord.IntentsGuilds)
+
 	commands.Register(bot)
 
 	bot.OnReady(func(*client.Session, *discord.Ready) {

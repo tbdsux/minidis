@@ -100,6 +100,8 @@ const (
 	// IntentsAll includes the privileged intents.
 	IntentsAll = IntentsAllWithoutPrivileged | IntentsPrivileged
 
+	// IntentsNone receives no events beyond the basics, which is enough for
+	// a bot that only handles interactions.
 	IntentsNone Intent = 0
 )
 
@@ -248,12 +250,14 @@ type MessageEmbed struct {
 	Fields      []*MessageEmbedField   `json:"fields,omitempty"`
 }
 
+// MessageEmbedFooter is the footer of an embed.
 type MessageEmbedFooter struct {
 	Text         string `json:"text,omitempty"`
 	IconURL      string `json:"icon_url,omitempty"`
 	ProxyIconURL string `json:"proxy_icon_url,omitempty"`
 }
 
+// MessageEmbedImage is the image of an embed.
 type MessageEmbedImage struct {
 	URL      string `json:"url"`
 	ProxyURL string `json:"proxy_url,omitempty"`
@@ -261,6 +265,7 @@ type MessageEmbedImage struct {
 	Height   int    `json:"height,omitempty"`
 }
 
+// MessageEmbedThumbnail is the thumbnail of an embed.
 type MessageEmbedThumbnail struct {
 	URL      string `json:"url"`
 	ProxyURL string `json:"proxy_url,omitempty"`
@@ -268,17 +273,20 @@ type MessageEmbedThumbnail struct {
 	Height   int    `json:"height,omitempty"`
 }
 
+// MessageEmbedVideo is the video of an embed.
 type MessageEmbedVideo struct {
 	URL    string `json:"url,omitempty"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
 }
 
+// MessageEmbedProvider is the provider of an embed, such as a website.
 type MessageEmbedProvider struct {
 	URL  string `json:"url,omitempty"`
 	Name string `json:"name,omitempty"`
 }
 
+// MessageEmbedAuthor is the author of an embed.
 type MessageEmbedAuthor struct {
 	URL          string `json:"url,omitempty"`
 	Name         string `json:"name,omitempty"`
@@ -286,6 +294,7 @@ type MessageEmbedAuthor struct {
 	ProxyIconURL string `json:"proxy_icon_url,omitempty"`
 }
 
+// MessageEmbedField is a field of an embed.
 type MessageEmbedField struct {
 	Name   string `json:"name"`
 	Value  string `json:"value"`

@@ -51,8 +51,10 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// The handler may wait up to 15s for a slow response to reach Discord
+		// before it answers the request.
+		WriteTimeout: 20 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

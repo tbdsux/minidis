@@ -15,7 +15,6 @@ import (
 )
 
 func main() {
-	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
@@ -46,10 +45,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Register the commands. This replaces any registered before.
-	if err := bot.SyncCommands(ctx, guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
-	}
+	// This bot has no commands, so it does not call SyncCommands: syncing
+	// would replace the app's registered commands with none.
 
 	fmt.Println("Bot is running. Press CTRL+C to exit.")
 	if err := bot.Run(ctx); err != nil {

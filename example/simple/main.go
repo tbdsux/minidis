@@ -81,7 +81,7 @@ func main() {
 		},
 	})
 
-	// Admin only commands by role
+	// Admin only commands by permission
 	bot.AddCommand(&minidis.Command{
 		Name:                     "admin-only",
 		Description:              "Admin only command",

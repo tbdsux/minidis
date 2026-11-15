@@ -152,7 +152,10 @@ type UnknownComponent struct {
 	Raw  json.RawMessage
 }
 
-func (c UnknownComponent) Type() ComponentType          { return c.Kind }
+// Type returns the type of the component.
+func (c UnknownComponent) Type() ComponentType { return c.Kind }
+
+// MarshalJSON implements json.Marshaler, returning the component as received.
 func (c UnknownComponent) MarshalJSON() ([]byte, error) { return c.Raw, nil }
 
 // ActionsRow is a container for buttons or a select menu.
@@ -161,7 +164,10 @@ type ActionsRow struct {
 	Components ComponentList `json:"components"`
 }
 
+// Type returns the type of the component.
 func (ActionsRow) Type() ComponentType { return ActionsRowComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c ActionsRow) MarshalJSON() ([]byte, error) {
 	type alias ActionsRow
 	return marshalComponent(c.Type(), alias(c))
@@ -198,7 +204,10 @@ type Button struct {
 	SKUID    string          `json:"sku_id,omitempty"`
 }
 
+// Type returns the type of the component.
 func (Button) Type() ComponentType { return ButtonComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c Button) MarshalJSON() ([]byte, error) {
 	type alias Button
 	return marshalComponent(c.Type(), alias(c))
@@ -235,6 +244,7 @@ type SelectMenu struct {
 	Values        []string                 `json:"values,omitempty"`   // received on modal submit
 }
 
+// Type returns the type of the component.
 func (c SelectMenu) Type() ComponentType {
 	if c.MenuType == 0 {
 		return SelectMenuComponent
@@ -242,6 +252,7 @@ func (c SelectMenu) Type() ComponentType {
 	return c.MenuType
 }
 
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c SelectMenu) MarshalJSON() ([]byte, error) {
 	type alias SelectMenu
 	return marshalComponent(c.Type(), alias(c))
@@ -269,7 +280,10 @@ type TextInput struct {
 	MaxLength   int            `json:"max_length,omitempty"`
 }
 
+// Type returns the type of the component.
 func (TextInput) Type() ComponentType { return TextInputComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c TextInput) MarshalJSON() ([]byte, error) {
 	type alias TextInput
 	return marshalComponent(c.Type(), alias(c))
@@ -285,7 +299,10 @@ type Label struct {
 	Component   MessageComponent `json:"component"`
 }
 
+// Type returns the type of the component.
 func (Label) Type() ComponentType { return LabelComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c Label) MarshalJSON() ([]byte, error) {
 	type alias Label
 	return marshalComponent(c.Type(), alias(c))
@@ -318,7 +335,10 @@ type FileUpload struct {
 	Values    []string `json:"values,omitempty"` // attachment IDs received on modal submit
 }
 
+// Type returns the type of the component.
 func (FileUpload) Type() ComponentType { return FileUploadComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c FileUpload) MarshalJSON() ([]byte, error) {
 	type alias FileUpload
 	return marshalComponent(c.Type(), alias(c))
@@ -341,7 +361,10 @@ type RadioGroup struct {
 	Value    *string       `json:"value,omitempty"`    // received on modal submit; nil if nothing was picked
 }
 
+// Type returns the type of the component.
 func (RadioGroup) Type() ComponentType { return RadioGroupComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c RadioGroup) MarshalJSON() ([]byte, error) {
 	type alias RadioGroup
 	return marshalComponent(c.Type(), alias(c))
@@ -358,7 +381,10 @@ type CheckboxGroup struct {
 	Values    []string      `json:"values,omitempty"`   // received on modal submit
 }
 
+// Type returns the type of the component.
 func (CheckboxGroup) Type() ComponentType { return CheckboxGroupComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c CheckboxGroup) MarshalJSON() ([]byte, error) {
 	type alias CheckboxGroup
 	return marshalComponent(c.Type(), alias(c))
@@ -373,7 +399,10 @@ type Checkbox struct {
 	Value    bool   `json:"value,omitempty"` // received on modal submit
 }
 
+// Type returns the type of the component.
 func (Checkbox) Type() ComponentType { return CheckboxComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c Checkbox) MarshalJSON() ([]byte, error) {
 	type alias Checkbox
 	return marshalComponent(c.Type(), alias(c))
@@ -393,7 +422,10 @@ type Section struct {
 	Accessory  MessageComponent `json:"accessory"`
 }
 
+// Type returns the type of the component.
 func (Section) Type() ComponentType { return SectionComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c Section) MarshalJSON() ([]byte, error) {
 	type alias Section
 	return marshalComponent(c.Type(), alias(c))
@@ -421,7 +453,10 @@ type TextDisplay struct {
 	Content string `json:"content"`
 }
 
+// Type returns the type of the component.
 func (TextDisplay) Type() ComponentType { return TextDisplayComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c TextDisplay) MarshalJSON() ([]byte, error) {
 	type alias TextDisplay
 	return marshalComponent(c.Type(), alias(c))
@@ -435,7 +470,10 @@ type Thumbnail struct {
 	Spoiler     bool              `json:"spoiler,omitempty"`
 }
 
+// Type returns the type of the component.
 func (Thumbnail) Type() ComponentType { return ThumbnailComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c Thumbnail) MarshalJSON() ([]byte, error) {
 	type alias Thumbnail
 	return marshalComponent(c.Type(), alias(c))
@@ -454,7 +492,10 @@ type MediaGallery struct {
 	Items []MediaGalleryItem `json:"items"`
 }
 
+// Type returns the type of the component.
 func (MediaGallery) Type() ComponentType { return MediaGalleryComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c MediaGallery) MarshalJSON() ([]byte, error) {
 	type alias MediaGallery
 	return marshalComponent(c.Type(), alias(c))
@@ -467,7 +508,10 @@ type FileComponent struct {
 	Spoiler bool              `json:"spoiler,omitempty"`
 }
 
+// Type returns the type of the component.
 func (FileComponent) Type() ComponentType { return FileComponentType }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c FileComponent) MarshalJSON() ([]byte, error) {
 	type alias FileComponent
 	return marshalComponent(c.Type(), alias(c))
@@ -488,7 +532,10 @@ type Separator struct {
 	Spacing SeparatorSpacing `json:"spacing,omitempty"`
 }
 
+// Type returns the type of the component.
 func (Separator) Type() ComponentType { return SeparatorComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c Separator) MarshalJSON() ([]byte, error) {
 	type alias Separator
 	return marshalComponent(c.Type(), alias(c))
@@ -502,7 +549,10 @@ type Container struct {
 	Spoiler     bool          `json:"spoiler,omitempty"`
 }
 
+// Type returns the type of the component.
 func (Container) Type() ComponentType { return ContainerComponent }
+
+// MarshalJSON implements json.Marshaler, adding the component type.
 func (c Container) MarshalJSON() ([]byte, error) {
 	type alias Container
 	return marshalComponent(c.Type(), alias(c))

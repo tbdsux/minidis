@@ -6,8 +6,6 @@ The `discord/client` package is its REST and Gateway client and `discord` holds 
 
 ## Install
 
-This is usable for simple and basic commands but is still missing some of other features.
-
 ```sh
 go get -u github.com/tbdsux/minidis
 ```

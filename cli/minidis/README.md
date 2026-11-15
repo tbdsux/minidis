@@ -39,7 +39,7 @@ Existing Go files are never overwritten unless given `-force`, and neither is a 
 
 Flags may come before or after the directory.
 
-A CLI built from a checkout, rather than installed with `go install …@version`, adds the latest version of minidis (its `main` branch), which may not match the checkout's templates. The build check then explains how to point the project at the checkout instead.
+A CLI built from a checkout, rather than installed with `go install …@version`, adds the latest release of minidis, or its `main` branch while there is none, which may not match the checkout's templates. The build check then explains how to point the project at the checkout instead.
 
 ## What you get
 

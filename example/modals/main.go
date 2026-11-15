@@ -32,16 +32,20 @@ func main() {
 			return err
 		}
 
-		// Read the submitted values by the custom IDs of the components.
-		_, err := c.Session.ChannelMessageSend(c, ResultsChannel, fmt.Sprintf(
-			"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s\n\n**Rating**: %s\n**Liked**: %s\n**May contact**: %t",
-			c.Params["user"],
-			c.Text("opinion"),
-			c.Text("suggestions"),
-			c.Text("rating"),
-			strings.Join(c.Selected("liked"), ", "),
-			c.Checked("contact"),
-		))
+		// Read the submitted values by the custom IDs of the components. The
+		// text is the user's own, so mentions in it must not ping anyone.
+		_, err := c.Session.ChannelMessageSendComplex(c, ResultsChannel, &discord.MessageSend{
+			Content: fmt.Sprintf(
+				"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s\n\n**Rating**: %s\n**Liked**: %s\n**May contact**: %t",
+				c.Params["user"],
+				c.Text("opinion"),
+				c.Text("suggestions"),
+				c.Text("rating"),
+				strings.Join(c.Selected("liked"), ", "),
+				c.Checked("contact"),
+			),
+			AllowedMentions: &discord.MessageAllowedMentions{Parse: []discord.AllowedMentionType{}},
+		})
 
 		return err
 	})
