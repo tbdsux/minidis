@@ -64,7 +64,7 @@ func TestColdStartBurstHonoursTheSharedBucket(t *testing.T) {
 func TestSweepKeepsBucketsInUse(t *testing.T) {
 	l := newRateLimiter()
 
-	held, err := l.acquire(t.Context(), "busy")
+	held, err := l.acquire(t.Context(), "busy", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,13 +76,13 @@ func TestSweepKeepsBucketsInUse(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	if _, err := l.acquire(ctx, "busy"); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := l.acquire(ctx, "busy", false); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("a second request on the route did not wait for the first: %v", err)
 	}
 
 	l.release(held, "busy", "", nil)
 
-	b, err := l.acquire(t.Context(), "busy")
+	b, err := l.acquire(t.Context(), "busy", false)
 	if err != nil {
 		t.Fatal(err)
 	}

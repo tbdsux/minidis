@@ -34,7 +34,7 @@ func pageQuery(limit int, cursorName, cursor string) string {
 }
 
 func messagePath(channelID, messageID string) string {
-	return "/channels/" + channelID + "/messages/" + messageID
+	return "/channels/" + esc(channelID) + "/messages/" + esc(messageID)
 }
 
 // ChannelMessage fetches a message.
@@ -46,7 +46,7 @@ func (s *Session) ChannelMessage(ctx context.Context, channelID, messageID strin
 // messages are returned (Discord's default when 0), older than beforeID if it
 // is not empty.
 func (s *Session) ChannelMessages(ctx context.Context, channelID string, limit int, beforeID string) ([]*discord.Message, error) {
-	return fetch[[]*discord.Message](ctx, s, "/channels/"+channelID+"/messages"+pageQuery(limit, "before", beforeID))
+	return fetch[[]*discord.Message](ctx, s, "/channels/"+esc(channelID)+"/messages"+pageQuery(limit, "before", beforeID))
 }
 
 // ChannelMessageEditComplex edits a message.
@@ -73,11 +73,11 @@ func (s *Session) ChannelMessagesBulkDelete(ctx context.Context, channelID strin
 	body := struct {
 		Messages []string `json:"messages"`
 	}{messageIDs}
-	return s.Request(ctx, http.MethodPost, "/channels/"+channelID+"/messages/bulk-delete", body, nil)
+	return s.Request(ctx, http.MethodPost, "/channels/"+esc(channelID)+"/messages/bulk-delete", body, nil)
 }
 
 func pinPath(channelID, messageID string) string {
-	return "/channels/" + channelID + "/messages/pins/" + messageID
+	return "/channels/" + esc(channelID) + "/messages/pins/" + esc(messageID)
 }
 
 // ChannelMessagePin pins a message.
@@ -98,13 +98,13 @@ func (s *Session) ChannelPins(ctx context.Context, channelID string, limit int, 
 	if !before.IsZero() {
 		cursor = before.Format(time.RFC3339Nano)
 	}
-	return fetch[*discord.ChannelPins](ctx, s, "/channels/"+channelID+"/messages/pins"+pageQuery(limit, "before", cursor))
+	return fetch[*discord.ChannelPins](ctx, s, "/channels/"+esc(channelID)+"/messages/pins"+pageQuery(limit, "before", cursor))
 }
 
 // reactionsPath builds the path of a message's reactions. emoji is a Unicode
 // emoji, or "name:id" for a custom one.
 func reactionsPath(channelID, messageID, emoji string) string {
-	return messagePath(channelID, messageID) + "/reactions/" + url.PathEscape(emoji)
+	return messagePath(channelID, messageID) + "/reactions/" + esc(emoji)
 }
 
 // MessageReactionAdd adds the bot's reaction to a message. emoji is a Unicode
@@ -119,7 +119,7 @@ func (s *Session) MessageReactionRemove(ctx context.Context, channelID, messageI
 	if userID == "" {
 		userID = "@me"
 	}
-	return s.Request(ctx, http.MethodDelete, reactionsPath(channelID, messageID, emoji)+"/"+userID, nil, nil)
+	return s.Request(ctx, http.MethodDelete, reactionsPath(channelID, messageID, emoji)+"/"+esc(userID), nil, nil)
 }
 
 // MessageReactionsRemoveAll removes every reaction from a message.
@@ -129,7 +129,7 @@ func (s *Session) MessageReactionsRemoveAll(ctx context.Context, channelID, mess
 
 // Channel fetches a channel.
 func (s *Session) Channel(ctx context.Context, channelID string) (*discord.Channel, error) {
-	return fetch[*discord.Channel](ctx, s, "/channels/"+channelID)
+	return fetch[*discord.Channel](ctx, s, "/channels/"+esc(channelID))
 }
 
 // UserChannelCreate opens a DM channel with a user. Send to it with the
@@ -148,23 +148,23 @@ func (s *Session) UserChannelCreate(ctx context.Context, userID string) (*discor
 
 // Guild fetches a guild, including its approximate member count.
 func (s *Session) Guild(ctx context.Context, guildID string) (*discord.Guild, error) {
-	return fetch[*discord.Guild](ctx, s, "/guilds/"+guildID+"?with_counts=true")
+	return fetch[*discord.Guild](ctx, s, "/guilds/"+esc(guildID)+"?with_counts=true")
 }
 
 // GuildChannels lists a guild's channels.
 func (s *Session) GuildChannels(ctx context.Context, guildID string) ([]*discord.Channel, error) {
-	return fetch[[]*discord.Channel](ctx, s, "/guilds/"+guildID+"/channels")
+	return fetch[[]*discord.Channel](ctx, s, "/guilds/"+esc(guildID)+"/channels")
 }
 
 // GuildRoles lists a guild's roles.
 func (s *Session) GuildRoles(ctx context.Context, guildID string) ([]*discord.Role, error) {
-	return fetch[[]*discord.Role](ctx, s, "/guilds/"+guildID+"/roles")
+	return fetch[[]*discord.Role](ctx, s, "/guilds/"+esc(guildID)+"/roles")
 }
 
 // GuildRoleCreate creates a role.
 func (s *Session) GuildRoleCreate(ctx context.Context, guildID string, params *discord.RoleParams) (*discord.Role, error) {
 	out := &discord.Role{}
-	if err := s.Request(ctx, http.MethodPost, "/guilds/"+guildID+"/roles", params, out); err != nil {
+	if err := s.Request(ctx, http.MethodPost, "/guilds/"+esc(guildID)+"/roles", params, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -173,7 +173,7 @@ func (s *Session) GuildRoleCreate(ctx context.Context, guildID string, params *d
 // GuildRoleEdit changes a role.
 func (s *Session) GuildRoleEdit(ctx context.Context, guildID, roleID string, params *discord.RoleParams) (*discord.Role, error) {
 	out := &discord.Role{}
-	if err := s.Request(ctx, http.MethodPatch, "/guilds/"+guildID+"/roles/"+roleID, params, out); err != nil {
+	if err := s.Request(ctx, http.MethodPatch, "/guilds/"+esc(guildID)+"/roles/"+esc(roleID), params, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -181,11 +181,11 @@ func (s *Session) GuildRoleEdit(ctx context.Context, guildID, roleID string, par
 
 // GuildRoleDelete deletes a role.
 func (s *Session) GuildRoleDelete(ctx context.Context, guildID, roleID string) error {
-	return s.Request(ctx, http.MethodDelete, "/guilds/"+guildID+"/roles/"+roleID, nil, nil)
+	return s.Request(ctx, http.MethodDelete, "/guilds/"+esc(guildID)+"/roles/"+esc(roleID), nil, nil)
 }
 
 func memberPath(guildID, userID string) string {
-	return "/guilds/" + guildID + "/members/" + userID
+	return "/guilds/" + esc(guildID) + "/members/" + esc(userID)
 }
 
 // GuildMember fetches a member of a guild.
@@ -197,7 +197,7 @@ func (s *Session) GuildMember(ctx context.Context, guildID, userID string) (*dis
 // after afterID if it is not empty. It needs the privileged IntentsGuildMembers
 // intent to be enabled in the developer portal.
 func (s *Session) GuildMembers(ctx context.Context, guildID string, limit int, afterID string) ([]*discord.Member, error) {
-	return fetch[[]*discord.Member](ctx, s, "/guilds/"+guildID+"/members"+pageQuery(limit, "after", afterID))
+	return fetch[[]*discord.Member](ctx, s, "/guilds/"+esc(guildID)+"/members"+pageQuery(limit, "after", afterID))
 }
 
 // GuildMemberRemove kicks a member from a guild.
@@ -207,16 +207,16 @@ func (s *Session) GuildMemberRemove(ctx context.Context, guildID, userID string)
 
 // GuildMemberRoleAdd gives a member a role.
 func (s *Session) GuildMemberRoleAdd(ctx context.Context, guildID, userID, roleID string) error {
-	return s.Request(ctx, http.MethodPut, memberPath(guildID, userID)+"/roles/"+roleID, nil, nil)
+	return s.Request(ctx, http.MethodPut, memberPath(guildID, userID)+"/roles/"+esc(roleID), nil, nil)
 }
 
 // GuildMemberRoleRemove takes a role from a member.
 func (s *Session) GuildMemberRoleRemove(ctx context.Context, guildID, userID, roleID string) error {
-	return s.Request(ctx, http.MethodDelete, memberPath(guildID, userID)+"/roles/"+roleID, nil, nil)
+	return s.Request(ctx, http.MethodDelete, memberPath(guildID, userID)+"/roles/"+esc(roleID), nil, nil)
 }
 
 func banPath(guildID, userID string) string {
-	return "/guilds/" + guildID + "/bans/" + userID
+	return "/guilds/" + esc(guildID) + "/bans/" + esc(userID)
 }
 
 // GuildBan fetches a user's ban from a guild.
@@ -227,7 +227,7 @@ func (s *Session) GuildBan(ctx context.Context, guildID, userID string) (*discor
 // GuildBans lists up to limit bans (Discord's default when 0), with user IDs
 // after afterID if it is not empty.
 func (s *Session) GuildBans(ctx context.Context, guildID string, limit int, afterID string) ([]*discord.GuildBan, error) {
-	return fetch[[]*discord.GuildBan](ctx, s, "/guilds/"+guildID+"/bans"+pageQuery(limit, "after", afterID))
+	return fetch[[]*discord.GuildBan](ctx, s, "/guilds/"+esc(guildID)+"/bans"+pageQuery(limit, "after", afterID))
 }
 
 // GuildBanCreate bans a user from a guild, deleting the messages they sent in

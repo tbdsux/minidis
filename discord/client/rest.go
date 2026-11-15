@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"github.com/tbdsux/minidis/discord"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,6 +53,59 @@ func (e *RESTError) Error() string {
 	}
 
 	return out
+}
+
+type auditLogReasonKey struct{}
+
+// WithAuditLogReason returns a context whose requests record reason in the
+// guild's audit log, for actions such as bans, kicks, role changes and message
+// deletions:
+//
+//	err := s.GuildBanCreate(client.WithAuditLogReason(ctx, "spam"), guildID, userID, 0)
+func WithAuditLogReason(ctx context.Context, reason string) context.Context {
+	return context.WithValue(ctx, auditLogReasonKey{}, reason)
+}
+
+// invalidRequests counts the responses that Discord counts against a bot's
+// IP: 401, 403, and 429 other than for shared limits. 10,000 of them in 10
+// minutes get the IP banned for a while, so passing half and nine tenths of
+// that is logged.
+type invalidRequests struct {
+	mu     sync.Mutex
+	start  time.Time
+	count  int
+	warned int // the highest share already logged, in tenths
+}
+
+const (
+	invalidRequestWindow = 10 * time.Minute
+	invalidRequestLimit  = 10000
+)
+
+func (r *invalidRequests) record(status int, h http.Header) {
+	switch {
+	case status == http.StatusUnauthorized, status == http.StatusForbidden:
+	case status == http.StatusTooManyRequests && h.Get("X-RateLimit-Scope") != "shared":
+	default:
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if now := time.Now(); now.Sub(r.start) > invalidRequestWindow {
+		r.start, r.count, r.warned = now, 0, 0
+	}
+	r.count++
+
+	for _, tenths := range []int{9, 5} {
+		if r.warned < tenths && r.count >= invalidRequestLimit*tenths/10 {
+			r.warned = tenths
+			log.Printf("discord: %d invalid requests (401, 403 or 429) in the last %s; at %d Discord bans the IP for a while",
+				r.count, invalidRequestWindow, invalidRequestLimit)
+			break
+		}
+	}
 }
 
 // Request calls any Discord API endpoint, for example
@@ -143,18 +198,31 @@ func (s *Session) send(ctx context.Context, method, path, contentType string, pa
 	safePath := redactPath(path)
 
 	// Interaction callbacks are not bound by the global limit and each one is
-	// sent once, so they must not queue behind each other.
+	// sent once, so they must not queue behind each other. Webhook routes with
+	// a token, such as interaction followups, are not bound by it either.
 	limited := !strings.HasPrefix(path, "/interactions/")
+	tokenRoute := !limited || isWebhookTokenPath(path)
+
+	// A rejected bot token stays rejected, and every further request would
+	// count against Discord's limit on invalid requests.
+	if !tokenRoute {
+		if r := s.rejected.Load(); r != nil && r.token == s.Token {
+			return &RESTError{Method: method, Path: safePath, StatusCode: http.StatusUnauthorized, Code: r.code,
+				Message: "the token was rejected by an earlier request"}
+		}
+	}
 
 	rateLimited, serverErrors := 0, 0
 	for {
-		status, header, data, err := s.attempt(ctx, limited, route, major, method, path, contentType, payload)
+		status, header, data, err := s.attempt(ctx, limited, !tokenRoute, route, major, method, path, contentType, payload)
 		if err != nil {
 			if ctx.Err() != nil {
 				err = context.Cause(ctx)
 			}
 			return fmt.Errorf("discord: %s %s: %w", method, safePath, err)
 		}
+
+		s.invalid.record(status, header)
 
 		switch {
 		case status >= 200 && status < 300:
@@ -187,16 +255,34 @@ func (s *Session) send(ctx context.Context, method, path, contentType string, pa
 			}
 
 		default:
-			return newRESTError(method, safePath, status, data)
+			e := newRESTError(method, safePath, status, data)
+			if status == http.StatusUnauthorized && !tokenRoute {
+				s.rejected.Store(&rejection{token: s.Token, code: e.Code})
+			}
+			return e
 		}
 	}
 }
 
+// rejection records a bot token Discord answered with 401 Unauthorized.
+type rejection struct {
+	token string
+	code  int
+}
+
+// isWebhookTokenPath reports whether path is a webhook route that carries its
+// token, which authenticates it instead of the bot token.
+func isWebhookTokenPath(path string) bool {
+	path, _, _ = strings.Cut(path, "?")
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	return len(segments) >= 3 && segments[0] == "webhooks"
+}
+
 // attempt sends one request, holding the route's rate limit bucket if limited.
 // The bucket is released even if the round trip panics.
-func (s *Session) attempt(ctx context.Context, limited bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
+func (s *Session) attempt(ctx context.Context, limited, global bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
 	if limited {
-		b, err := s.limiter.acquire(ctx, route)
+		b, err := s.limiter.acquire(ctx, route, global)
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -229,6 +315,9 @@ func (s *Session) roundTrip(ctx context.Context, method, path, contentType strin
 
 	req.Header.Set("Authorization", s.Token)
 	req.Header.Set("User-Agent", s.UserAgent)
+	if reason, ok := ctx.Value(auditLogReasonKey{}).(string); ok && reason != "" {
+		req.Header.Set("X-Audit-Log-Reason", url.PathEscape(reason))
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -261,9 +350,13 @@ func parseRateLimit(h http.Header, data []byte) (time.Duration, bool) {
 		RetryAfter float64 `json:"retry_after"`
 		Global     bool    `json:"global"`
 	}
-	_ = json.Unmarshal(data, &body) // Cloudflare's 429s are not JSON
+	notJSON := json.Unmarshal(data, &body) != nil
 
-	global := body.Global || h.Get("X-RateLimit-Global") == "true"
+	// A 429 from Cloudflare rather than Discord, which bans the bot's IP when
+	// it goes on, has no JSON body and no X-RateLimit-Scope. It is treated as
+	// global, so that no other request goes out until it passes.
+	global := body.Global || h.Get("X-RateLimit-Global") == "true" ||
+		notJSON || h.Get("X-RateLimit-Scope") == ""
 
 	if body.RetryAfter > 0 {
 		return seconds(body.RetryAfter), global
@@ -290,11 +383,15 @@ func newRESTError(method, path string, status int, data []byte) *RESTError {
 	return e
 }
 
+// esc escapes a path parameter, so that an ID or token taken from user input,
+// such as "1/../../channels/2" or "1?x=y", stays one segment of the path.
+func esc(param string) string { return url.PathEscape(param) }
+
 func commandsPath(appID, guildID string) string {
 	if guildID == "" {
-		return "/applications/" + appID + "/commands"
+		return "/applications/" + esc(appID) + "/commands"
 	}
-	return "/applications/" + appID + "/guilds/" + guildID + "/commands"
+	return "/applications/" + esc(appID) + "/guilds/" + esc(guildID) + "/commands"
 }
 
 // ApplicationCommands lists an app's commands. An empty guildID means global commands.
@@ -307,7 +404,7 @@ func (s *Session) ApplicationCommands(ctx context.Context, appID, guildID string
 // ApplicationCommand fetches one command. An empty guildID means a global command.
 func (s *Session) ApplicationCommand(ctx context.Context, appID, guildID, commandID string) (*discord.ApplicationCommand, error) {
 	out := &discord.ApplicationCommand{}
-	if err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID)+"/"+commandID, nil, out); err != nil {
+	if err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID)+"/"+esc(commandID), nil, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -327,7 +424,7 @@ func (s *Session) ApplicationCommandCreate(ctx context.Context, appID, guildID s
 // An empty guildID means a global command.
 func (s *Session) ApplicationCommandEdit(ctx context.Context, appID, guildID, commandID string, cmd *discord.ApplicationCommand) (*discord.ApplicationCommand, error) {
 	out := &discord.ApplicationCommand{}
-	if err := s.Request(ctx, http.MethodPatch, commandsPath(appID, guildID)+"/"+commandID, cmd, out); err != nil {
+	if err := s.Request(ctx, http.MethodPatch, commandsPath(appID, guildID)+"/"+esc(commandID), cmd, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -355,7 +452,7 @@ func (s *Session) ApplicationCommandPermissions(ctx context.Context, appID, guil
 	}
 
 	out := &discord.GuildApplicationCommandPermissions{}
-	if err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID)+"/"+commandID+"/permissions", nil, out); err != nil {
+	if err := s.Request(ctx, http.MethodGet, commandsPath(appID, guildID)+"/"+esc(commandID)+"/permissions", nil, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -367,7 +464,7 @@ var errNoPermissionGuild = errors.New("discord: command permissions need a guild
 
 // ApplicationCommandDelete deletes a command. An empty guildID means a global command.
 func (s *Session) ApplicationCommandDelete(ctx context.Context, appID, guildID, commandID string) error {
-	return s.Request(ctx, http.MethodDelete, commandsPath(appID, guildID)+"/"+commandID, nil, nil)
+	return s.Request(ctx, http.MethodDelete, commandsPath(appID, guildID)+"/"+esc(commandID), nil, nil)
 }
 
 // ApplicationCommandBulkOverwrite replaces all of an app's commands in one call.
@@ -408,7 +505,7 @@ func (s *Session) InteractionRespondWithResponse(ctx context.Context, i *discord
 }
 
 func callbackPath(i *discord.Interaction) string {
-	return "/interactions/" + i.ID + "/" + i.Token + "/callback"
+	return "/interactions/" + esc(i.ID) + "/" + esc(i.Token) + "/callback"
 }
 
 // InteractionResponse fetches the original interaction response.
@@ -426,7 +523,7 @@ func (s *Session) FollowupMessage(ctx context.Context, i *discord.Interaction, m
 }
 
 func webhookMessagePath(i *discord.Interaction, messageID string) string {
-	return "/webhooks/" + i.AppID + "/" + i.Token + "/messages/" + messageID
+	return "/webhooks/" + esc(i.AppID) + "/" + esc(i.Token) + "/messages/" + esc(messageID)
 }
 
 // InteractionResponseEdit edits the original interaction response.
@@ -442,7 +539,7 @@ func (s *Session) InteractionResponseDelete(ctx context.Context, i *discord.Inte
 // FollowupMessageCreate sends a followup message to an interaction.
 func (s *Session) FollowupMessageCreate(ctx context.Context, i *discord.Interaction, params *discord.WebhookParams) (*discord.Message, error) {
 	out := &discord.Message{}
-	path := "/webhooks/" + i.AppID + "/" + i.Token
+	path := "/webhooks/" + esc(i.AppID) + "/" + esc(i.Token)
 	if err := s.requestWithFiles(ctx, http.MethodPost, path, params, params.Files, out); err != nil {
 		return nil, err
 	}
@@ -466,7 +563,7 @@ func (s *Session) FollowupMessageDelete(ctx context.Context, i *discord.Interact
 // ChannelMessageSendComplex sends a message to a channel.
 func (s *Session) ChannelMessageSendComplex(ctx context.Context, channelID string, msg *discord.MessageSend) (*discord.Message, error) {
 	out := &discord.Message{}
-	path := "/channels/" + channelID + "/messages"
+	path := "/channels/" + esc(channelID) + "/messages"
 	if err := s.requestWithFiles(ctx, http.MethodPost, path, msg, msg.Files, out); err != nil {
 		return nil, err
 	}

@@ -4,17 +4,26 @@
 //
 // Endpoints without a typed method can be reached with Session.Request, and
 // gateway events without a typed handler with Session.OnRawEvent.
+//
+// Requests follow Discord's rate limits: per-route buckets, the global limit
+// of 50 requests a second (kept ahead of time), and 429 responses, including
+// Cloudflare's. Requests sharing a bucket are sent one at a time. Once Discord
+// rejects the bot token with 401, further requests fail at once rather than
+// add to Discord's count of invalid requests. Path parameters are escaped, so
+// an ID taken from user input cannot change the path. Use WithAuditLogReason
+// to record a reason in a guild's audit log.
 package client
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/tbdsux/minidis/discord"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/tbdsux/minidis/discord"
 )
 
 const (
@@ -44,7 +53,9 @@ type Session struct {
 	UserAgent  string
 	HTTPClient *http.Client
 
-	limiter *rateLimiter
+	limiter  *rateLimiter
+	rejected atomic.Pointer[rejection] // set once Discord rejects the token
+	invalid  invalidRequests
 
 	handlersMu        sync.RWMutex
 	onReady           []func(*Session, *discord.Ready)
@@ -61,8 +72,9 @@ type Session struct {
 	user  atomic.Pointer[discord.User]
 	appID atomic.Pointer[string]
 
-	conn     atomic.Pointer[gatewayConn] // nil until READY or RESUMED
-	presence atomic.Pointer[discord.PresenceUpdate]
+	conn       atomic.Pointer[gatewayConn] // nil until READY or RESUMED
+	presence   atomic.Pointer[discord.PresenceUpdate]
+	presenceMu sync.Mutex // serializes storing and sending the presence
 
 	// lifecycle serializes Open and Shutdown. It is a one-slot channel rather
 	// than a mutex so that waiting for it obeys ctx.
@@ -86,12 +98,12 @@ type Session struct {
 	// before the gateway goroutine that uses it starts.
 	running *sync.WaitGroup
 
-	// Owned by the gateway goroutine while it runs.
-	gatewayURL   string
-	sessionID    string
-	resumeURL    string
-	lastIdentify time.Time
-	identified   bool
+	// Owned by the gateway goroutine while it runs, and by Open before.
+	gatewayURL     string
+	sessionID      string
+	resumeURL      string
+	maxConcurrency int  // from GET /gateway/bot
+	identified     bool // an Identify was sent since Open
 
 	sequence atomic.Int64 // shared with the heartbeat goroutine; 0 means none yet
 }

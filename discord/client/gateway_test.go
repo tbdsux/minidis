@@ -23,6 +23,8 @@ type fakeGateway struct {
 	conns  atomic.Int32
 	starts atomic.Int32
 	remain atomic.Int32
+
+	maxConcurrency atomic.Int32
 }
 
 type fakeConn struct {
@@ -93,16 +95,18 @@ func newFakeGateway(t *testing.T, script ...func(c *fakeConn)) (*Session, *fakeG
 	t.Helper()
 
 	identifyInterval, minReconnectDelay = 10*time.Millisecond, 5*time.Millisecond
+	invalidSessionMinDelay, invalidSessionMaxDelay = 5*time.Millisecond, 10*time.Millisecond
 
 	g := &fakeGateway{t: t, script: script}
 	g.remain.Store(1000)
+	g.maxConcurrency.Store(1)
 
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/gateway/bot", func(w http.ResponseWriter, r *http.Request) {
 		g.starts.Add(1)
-		fmt.Fprintf(w, `{"url":"ws://%s/gw","shards":1,"session_start_limit":{"total":1000,"remaining":%d,"reset_after":1000,"max_concurrency":1}}`,
-			r.Host, g.remain.Load())
+		fmt.Fprintf(w, `{"url":"ws://%s/gw","shards":1,"session_start_limit":{"total":1000,"remaining":%d,"reset_after":1000,"max_concurrency":%d}}`,
+			r.Host, g.remain.Load(), g.maxConcurrency.Load())
 	})
 	serveWS := func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)
@@ -162,7 +166,7 @@ func TestOpenIdentifiesAndDispatches(t *testing.T) {
 		if err := json.Unmarshal(c.read(opIdentify).D, &identify); err != nil {
 			t.Error(err)
 		}
-		if identify.Token != "Bot token" || identify.Intents != int(discord.IntentsGuilds) || identify.Properties.Browser != "minidis" {
+		if identify.Token != "token" || identify.Intents != int(discord.IntentsGuilds) || identify.Properties.Browser != "minidis" {
 			t.Errorf("identify = %+v", identify)
 		}
 
@@ -278,7 +282,7 @@ func resumeScript(t *testing.T, seq int64, done chan struct{}) func(c *fakeConn)
 		if err := json.Unmarshal(c.read(opResume).D, &resume); err != nil {
 			t.Error(err)
 		}
-		if resume.SessionID != "sess-1" || resume.Seq != seq || resume.Token != "Bot token" {
+		if resume.SessionID != "sess-1" || resume.Seq != seq || resume.Token != "token" {
 			t.Errorf("resume = %+v", resume)
 		}
 

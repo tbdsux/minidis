@@ -122,12 +122,18 @@ func TestPresenceIsSentAndSurvivesReconnect(t *testing.T) {
 	s, _ := newFakeGateway(t,
 		func(c *fakeConn) {
 			c.hello(60000)
-			c.read(opIdentify)
-			c.ready(1)
 
-			if got := decodePresence(t, c.read(opPresenceUpdate)); got.Status != discord.StatusDND || got.Activities[0].Name != "chess" {
+			// A presence set before Open goes with the Identify.
+			var identify struct {
+				Presence *discord.PresenceUpdate `json:"presence"`
+			}
+			if err := json.Unmarshal(c.read(opIdentify).D, &identify); err != nil {
+				t.Error(err)
+			}
+			if got := identify.Presence; got == nil || got.Status != discord.StatusDND || got.Activities[0].Name != "chess" {
 				t.Errorf("initial presence = %+v", got)
 			}
+			c.ready(1)
 
 			p := c.read(opPresenceUpdate)
 			if got := decodePresence(t, p); got.Status != discord.StatusOnline || got.Activities == nil {
