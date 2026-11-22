@@ -1,8 +1,31 @@
 # minidis
 
-Simple Discord bot framework for Go, built directly on the [Discord API](https://docs.discord.com/developers/intro).
+Simple, opinionated Discord bot framework for Go, built directly on the [Discord API](https://docs.discord.com/developers/intro).
 
-The `discord/client` package is its REST and Gateway client and `discord` holds the API types. Use `Session.Request` for endpoints without a typed method and `Session.OnRawEvent` for gateway events without a typed handler.
+```go
+bot := minidis.New(os.Getenv("TOKEN"))
+
+bot.AddCommand(&minidis.Command{
+	Name:        "ping",
+	Description: "Replies with pong.",
+	Execute: func(c *minidis.Context) error {
+		return c.Reply("pong")
+	},
+})
+
+if err := bot.Start(); err != nil {
+	log.Fatal(err)
+}
+```
+
+It is made of layers, and each works without the ones above it:
+
+| Package                  | What it is                                                                                                                                                        |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `minidis`                | The framework: one `Bot` for commands, components, messages and every gateway event.                                                                              |
+| `minidis/interactions`   | The framework for interactions alone: slash commands, context menus, components, modals and autocomplete. Also for bots that only receive interactions over HTTP. |
+| `minidis/discord/client` | The REST and Gateway client.                                                                                                                                      |
+| `minidis/discord`        | The Discord API types.                                                                                                                                            |
 
 ## Install
 
@@ -24,31 +47,22 @@ go install github.com/tbdsux/minidis/cli/minidis@latest
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
-	"strings"
-	"syscall"
 
 	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
-	"github.com/tbdsux/minidis/discord/client"
 )
 
 func main() {
-	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
 	bot := minidis.New(os.Getenv("TOKEN"))
 
-	// Set intents (not required when doing only slash commands)
-	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
+	// Commands show up at once in a guild, so name one while developing, or
+	// several separated by commas. With GUILD unset, they are registered globally.
+	bot.SetGuilds(os.Getenv("GUILD"))
 
-	bot.OnReady(func(s *client.Session, i *discord.Ready) {
-		log.Println("Bot is ready!")
-	})
-
-	// simple command
+	// A slash command
 	bot.AddCommand(&minidis.Command{
 		Name:        "ping",
 		Description: "Simple ping command.",
@@ -57,30 +71,90 @@ func main() {
 		},
 	})
 
-	// Stop on CTRL+C
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// A gateway event, chosen by the type of the second parameter
+	minidis.On(bot, func(c *minidis.EventContext, e *discord.GuildMemberAdd) error {
+		log.Println(e.User.Username, "joined", e.GuildID)
+		return nil
+	})
 
-	// Register the commands. With no guilds (GUILD unset) they are registered
-	// globally; SyncCommands refuses a list of only empty IDs, so an unset
-	// variable never replaces the global commands by mistake.
-	if err := bot.SyncCommands(ctx, guilds...); err != nil {
-		log.Fatalln("Failed to sync commands:", err)
-	}
+	// Messages people send
+	bot.OnMessage(func(c *minidis.MessageContext) error {
+		if c.Content == "hello" {
+			_, err := c.Reply("Hello, " + c.Author.Mention() + "!")
+			return err
+		}
+		return nil
+	})
 
-	// Run until CTRL+C, then close: new interactions stop, and running handlers
-	// get up to 10 seconds to finish before their contexts are canceled
-	if err := bot.Run(ctx); err != nil {
+	// Register the commands, connect, and run until CTRL+C. Then new events
+	// stop, and running handlers get up to 10 seconds to finish before their
+	// contexts are canceled
+	if err := bot.Start(); err != nil {
 		log.Fatalln("Bot stopped with an error:", err)
 	}
 }
 ```
 
-Use `bot.Open(ctx)` and `bot.Close` instead of `Run` to manage the connection yourself. `Run` also returns if Discord ends the connection for good, such as for an invalid token. A handler that closes the bot should call `Close` in a new goroutine, as `Close` waits for running handlers.
+`Start` is `Run` with a context that ends on CTRL+C; call `bot.Run(ctx)` to decide yourself when the bot stops. Both register the commands first, replacing the ones Discord has, unless the bot has none or `bot.DisableSync()` was called. `Run` also returns if Discord ends the connection for good, such as for an invalid token. Use `bot.Open(ctx)` and `bot.Close` to manage the connection yourself. A handler that closes the bot should call `Close` in a new goroutine, as `Close` waits for running handlers.
+
+There are no intents to set: the bot asks Discord for the ones its handlers need. The privileged ones must also be enabled for the bot in the developer portal, under Bot > Privileged Gateway Intents, and `Run` says which when Discord refuses them. `bot.AddIntents` asks for more, and `bot.SetIntents` takes over. Add handlers before the bot runs: intents are sent when it connects, so a handler added later that needs a new one gets no events, which the bot logs.
 
 More [examples...](./example/)
 
-## Features
+## Events and messages
+
+### Events
+
+`minidis.On` handles any gateway event, chosen by the type of the handler's second parameter: every event type of the `discord` package works, such as `discord.GuildMemberAdd`, `discord.MessageReactionAdd`, `discord.ChannelCreate` or `discord.VoiceStateUpdate`.
+
+```go
+minidis.On(bot, func(c *minidis.EventContext, e *discord.GuildMemberAdd) error {
+	_, err := c.Session.ChannelMessageSend(c, welcomeChannel, "Welcome, "+e.Mention()+"!")
+	return err
+})
+```
+
+The `EventContext` is a `context.Context` for the handler's work, canceled when the handler returns or a closing bot stops waiting. `c.Session` is the [client](#client). Errors and panics are logged, or go to `bot.HandleEventError`.
+
+### Messages
+
+`bot.OnMessage` handles the messages people send, in every channel the bot can see and in its DMs. Messages from bots, the bot itself included, from webhooks, and Discord's own notices, such as that someone joined, are left out; use `minidis.On` with a `discord.MessageCreate` to see those too.
+
+```go
+bot.OnMessage(func(c *minidis.MessageContext) error {
+	if c.IsDM {
+		_, err := c.Reply("I only work in servers.")
+		return err
+	}
+	return c.React("👀")
+})
+```
+
+A `MessageContext` has the `Message`, its `Content`, `Author` and `Member`, and `Send`, `Reply`, `React`, `Delete` and `Typing`. `SendWith` and `ReplyWith` take a `minidis.Message`, like interaction responses do. Reading the content of messages needs the privileged Message Content Intent.
+
+### Text commands
+
+Slash commands are the better choice for most bots, but commands written as messages are there too:
+
+```go
+bot.SetPrefix("!")
+
+bot.AddTextCommand(&minidis.TextCommand{
+	Name:    "say",
+	Aliases: []string{"echo"},
+	Execute: func(c *minidis.MessageContext) error {
+		// For "!say hello there": c.Args is ["hello", "there"] and c.ArgString "hello there"
+		_, err := c.SendWith(minidis.Message{Content: c.ArgString, AllowedMentions: &discord.MessageAllowedMentions{}})
+		return err
+	},
+})
+```
+
+Without a prefix, a text command is run by mentioning the bot, as in `@bot say hi`, which needs no privileged intent. Their errors, and those of `OnMessage` handlers, go to `bot.HandleMessageError`, which can tell the user about it with `c.Reply`.
+
+## Interactions
+
+Everything below comes from the `interactions` package, whose types the framework has under the same names. A bot that only handles interactions can use that package on its own, with `interactions.New`, `SyncCommands` and `Run`, or receive them over HTTP.
 
 ### Permissions
 
@@ -236,6 +310,8 @@ mux.Handle("POST /interactions", handler)
 
 ### Channel messages
 
+For the messages of one channel; `bot.OnMessage` handles those of every channel.
+
 ```go
 bot.HandleChannelMessage(channelID, func(c *minidis.ChannelMessageContext) error {
 	_, err := c.Reply("hello") // or c.Send, which does not reply to the message
@@ -251,9 +327,59 @@ bot.HandleChannelMessage(channelID, func(c *minidis.ChannelMessageContext) error
 bot.SetPresence(discord.StatusIdle, &discord.Activity{Name: "the logs", Type: discord.ActivityWatching})
 ```
 
-### Client
+## Client
 
-`bot.Session` has typed methods, each taking a `context.Context` first, for messages, pins, reactions, channels, guilds, members, roles, bans, application commands and their permissions, and interaction responses, and handlers such as `OnMessageUpdate`, `OnMessageDelete`, `OnMessageReactionAdd`, `OnGuildCreate`, `OnGuildMemberAdd` and `OnGuildMemberRemove`. The member events need the privileged `discord.IntentsGuildMembers` intent.
+`discord/client` is the whole Discord API for bots, and works on its own, without `interactions` ([example](./example/client/main.go)). A bot made with `minidis.New` has the same client as `bot.Session`.
+
+```go
+s := client.New("Bot " + os.Getenv("TOKEN"))
+s.Intents = discord.IntentsGuilds | discord.IntentsGuildMessages | discord.IntentsMessageContent
+
+s.OnMessageCreate(func(s *client.Session, e *discord.MessageCreate) {
+	if e.Content == "!ping" {
+		s.ChannelMessageSend(context.Background(), e.ChannelID, "pong")
+	}
+})
+
+if err := s.Open(ctx); err != nil {
+	log.Fatal(err)
+}
+defer s.Close()
+<-ctx.Done()
+```
+
+### REST
+
+Every method takes a `context.Context` first. They cover:
+
+- messages, reactions, pins, polls and crossposting;
+- channels, permission overwrites, computed permissions, voice channel statuses, invites, typing and followed announcement channels;
+- threads and forum posts, their members and the archived ones;
+- guilds, members (nicknames, roles, timeouts, moving between voice channels), roles, bans, pruning, the audit log, integrations, the widget, the welcome screen, onboarding and templates;
+- webhooks and the messages they send;
+- emojis of guilds and of the app, stickers and soundboard sounds;
+- auto moderation rules, scheduled events and stage instances;
+- the bot's user and application, application commands, interaction responses, linked role metadata, SKUs, entitlements and subscriptions.
+
+Fields that Discord clears with `null` are a `discord.Optional`: leave it unset to keep the value, or use `discord.Some(v)` and `discord.Null[T]()`.
+
+```go
+s.GuildMemberTimeout(ctx, guildID, userID, time.Now().Add(time.Hour))
+s.ChannelEdit(ctx, channelID, &discord.ChannelParams{Name: "general", ParentID: discord.Null[string]()})
+s.GuildBanCreate(client.WithAuditLogReason(ctx, "spam"), guildID, userID, 0)
+```
+
+`Session.Request` reaches any endpoint without a typed method.
+
+### Gateway
+
+There is an `On…` handler for every gateway event, such as `OnMessageCreate`, `OnGuildMemberAdd`, `OnChannelUpdate`, `OnThreadCreate`, `OnVoiceStateUpdate` and `OnPresenceUpdate`, and `OnRawEvent` receives them all undecoded. Each handler runs in its own goroutine. Some events need an intent in `Session.Intents`, and the member, presence and message content ones are privileged: enable them in the developer portal.
+
+`RequestGuildMembers` asks for the members of a guild, answered in `OnGuildMembersChunk`. Discord limits how often all members can be requested, and reports a refused request in `OnRateLimited`. `UpdateVoiceState` joins and leaves voice channels, but sending and receiving audio is not part of this library: `OnVoiceStateUpdate` and `OnVoiceServerUpdate` give a voice library what it needs to connect.
+
+### Helpers
+
+`discord` has the small things a bot keeps needing: `User.Mention`, `User.AvatarURL`, `Member.DisplayName`, `Emoji.MessageFormat`, `Message.URL`, `discord.Timestamp`, `discord.SnowflakeTime`, `discord.ImageData` for uploading avatars and emojis, and `discord.MemberPermissions` to compute what a member may do in a channel.
 
 ##
 

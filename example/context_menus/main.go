@@ -9,14 +9,14 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
@@ -25,23 +25,23 @@ func main() {
 	})
 
 	// Message command
-	bot.AddMessageCommand(&minidis.MessageCommand{
+	bot.AddMessageCommand(&interactions.MessageCommand{
 		Name: "re-reply",
-		Execute: func(c *minidis.MessageCommandContext) error {
+		Execute: func(c *interactions.MessageCommandContext) error {
 			// A message with only embeds or attachments has no text, and Discord
 			// refuses an empty reply.
 			content := c.Message.Content
 			if content == "" {
 				content = "(this message has no text)"
 			}
-			return c.ReplyWith(minidis.Message{Content: content, Ephemeral: true})
+			return c.ReplyWith(interactions.Message{Content: content, Ephemeral: true})
 		},
 	})
 
 	// User command
-	bot.AddUserCommand(&minidis.UserCommand{
+	bot.AddUserCommand(&interactions.UserCommand{
 		Name: "get-user",
-		Execute: func(c *minidis.UserCommandContext) error {
+		Execute: func(c *interactions.UserCommandContext) error {
 
 			fmt.Println(c.TargetMember)
 			fmt.Println(c.TargetUser)

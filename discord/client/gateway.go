@@ -23,15 +23,19 @@ import (
 )
 
 const (
-	opDispatch       = 0
-	opHeartbeat      = 1
-	opIdentify       = 2
-	opPresenceUpdate = 3
-	opResume         = 6
-	opReconnect      = 7
-	opInvalidSession = 9
-	opHello          = 10
-	opHeartbeatACK   = 11
+	opDispatch                = 0
+	opHeartbeat               = 1
+	opIdentify                = 2
+	opPresenceUpdate          = 3
+	opVoiceStateUpdate        = 4
+	opResume                  = 6
+	opReconnect               = 7
+	opRequestGuildMembers     = 8
+	opInvalidSession          = 9
+	opHello                   = 10
+	opHeartbeatACK            = 11
+	opRequestSoundboardSounds = 31
+	opRequestChannelInfo      = 43
 )
 
 const gatewayWriteTimeout = 10 * time.Second
@@ -69,16 +73,6 @@ func (e *GatewayCloseError) Error() string {
 	return fmt.Sprintf("discord: gateway closed with code %d: %s", e.Code, e.Text)
 }
 
-// gatewayBot is the response of GET /gateway/bot.
-type gatewayBot struct {
-	URL               string `json:"url"`
-	SessionStartLimit struct {
-		Remaining      int `json:"remaining"`
-		ResetAfter     int `json:"reset_after"` // milliseconds
-		MaxConcurrency int `json:"max_concurrency"`
-	} `json:"session_start_limit"`
-}
-
 // identifySlots spaces Identifies across every Session in the process. Discord
 // allows one per identifyInterval in each bucket, and a bot's shard s uses
 // bucket s % max_concurrency, so Sessions for shards of one bot share these.
@@ -103,10 +97,16 @@ func (s *Session) waitIdentify(ctx context.Context) error {
 	return sleep(ctx, time.Until(at))
 }
 
-func (s *Session) fetchGatewayBot(ctx context.Context) (*gatewayBot, error) {
-	info := &gatewayBot{}
-	if err := s.Request(ctx, http.MethodGet, "/gateway/bot", nil, info); err != nil {
+// GatewayBot fetches the gateway URL, the number of shards Discord recommends
+// for the bot, and how many sessions it may still start today.
+func (s *Session) GatewayBot(ctx context.Context) (*discord.GatewayBot, error) {
+	info, err := fetch[*discord.GatewayBot](ctx, s, "/gateway/bot")
+	if err != nil {
 		return nil, err
+	}
+	// An empty or null answer decodes into nothing, without an error.
+	if info == nil {
+		return nil, errors.New("discord: GET /gateway/bot: the response has no gateway information")
 	}
 	return info, nil
 }
@@ -193,7 +193,7 @@ func (s *Session) Open(ctx context.Context) error {
 	// A previous connection that Discord ended starts over with a new session.
 	s.resetSession()
 
-	info, err := s.fetchGatewayBot(openCtx)
+	info, err := s.GatewayBot(openCtx)
 	if err != nil {
 		return openError(ctx, openCtx, err)
 	}
@@ -543,7 +543,7 @@ func (s *Session) gatewayLoop(ctx context.Context, run *gatewayRun, opened chan<
 // check in Open.
 func (s *Session) prepareIdentify(ctx context.Context) error {
 	if s.identified {
-		info, err := s.fetchGatewayBot(ctx)
+		info, err := s.GatewayBot(ctx)
 		if err != nil {
 			return err
 		}
@@ -889,50 +889,18 @@ func (s *Session) dispatch(event string, data json.RawMessage) {
 		s.spawn(event, func() { h(s, event, data) })
 	}
 
-	switch event {
-	case "READY":
-		deliver(s, event, data, s.onReady)
-	case "MESSAGE_CREATE":
-		deliver(s, event, data, s.onMessage)
-	case "MESSAGE_UPDATE":
-		deliver(s, event, data, s.onMessageUpdate)
-	case "MESSAGE_DELETE":
-		deliver(s, event, data, s.onMessageDelete)
-	case "MESSAGE_REACTION_ADD":
-		deliver(s, event, data, s.onReactionAdd)
-	case "GUILD_CREATE":
-		deliver(s, event, data, s.onGuildCreate)
-	case "GUILD_MEMBER_ADD":
-		deliver(s, event, data, s.onGuildMemberAdd)
-	case "GUILD_MEMBER_REMOVE":
-		deliver(s, event, data, s.onGuildMemberGone)
-
-	case "INTERACTION_CREATE":
-		// InteractionCreate would promote the UnmarshalJSON of its nil embedded
-		// pointer, so the Interaction is decoded on its own.
-		if len(s.onInteract) > 0 {
-			interaction := &discord.Interaction{}
-			if decodeEvent(event, data, interaction) {
-				for _, h := range s.onInteract {
-					s.spawn(event, func() { h(s, &discord.InteractionCreate{Interaction: interaction}) })
-				}
-			}
-		}
-	}
-}
-
-// deliver decodes an event into a T and starts its handlers.
-func deliver[T any](s *Session, event string, data json.RawMessage, handlers []func(*Session, *T)) {
-	if len(handlers) == 0 {
+	e := s.events[event]
+	if e == nil {
 		return
 	}
 
-	v := new(T)
-	if !decodeEvent(event, data, v) {
+	// The event is decoded once, and its handlers share the result.
+	v, err := e.decode(data)
+	if err != nil {
+		log.Printf("discord: invalid %s event: %v", event, err)
 		return
 	}
-
-	for _, h := range handlers {
+	for _, h := range e.handlers {
 		s.spawn(event, func() { h(s, v) })
 	}
 }
@@ -949,12 +917,4 @@ func (s *Session) spawn(event string, h func()) {
 		}()
 		h()
 	})
-}
-
-func decodeEvent(event string, data json.RawMessage, v any) bool {
-	if err := json.Unmarshal(data, v); err != nil {
-		log.Printf("discord: invalid %s event: %v", event, err)
-		return false
-	}
-	return true
 }

@@ -2,14 +2,45 @@
 // components.
 package commands
 
-import "github.com/tbdsux/minidis"
+import (
+	"log"
+
+	"github.com/tbdsux/minidis"
+)
 
 // Register adds the commands and handlers to the bot. Add new ones here; they
-// reach Discord the next time the bot syncs its commands on start.
-func Register(bot *minidis.Minidis) {
+// reach Discord the next time the bot starts.
+func Register(bot *minidis.Bot) {
+	// Slash commands.
 	bot.AddCommand(
 		hello,
 	)
 
+	// Buttons, select menus and other components, by custom ID.
 	bot.HandleComponent(waveButtonID, waveBack)
+{{- if not .HTTP}}
+
+	// Text commands, which are written as messages. They are run by
+	// mentioning the bot, as in "@bot ping". bot.SetPrefix("!") would also
+	// run them as "!ping", which needs the Message Content Intent to be
+	// enabled for the bot in the Developer Portal.
+	bot.AddTextCommand(
+		ping,
+	)
+{{- end}}
+
+	bot.HandleError(failed)
+}
+
+// failed tells the user that their command did not work. The error itself is
+// for the log, not for them.
+func failed(c *minidis.Context, err error) {
+	log.Printf("interaction %s: %v", c.ID, err)
+
+	sorry := minidis.Message{Content: "Something went wrong.", Ephemeral: true}
+	if c.Responded() {
+		c.FollowupWith(sorry)
+	} else {
+		c.ReplyWith(sorry)
+	}
 }

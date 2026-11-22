@@ -26,7 +26,7 @@ var hello = &minidis.Command{
 		}
 
 		return c.ReplyWith(minidis.Message{
-			Content: "Hi, <@" + who.ID + ">!",
+			Content: "Hi, " + who.Mention() + "!",
 			Components: []discord.MessageComponent{
 				discord.ActionsRow{Components: []discord.MessageComponent{
 					discord.Button{Label: "Wave back", Style: discord.PrimaryButton, CustomID: waveButtonID},

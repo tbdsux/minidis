@@ -9,14 +9,14 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
@@ -25,7 +25,7 @@ func main() {
 	})
 
 	// Sample command with options
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "options",
 		Description: "Simple command with options.",
 		Options: []*discord.ApplicationCommandOption{
@@ -36,7 +36,7 @@ func main() {
 				Required:    true,
 			},
 		},
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			name := c.String("name")
 
 			return c.Reply(fmt.Sprintf("Your name is **%s**?", name))

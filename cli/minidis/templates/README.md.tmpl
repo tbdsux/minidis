@@ -27,3 +27,9 @@ A Discord bot built with [minidis](https://github.com/tbdsux/minidis).
 ## Add a command
 
 Write it in `commands/`, like `commands/hello.go`, and add it to `Register` in `commands/commands.go`.
+{{- if not .HTTP}} `commands/ping.go` is a text command, run by writing `@{{.Name}} ping`.
+
+## Handle an event
+
+Write the handler in `events/`, like `events/threads.go`, and add it to `Register` in `events/events.go`. The bot asks Discord for the intents its handlers need. The Server Members Intent, for member events, and the Message Content Intent, for reading messages, must also be enabled for the bot in the Developer Portal, under Bot > Privileged Gateway Intents.
+{{- end}}

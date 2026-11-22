@@ -53,6 +53,13 @@ const (
 	PermissionCreateEvents                     int64 = 1 << 44
 	PermissionUseExternalSounds                int64 = 1 << 45
 	PermissionSendVoiceMessages                int64 = 1 << 46
+	PermissionSetVoiceChannelStatus            int64 = 1 << 48
 	PermissionSendPolls                        int64 = 1 << 49
 	PermissionUseExternalApps                  int64 = 1 << 50
+	PermissionPinMessages                      int64 = 1 << 51
+	PermissionBypassSlowmode                   int64 = 1 << 52
 )
+
+// PermissionAll is every permission, which the owner of a guild and members
+// with PermissionAdministrator have.
+const PermissionAll int64 = 1<<53 - 1

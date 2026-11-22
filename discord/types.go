@@ -128,11 +128,19 @@ const (
 type MessageFlags int
 
 const (
-	MessageFlagsSuppressEmbeds        MessageFlags = 1 << 2
-	MessageFlagsEphemeral             MessageFlags = 1 << 6
-	MessageFlagsSuppressNotifications MessageFlags = 1 << 12
-	MessageFlagsIsVoiceMessage        MessageFlags = 1 << 13
-	MessageFlagsIsComponentsV2        MessageFlags = 1 << 15
+	MessageFlagsCrossposted                      MessageFlags = 1 << 0
+	MessageFlagsIsCrosspost                      MessageFlags = 1 << 1
+	MessageFlagsSuppressEmbeds                   MessageFlags = 1 << 2
+	MessageFlagsSourceMessageDeleted             MessageFlags = 1 << 3
+	MessageFlagsUrgent                           MessageFlags = 1 << 4
+	MessageFlagsHasThread                        MessageFlags = 1 << 5
+	MessageFlagsEphemeral                        MessageFlags = 1 << 6
+	MessageFlagsLoading                          MessageFlags = 1 << 7
+	MessageFlagsFailedToMentionSomeRolesInThread MessageFlags = 1 << 8
+	MessageFlagsSuppressNotifications            MessageFlags = 1 << 12
+	MessageFlagsIsVoiceMessage                   MessageFlags = 1 << 13
+	MessageFlagsHasSnapshot                      MessageFlags = 1 << 14
+	MessageFlagsIsComponentsV2                   MessageFlags = 1 << 15
 )
 
 // User is a Discord user.
@@ -147,36 +155,127 @@ type User struct {
 	Bot           bool   `json:"bot"`
 	System        bool   `json:"system"`
 	PublicFlags   int    `json:"public_flags"`
+
+	// The fields below are only sent for the bot's own user.
+	MFAEnabled bool   `json:"mfa_enabled"`
+	Verified   bool   `json:"verified"`
+	Locale     Locale `json:"locale"`
+	Flags      int    `json:"flags"`
+
+	PremiumType      int               `json:"premium_type"`
+	AvatarDecoration *AvatarDecoration `json:"avatar_decoration_data"`
+	PrimaryGuild     *UserPrimaryGuild `json:"primary_guild"`
+}
+
+// User flags, for User.PublicFlags and User.Flags.
+const (
+	UserFlagStaff                 = 1 << 0
+	UserFlagPartner               = 1 << 1
+	UserFlagHypeSquad             = 1 << 2
+	UserFlagBugHunterLevel1       = 1 << 3
+	UserFlagHypeSquadBravery      = 1 << 6
+	UserFlagHypeSquadBrilliance   = 1 << 7
+	UserFlagHypeSquadBalance      = 1 << 8
+	UserFlagPremiumEarlySupporter = 1 << 9
+	UserFlagTeamPseudoUser        = 1 << 10
+	UserFlagBugHunterLevel2       = 1 << 14
+	UserFlagVerifiedBot           = 1 << 16
+	UserFlagVerifiedDeveloper     = 1 << 17
+	UserFlagCertifiedModerator    = 1 << 18
+	UserFlagBotHTTPInteractions   = 1 << 19
+)
+
+// AvatarDecoration is the decoration shown around an avatar.
+type AvatarDecoration struct {
+	Asset string `json:"asset"`
+	SKUID string `json:"sku_id"`
+}
+
+// UserPrimaryGuild is the guild whose tag a user shows next to their name.
+type UserPrimaryGuild struct {
+	GuildID string `json:"identity_guild_id"`
+	Enabled *bool  `json:"identity_enabled"`
+	Tag     string `json:"tag"`
+	Badge   string `json:"badge"`
 }
 
 // Member is a user's membership of a guild. User is absent from members that
 // are nested inside a message or a resolved data map.
 type Member struct {
-	User        *User      `json:"user"`
-	Nick        string     `json:"nick"`
-	Avatar      string     `json:"avatar"`
-	Roles       []string   `json:"roles"`
-	JoinedAt    time.Time  `json:"joined_at"`
-	Deaf        bool       `json:"deaf"`
-	Mute        bool       `json:"mute"`
-	Flags       int        `json:"flags"`
-	Pending     bool       `json:"pending"`
-	Permissions int64      `json:"permissions,string"`
-	TimeoutEnds *time.Time `json:"communication_disabled_until"`
+	User             *User             `json:"user"`
+	Nick             string            `json:"nick"`
+	Avatar           string            `json:"avatar"`
+	Banner           string            `json:"banner"`
+	Roles            []string          `json:"roles"`
+	JoinedAt         time.Time         `json:"joined_at"`
+	PremiumSince     *time.Time        `json:"premium_since"`
+	Deaf             bool              `json:"deaf"`
+	Mute             bool              `json:"mute"`
+	Flags            int               `json:"flags"`
+	Pending          bool              `json:"pending"`
+	Permissions      int64             `json:"permissions,string"`
+	TimeoutEnds      *time.Time        `json:"communication_disabled_until"`
+	AvatarDecoration *AvatarDecoration `json:"avatar_decoration_data"`
 }
+
+// Member flags, for Member.Flags. A bot can only change
+// MemberFlagBypassesVerification.
+const (
+	MemberFlagDidRejoin                    = 1 << 0
+	MemberFlagCompletedOnboarding          = 1 << 1
+	MemberFlagBypassesVerification         = 1 << 2
+	MemberFlagStartedOnboarding            = 1 << 3
+	MemberFlagIsGuest                      = 1 << 4
+	MemberFlagStartedHomeActions           = 1 << 5
+	MemberFlagCompletedHomeActions         = 1 << 6
+	MemberFlagAutomodQuarantinedUsername   = 1 << 7
+	MemberFlagDMSettingsUpsellAcknowledged = 1 << 9
+)
 
 // Role is a guild role.
 type Role struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Color       int    `json:"color"`
-	Hoist       bool   `json:"hoist"`
-	Position    int    `json:"position"`
-	Permissions int64  `json:"permissions,string"`
-	Managed     bool   `json:"managed"`
-	Mentionable bool   `json:"mentionable"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Color        int    `json:"color"`
+	Hoist        bool   `json:"hoist"`
+	Icon         string `json:"icon"`
+	UnicodeEmoji string `json:"unicode_emoji"`
+	Position     int    `json:"position"`
+	Permissions  int64  `json:"permissions,string"`
+	Managed      bool   `json:"managed"`
+	Mentionable  bool   `json:"mentionable"`
+	Flags        int    `json:"flags"`
 
 	Colors *RoleColors `json:"colors"`
+	Tags   *RoleTags   `json:"tags"`
+}
+
+// RoleTags says what a managed role belongs to. Discord marks the boolean
+// tags by sending them as null, so they are decoded by their presence.
+type RoleTags struct {
+	BotID                 string `json:"bot_id"`
+	IntegrationID         string `json:"integration_id"`
+	SubscriptionListingID string `json:"subscription_listing_id"`
+	PremiumSubscriber     bool   `json:"-"` // the role of the guild's boosters
+	AvailableForPurchase  bool   `json:"-"`
+	GuildConnections      bool   `json:"-"` // a linked role
+}
+
+// UnmarshalJSON implements json.Unmarshaler; see RoleTags.
+func (t *RoleTags) UnmarshalJSON(data []byte) error {
+	type alias RoleTags
+	if err := json.Unmarshal(data, (*alias)(t)); err != nil {
+		return err
+	}
+
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(data, &present); err != nil {
+		return err
+	}
+	_, t.PremiumSubscriber = present["premium_subscriber"]
+	_, t.AvailableForPurchase = present["available_for_purchase"]
+	_, t.GuildConnections = present["guild_connections"]
+	return nil
 }
 
 // RoleColors is a role's colors. Discord uses the secondary and tertiary colors
@@ -195,17 +294,11 @@ type RoleParams struct {
 	Colors      *RoleColors `json:"colors,omitempty"`
 	Hoist       *bool       `json:"hoist,omitempty"`
 	Mentionable *bool       `json:"mentionable,omitempty"`
-}
 
-// Channel is a (possibly partial) channel.
-type Channel struct {
-	ID       string      `json:"id"`
-	GuildID  string      `json:"guild_id"`
-	Name     string      `json:"name"`
-	Type     ChannelType `json:"type"`
-	Topic    string      `json:"topic"`
-	NSFW     bool        `json:"nsfw"`
-	ParentID string      `json:"parent_id"`
+	// Icon is an image as a data URI (see ImageData) and UnicodeEmoji a
+	// standard emoji, for guilds with the ROLE_ICONS feature.
+	Icon         Optional[string] `json:"icon,omitzero"`
+	UnicodeEmoji Optional[string] `json:"unicode_emoji,omitzero"`
 }
 
 // MessageAttachment is a file attached to a message.
@@ -325,6 +418,110 @@ type MessageReference struct {
 	ChannelID       string `json:"channel_id,omitempty"`
 	GuildID         string `json:"guild_id,omitempty"`
 	FailIfNotExists *bool  `json:"fail_if_not_exists,omitempty"`
+
+	// Type is MessageReferenceDefault for a reply, the default, or
+	// MessageReferenceForward to forward the message.
+	Type MessageReferenceType `json:"type,omitempty"`
+}
+
+// MessageReferenceType is what a MessageReference is for.
+type MessageReferenceType int
+
+const (
+	MessageReferenceDefault MessageReferenceType = 0 // a reply
+	MessageReferenceForward MessageReferenceType = 1
+)
+
+// MessageType is the kind of a message. Most of the types are system messages.
+type MessageType int
+
+const (
+	MessageTypeDefault                             MessageType = 0
+	MessageTypeRecipientAdd                        MessageType = 1
+	MessageTypeRecipientRemove                     MessageType = 2
+	MessageTypeCall                                MessageType = 3
+	MessageTypeChannelNameChange                   MessageType = 4
+	MessageTypeChannelIconChange                   MessageType = 5
+	MessageTypeChannelPinnedMessage                MessageType = 6
+	MessageTypeUserJoin                            MessageType = 7
+	MessageTypeGuildBoost                          MessageType = 8
+	MessageTypeGuildBoostTier1                     MessageType = 9
+	MessageTypeGuildBoostTier2                     MessageType = 10
+	MessageTypeGuildBoostTier3                     MessageType = 11
+	MessageTypeChannelFollowAdd                    MessageType = 12
+	MessageTypeGuildDiscoveryDisqualified          MessageType = 14
+	MessageTypeGuildDiscoveryRequalified           MessageType = 15
+	MessageTypeGuildDiscoveryGracePeriodInitial    MessageType = 16
+	MessageTypeGuildDiscoveryGracePeriodFinal      MessageType = 17
+	MessageTypeThreadCreated                       MessageType = 18
+	MessageTypeReply                               MessageType = 19
+	MessageTypeChatInputCommand                    MessageType = 20
+	MessageTypeThreadStarterMessage                MessageType = 21
+	MessageTypeGuildInviteReminder                 MessageType = 22
+	MessageTypeContextMenuCommand                  MessageType = 23
+	MessageTypeAutoModerationAction                MessageType = 24
+	MessageTypeRoleSubscriptionPurchase            MessageType = 25
+	MessageTypeInteractionPremiumUpsell            MessageType = 26
+	MessageTypeStageStart                          MessageType = 27
+	MessageTypeStageEnd                            MessageType = 28
+	MessageTypeStageSpeaker                        MessageType = 29
+	MessageTypeStageTopic                          MessageType = 31
+	MessageTypeGuildApplicationPremiumSubscription MessageType = 32
+	MessageTypeGuildIncidentAlertModeEnabled       MessageType = 36
+	MessageTypeGuildIncidentAlertModeDisabled      MessageType = 37
+	MessageTypeGuildIncidentReportRaid             MessageType = 38
+	MessageTypeGuildIncidentReportFalseAlarm       MessageType = 39
+	MessageTypePurchaseNotification                MessageType = 44
+	MessageTypePollResult                          MessageType = 46
+)
+
+// MessageReaction is how often an emoji was used to react to a message.
+type MessageReaction struct {
+	Count        int                  `json:"count"`
+	CountDetails MessageReactionCount `json:"count_details"`
+	Me           bool                 `json:"me"`
+	MeBurst      bool                 `json:"me_burst"`
+	Emoji        *Emoji               `json:"emoji"`
+	BurstColors  []string             `json:"burst_colors"`
+}
+
+// MessageReactionCount splits a reaction count into normal and super reactions.
+type MessageReactionCount struct {
+	Burst  int `json:"burst"`
+	Normal int `json:"normal"`
+}
+
+// ChannelMention is a channel mentioned in a crossposted message.
+type ChannelMention struct {
+	ID      string      `json:"id"`
+	GuildID string      `json:"guild_id"`
+	Type    ChannelType `json:"type"`
+	Name    string      `json:"name"`
+}
+
+// MessageInteractionMetadata describes the interaction a message answers.
+type MessageInteractionMetadata struct {
+	ID                            string                                `json:"id"`
+	Type                          InteractionType                       `json:"type"`
+	User                          *User                                 `json:"user"`
+	AuthorizingIntegrationOwners  map[ApplicationIntegrationType]string `json:"authorizing_integration_owners"`
+	OriginalResponseMessageID     string                                `json:"original_response_message_id"`
+	InteractedMessageID           string                                `json:"interacted_message_id"`           // components
+	TargetUser                    *User                                 `json:"target_user"`                     // user commands
+	TargetMessageID               string                                `json:"target_message_id"`               // message commands
+	TriggeringInteractionMetadata *MessageInteractionMetadata           `json:"triggering_interaction_metadata"` // modals
+}
+
+// MessageSnapshot is the copy of a forwarded message. Its Message holds only
+// the content fields: no ID, author or channel.
+type MessageSnapshot struct {
+	Message *Message `json:"message"`
+}
+
+// MessageCall is the call a MessageTypeCall message is about.
+type MessageCall struct {
+	Participants   []string   `json:"participants"`
+	EndedTimestamp *time.Time `json:"ended_timestamp"`
 }
 
 // Message is a message in a channel.
@@ -341,16 +538,27 @@ type Message struct {
 	MentionEveryone   bool                 `json:"mention_everyone"`
 	Mentions          []*User              `json:"mentions"`
 	MentionRoles      []string             `json:"mention_roles"`
+	MentionChannels   []*ChannelMention    `json:"mention_channels"`
 	Attachments       []*MessageAttachment `json:"attachments"`
 	Embeds            []*MessageEmbed      `json:"embeds"`
+	Reactions         []*MessageReaction   `json:"reactions"`
 	Components        ComponentList        `json:"components"`
 	Pinned            bool                 `json:"pinned"`
 	WebhookID         string               `json:"webhook_id"`
-	Type              int                  `json:"type"`
+	Type              MessageType          `json:"type"`
+	ApplicationID     string               `json:"application_id"`
 	Flags             MessageFlags         `json:"flags"`
 	MessageReference  *MessageReference    `json:"message_reference"`
+	MessageSnapshots  []*MessageSnapshot   `json:"message_snapshots"`
 	ReferencedMessage *Message             `json:"referenced_message"`
 	Poll              *Poll                `json:"poll"`
+	Call              *MessageCall         `json:"call"`
+
+	InteractionMetadata *MessageInteractionMetadata `json:"interaction_metadata"`
+	Thread              *Channel                    `json:"thread"` // the thread started from this message
+	StickerItems        []*StickerItem              `json:"sticker_items"`
+	Position            int                         `json:"position"` // roughly, in a thread
+	Nonce               json.RawMessage             `json:"nonce"`    // a string or an integer
 }
 
 // MessageSend is the body of a Create Message request.
@@ -365,6 +573,12 @@ type MessageSend struct {
 	Flags           MessageFlags            `json:"flags,omitempty"`
 	Poll            *PollCreateRequest      `json:"poll,omitempty"`
 	Files           []*File                 `json:"-"`
+
+	// Nonce identifies the message in MESSAGE_CREATE. With EnforceNonce, a
+	// second message with the same nonce from the bot within a few minutes is
+	// not created, and the first one is returned instead.
+	Nonce        string `json:"nonce,omitempty"`
+	EnforceNonce bool   `json:"enforce_nonce,omitempty"`
 }
 
 // PollLayoutType is how a poll is shown.
@@ -439,31 +653,19 @@ type ChannelPins struct {
 	HasMore bool          `json:"has_more"`
 }
 
-// Emoji is an emoji in a reaction. ID is empty for a standard Unicode emoji.
+// Emoji is an emoji, of a reaction, a guild or an application. ID is empty
+// for a standard Unicode emoji.
 type Emoji struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Animated bool   `json:"animated"`
-}
 
-// Guild is a Discord server. Channels, MemberCount, JoinedAt, Large and
-// Unavailable are only sent in the GUILD_CREATE event.
-type Guild struct {
-	ID                     string     `json:"id"`
-	Name                   string     `json:"name"`
-	Icon                   string     `json:"icon"`
-	Description            string     `json:"description"`
-	OwnerID                string     `json:"owner_id"`
-	Roles                  []*Role    `json:"roles"`
-	Features               []string   `json:"features"`
-	PreferredLocale        Locale     `json:"preferred_locale"`
-	Locale                 Locale     `json:"locale"` // only on the partial guild of an interaction
-	ApproximateMemberCount int        `json:"approximate_member_count"`
-	Channels               []*Channel `json:"channels"`
-	MemberCount            int        `json:"member_count"`
-	JoinedAt               *time.Time `json:"joined_at"`
-	Large                  bool       `json:"large"`
-	Unavailable            bool       `json:"unavailable"`
+	// The fields below are only set for the emojis of a guild or application.
+	Roles         []string `json:"roles"` // the roles allowed to use it; empty means everyone
+	User          *User    `json:"user"`  // who created it
+	RequireColons bool     `json:"require_colons"`
+	Managed       bool     `json:"managed"`
+	Available     bool     `json:"available"`
 }
 
 // GuildBan is a user's ban from a guild.
@@ -500,6 +702,19 @@ type Activity struct {
 	Type  ActivityType `json:"type"`
 	URL   string       `json:"url,omitempty"`   // streaming only
 	State string       `json:"state,omitempty"` // the text of a custom status
+
+	// The fields below are only received, on the activities of other users.
+	Details       string              `json:"details,omitempty"`
+	ApplicationID string              `json:"application_id,omitempty"`
+	CreatedAt     int64               `json:"created_at,omitempty"` // Unix milliseconds
+	Timestamps    *ActivityTimestamps `json:"timestamps,omitempty"`
+	Emoji         *Emoji              `json:"emoji,omitempty"`
+}
+
+// ActivityTimestamps are when an activity started and ends, in Unix milliseconds.
+type ActivityTimestamps struct {
+	Start int64 `json:"start,omitempty"`
+	End   int64 `json:"end,omitempty"`
 }
 
 // PresenceUpdate is the body of the gateway's Update Presence command.
@@ -514,12 +729,6 @@ type PresenceUpdate struct {
 type UnavailableGuild struct {
 	ID          string `json:"id"`
 	Unavailable bool   `json:"unavailable"`
-}
-
-// Application is the partial application object sent in READY.
-type Application struct {
-	ID    string `json:"id"`
-	Flags int    `json:"flags"`
 }
 
 // Ready is the READY gateway event.
@@ -577,13 +786,16 @@ type MessageDelete struct {
 // MessageReactionAdd is the MESSAGE_REACTION_ADD gateway event. Member is only
 // set in guilds.
 type MessageReactionAdd struct {
-	UserID          string  `json:"user_id"`
-	ChannelID       string  `json:"channel_id"`
-	MessageID       string  `json:"message_id"`
-	GuildID         string  `json:"guild_id"`
-	MessageAuthorID string  `json:"message_author_id"`
-	Member          *Member `json:"member"`
-	Emoji           *Emoji  `json:"emoji"`
+	UserID          string       `json:"user_id"`
+	ChannelID       string       `json:"channel_id"`
+	MessageID       string       `json:"message_id"`
+	GuildID         string       `json:"guild_id"`
+	MessageAuthorID string       `json:"message_author_id"`
+	Member          *Member      `json:"member"`
+	Emoji           *Emoji       `json:"emoji"`
+	Burst           bool         `json:"burst"`
+	BurstColors     []string     `json:"burst_colors"`
+	Type            ReactionType `json:"type"`
 }
 
 // jsonNull reports whether raw is absent or a JSON null.

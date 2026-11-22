@@ -2,8 +2,25 @@
 // (https://docs.discord.com/developers/intro). The API types it uses are in the
 // parent discord package.
 //
+// A Session is made with New. Its methods call the REST API, each taking a
+// context first, and its On methods register handlers for the gateway events
+// received once Open has connected:
+//
+//	s := client.New("Bot " + token)
+//	s.OnMessageCreate(func(s *client.Session, e *discord.MessageCreate) {
+//		if e.Content == "!ping" {
+//			s.ChannelMessageSend(context.Background(), e.ChannelID, "pong")
+//		}
+//	})
+//	if err := s.Open(ctx); err != nil {
+//		log.Fatal(err)
+//	}
+//	defer s.Close()
+//
 // Endpoints without a typed method can be reached with Session.Request, and
-// gateway events without a typed handler with Session.OnRawEvent.
+// gateway events without a typed handler with Session.OnRawEvent. Voice is
+// limited to joining and leaving channels with UpdateVoiceState: the session
+// does not send or receive audio.
 //
 // Requests follow Discord's rate limits: per-route buckets, the global limit
 // of 50 requests a second (kept ahead of time), and 429 responses, including
@@ -57,17 +74,9 @@ type Session struct {
 	rejected atomic.Pointer[rejection] // set once Discord rejects the token
 	invalid  invalidRequests
 
-	handlersMu        sync.RWMutex
-	onReady           []func(*Session, *discord.Ready)
-	onMessage         []func(*Session, *discord.MessageCreate)
-	onMessageUpdate   []func(*Session, *discord.MessageUpdate)
-	onMessageDelete   []func(*Session, *discord.MessageDelete)
-	onReactionAdd     []func(*Session, *discord.MessageReactionAdd)
-	onGuildCreate     []func(*Session, *discord.GuildCreate)
-	onGuildMemberAdd  []func(*Session, *discord.GuildMemberAdd)
-	onGuildMemberGone []func(*Session, *discord.GuildMemberRemove)
-	onInteract        []func(*Session, *discord.InteractionCreate)
-	onRawEvents       []func(*Session, string, json.RawMessage)
+	handlersMu  sync.RWMutex
+	events      map[string]*eventHandlers // by event name, such as "MESSAGE_CREATE"
+	onRawEvents []func(*Session, string, json.RawMessage)
 
 	user  atomic.Pointer[discord.User]
 	appID atomic.Pointer[string]
@@ -117,6 +126,7 @@ func New(token string) *Session {
 		UserAgent:  fmt.Sprintf("DiscordBot (%s, %s)", libraryURL, LibraryVersion),
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 		limiter:    newRateLimiter(),
+		events:     map[string]*eventHandlers{},
 		running:    &sync.WaitGroup{},
 		lifecycle:  make(chan struct{}, 1),
 	}
@@ -133,64 +143,4 @@ func (s *Session) ApplicationID() string {
 		return *id
 	}
 	return ""
-}
-
-// addHandler appends h to one of the session's handler lists.
-func addHandler[H any](s *Session, list *[]H, h H) {
-	s.handlersMu.Lock()
-	defer s.handlersMu.Unlock()
-	*list = append(*list, h)
-}
-
-// OnReady registers a handler for the READY event.
-func (s *Session) OnReady(h func(*Session, *discord.Ready)) {
-	addHandler(s, &s.onReady, h)
-}
-
-// OnMessageCreate registers a handler for the MESSAGE_CREATE event.
-func (s *Session) OnMessageCreate(h func(*Session, *discord.MessageCreate)) {
-	addHandler(s, &s.onMessage, h)
-}
-
-// OnMessageUpdate registers a handler for the MESSAGE_UPDATE event.
-func (s *Session) OnMessageUpdate(h func(*Session, *discord.MessageUpdate)) {
-	addHandler(s, &s.onMessageUpdate, h)
-}
-
-// OnMessageDelete registers a handler for the MESSAGE_DELETE event.
-func (s *Session) OnMessageDelete(h func(*Session, *discord.MessageDelete)) {
-	addHandler(s, &s.onMessageDelete, h)
-}
-
-// OnMessageReactionAdd registers a handler for the MESSAGE_REACTION_ADD event.
-func (s *Session) OnMessageReactionAdd(h func(*Session, *discord.MessageReactionAdd)) {
-	addHandler(s, &s.onReactionAdd, h)
-}
-
-// OnGuildCreate registers a handler for the GUILD_CREATE event.
-func (s *Session) OnGuildCreate(h func(*Session, *discord.GuildCreate)) {
-	addHandler(s, &s.onGuildCreate, h)
-}
-
-// OnGuildMemberAdd registers a handler for the GUILD_MEMBER_ADD event, which
-// needs the privileged IntentsGuildMembers intent.
-func (s *Session) OnGuildMemberAdd(h func(*Session, *discord.GuildMemberAdd)) {
-	addHandler(s, &s.onGuildMemberAdd, h)
-}
-
-// OnGuildMemberRemove registers a handler for the GUILD_MEMBER_REMOVE event,
-// which needs the privileged IntentsGuildMembers intent.
-func (s *Session) OnGuildMemberRemove(h func(*Session, *discord.GuildMemberRemove)) {
-	addHandler(s, &s.onGuildMemberGone, h)
-}
-
-// OnInteractionCreate registers a handler for the INTERACTION_CREATE event.
-func (s *Session) OnInteractionCreate(h func(*Session, *discord.InteractionCreate)) {
-	addHandler(s, &s.onInteract, h)
-}
-
-// OnRawEvent registers a handler that receives every dispatch event as its
-// name, such as "GUILD_CREATE", and undecoded JSON payload.
-func (s *Session) OnRawEvent(h func(s *Session, event string, data json.RawMessage)) {
-	addHandler(s, &s.onRawEvents, h)
 }

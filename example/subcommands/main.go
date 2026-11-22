@@ -9,14 +9,14 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
@@ -24,36 +24,36 @@ func main() {
 		log.Println("Bot is ready!")
 	})
 
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "hello",
 		Description: "Say hello to the bot.",
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			return c.Reply("Hi!")
 		},
 	})
 
 	// A command with subcommands only runs them, so it has no Execute itself.
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "group",
 		Description: "Simple group command.",
-		Subcommands: []*minidis.Subcommand{
+		Subcommands: []*interactions.Subcommand{
 			{
 				Name:        "subcommand",
 				Description: "A simple subcommand.",
-				Execute: func(c *minidis.Context) error {
+				Execute: func(c *interactions.Context) error {
 					return c.Reply("This is a subcommand!")
 				},
 			},
 		},
-		Groups: []*minidis.SubcommandGroup{
+		Groups: []*interactions.SubcommandGroup{
 			{
 				Name:        "subgroup",
 				Description: "A sub command group.",
-				Subcommands: []*minidis.Subcommand{
+				Subcommands: []*interactions.Subcommand{
 					{
 						Name:        "sg",
 						Description: "Nested subcommand inside sub command group.",
-						Execute: func(c *minidis.Context) error {
+						Execute: func(c *interactions.Context) error {
 							return c.Reply("This a sub command under a sub command group.")
 						},
 					},

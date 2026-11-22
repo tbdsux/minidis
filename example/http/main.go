@@ -14,17 +14,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "ping",
 		Description: "Simple ping command.",
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			return c.Reply("pong, over HTTP")
 		},
 	})
