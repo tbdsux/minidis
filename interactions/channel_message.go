@@ -106,7 +106,7 @@ func (c *ChannelMessageContext) Send(content string) (*discord.Message, error) {
 // SendWith sends a message to the channel. Use AllowedMentions when the
 // content repeats what users wrote, so that it cannot ping @everyone.
 func (c *ChannelMessageContext) SendWith(msg Message) (*discord.Message, error) {
-	return c.Session.ChannelMessageSendComplex(orBackground(c.api), c.ChannelID, msg.channelMessage())
+	return c.Session.ChannelMessageSendComplex(orBackground(c.api), c.ChannelID, msg.MessageSend())
 }
 
 // Reply sends a text message to the channel as a reply to the message.
@@ -116,7 +116,7 @@ func (c *ChannelMessageContext) Reply(content string) (*discord.Message, error) 
 
 // ReplyWith sends a message to the channel as a reply to the message.
 func (c *ChannelMessageContext) ReplyWith(msg Message) (*discord.Message, error) {
-	send := msg.channelMessage()
+	send := msg.MessageSend()
 	send.Reference = c.reference()
 	return c.Session.ChannelMessageSendComplex(orBackground(c.api), c.ChannelID, send)
 }

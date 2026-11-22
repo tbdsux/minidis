@@ -233,6 +233,14 @@ func (m *Minidis) Run(ctx context.Context) error {
 	}
 }
 
+// Context returns the context of the bot's current run, which is the parent
+// of every handler's context. It is canceled when a Shutdown ends, whether
+// the handlers finished or its own context ran out first, and replaced when
+// the bot is opened again. Use it for work that should stop with the bot.
+func (m *Minidis) Context() context.Context {
+	return m.current().ctx
+}
+
 // current returns the run that handlers starting now belong to.
 func (m *Minidis) current() *runState {
 	m.runMu.RLock()

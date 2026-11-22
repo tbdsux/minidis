@@ -292,7 +292,10 @@ func (msg Message) webhookParams() *discord.WebhookParams {
 	}
 }
 
-func (msg Message) channelMessage() *discord.MessageSend {
+// MessageSend returns the message as the body of a request that sends it to
+// a channel, for Session.ChannelMessageSendComplex. Ephemeral does not apply
+// there.
+func (msg Message) MessageSend() *discord.MessageSend {
 	return &discord.MessageSend{
 		Content:         msg.Content,
 		Embeds:          msg.Embeds,

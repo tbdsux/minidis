@@ -39,6 +39,10 @@
 // Instead of the gateway, a bot can receive interactions over HTTP at the
 // app's Interactions Endpoint URL, by serving HTTPHandler.
 //
+// The parent minidis package builds on this one: its Bot adds handlers for
+// messages and every other gateway event, works out the gateway intents, and
+// registers the commands when it runs.
+//
 // The discord package holds the Discord API types, and discord/client the
 // REST and gateway client, reachable as Minidis.Session for anything this
 // package does not wrap.

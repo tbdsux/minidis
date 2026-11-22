@@ -127,6 +127,15 @@ func (m *Minidis) AddUserCommand(cmds ...*UserCommand) {
 	}
 }
 
+// HasCommands reports whether any command has been added, which is whether
+// SyncCommands would register anything.
+func (m *Minidis) HasCommands() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return len(m.commands)+len(m.messageCommands)+len(m.userCommands) > 0 || m.entryPoint != nil
+}
+
 // EntryPointCommand is the command that launches the app's Activity, shown in
 // the App Launcher. Discord creates a default one when Activities are enabled.
 type EntryPointCommand struct {
