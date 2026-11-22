@@ -10,16 +10,16 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 var languages = []string{"Go", "JavaScript", "Python", "Rust", "TypeScript", "Zig"}
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds)
 
@@ -28,15 +28,15 @@ func main() {
 	})
 
 	// Middleware runs around every command, component and modal handler
-	bot.Use(func(next minidis.HandlerFunc) minidis.HandlerFunc {
-		return func(c *minidis.Context) error {
+	bot.Use(func(next interactions.HandlerFunc) interactions.HandlerFunc {
+		return func(c *interactions.Context) error {
 			log.Printf("interaction from %s", c.Author.Username)
 			return next(c)
 		}
 	})
 
 	// Errors and panics from any interaction handler end up here
-	bot.HandleError(func(c *minidis.Context, err error) {
+	bot.HandleError(func(c *interactions.Context, err error) {
 		log.Printf("interaction failed: %v", err)
 
 		// Autocomplete can only answer with choices.
@@ -45,7 +45,7 @@ func main() {
 		}
 
 		// After a reply or a deferral, the user is told in a followup instead.
-		msg := minidis.Message{Content: "Something went wrong.", Ephemeral: true}
+		msg := interactions.Message{Content: "Something went wrong.", Ephemeral: true}
 		var tellErr error
 		if c.Responded() {
 			_, tellErr = c.FollowupWith(msg)
@@ -57,7 +57,7 @@ func main() {
 		}
 	})
 
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "language",
 		Description: "Pick a programming language.",
 		Options: []*discord.ApplicationCommandOption{
@@ -69,29 +69,29 @@ func main() {
 				Autocomplete: true,
 			},
 		},
-		Autocomplete: func(c *minidis.AutocompleteContext) error {
+		Autocomplete: func(c *interactions.AutocompleteContext) error {
 			input := strings.ToLower(c.Input())
 
 			var choices []*discord.ApplicationCommandOptionChoice
 			for _, language := range languages {
 				if strings.Contains(strings.ToLower(language), input) {
-					choices = append(choices, minidis.Choice(language, language))
+					choices = append(choices, interactions.Choice(language, language))
 				}
 			}
 
 			return c.Respond(choices...)
 		},
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			// Autocomplete only suggests: the user may still type anything. The
 			// value goes into a custom ID below, which is limited to 100
 			// characters and whose {language} capture cannot contain ":", so
 			// accept only the known languages.
 			name := c.String("name")
 			if !slices.Contains(languages, name) {
-				return c.ReplyWith(minidis.Message{Content: "Unknown language: pick one of the suggestions.", Ephemeral: true})
+				return c.ReplyWith(interactions.Message{Content: "Unknown language: pick one of the suggestions.", Ephemeral: true})
 			}
 
-			return c.ReplyWith(minidis.Message{
+			return c.ReplyWith(interactions.Message{
 				Content: fmt.Sprintf("You picked **%s**. Keep it?", name),
 				Components: []discord.MessageComponent{
 					discord.ActionsRow{
@@ -109,9 +109,9 @@ func main() {
 		},
 	})
 
-	bot.HandleComponent("keep:{language}", func(c *minidis.ComponentContext) error {
+	bot.HandleComponent("keep:{language}", func(c *interactions.ComponentContext) error {
 		// An empty, non-nil slice removes the button from the message
-		return c.UpdateWith(minidis.MessageEdit{
+		return c.UpdateWith(interactions.MessageEdit{
 			Content:    discord.String("Kept **" + c.Params["language"] + "**."),
 			Components: []discord.MessageComponent{},
 		})

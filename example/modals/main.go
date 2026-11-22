@@ -9,9 +9,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 var (
@@ -20,14 +20,14 @@ var (
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	bot.OnReady(func(s *client.Session, i *discord.Ready) {
 		log.Println("Bot is ready!")
 	})
 
 	// {user} is captured from the custom ID into c.Params
-	bot.HandleModal("modals_survey:{user}", func(c *minidis.ModalSubmitContext) error {
+	bot.HandleModal("modals_survey:{user}", func(c *interactions.ModalSubmitContext) error {
 		if err := c.Reply("Thank you for taking your time to fill the survey"); err != nil {
 			return err
 		}
@@ -51,11 +51,11 @@ func main() {
 	})
 
 	// simple command
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "modals",
 		Description: "Show a modal component example",
-		Execute: func(c *minidis.Context) error {
-			return c.ReplyModal(minidis.Modal{
+		Execute: func(c *interactions.Context) error {
+			return c.ReplyModal(interactions.Modal{
 				Title:    "Modals survey",
 				CustomID: "modals_survey:" + c.Author.ID,
 				Components: []discord.MessageComponent{

@@ -1,4 +1,4 @@
-package minidis
+package interactions
 
 import (
 	"context"
@@ -24,7 +24,7 @@ var ErrNoResponse error = noResponse{}
 type noResponse struct{}
 
 func (noResponse) Error() string {
-	return "minidis: the interaction was not responded to within 3 seconds"
+	return "interactions: the interaction was not responded to within 3 seconds"
 }
 
 func (noResponse) Is(target error) bool { return target == context.Canceled }
@@ -192,7 +192,7 @@ func (c *Context) Value(key any) any { return orBackground(c.ctx).Value(key) }
 // middleware passes to the handler is also what the error handler receives.
 func (c *Context) WithContext(ctx context.Context) *Context {
 	if ctx == nil {
-		panic("minidis: nil context")
+		panic("interactions: nil context")
 	}
 	copied := *c
 	copied.ctx = ctx
@@ -221,7 +221,7 @@ func (c *Context) Responded() bool {
 
 // errTooLate is returned by the response methods once the 3 seconds passed
 // without a response.
-var errTooLate = fmt.Errorf("minidis: cannot respond: %w", ErrNoResponse)
+var errTooLate = fmt.Errorf("interactions: cannot respond: %w", ErrNoResponse)
 
 // api returns the context for a request about the interaction. A Context
 // made by hand, such as in a test of a handler, uses its own context.

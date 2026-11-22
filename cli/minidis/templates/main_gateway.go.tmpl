@@ -11,9 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 
 	"{{.Package}}/commands"
 )
@@ -30,7 +30,7 @@ func run() error {
 		return errors.New("set TOKEN to the bot token from the Discord Developer Portal")
 	}
 
-	bot := minidis.New(token)
+	bot := interactions.New(token)
 
 	// Interactions need no intents. Add others, such as
 	// discord.IntentsGuildMessages, to receive message or member events.

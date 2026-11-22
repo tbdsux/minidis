@@ -9,14 +9,14 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
@@ -25,13 +25,13 @@ func main() {
 	})
 
 	// Set up a command to show component buttons
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "buttons",
 		Description: "Show buttons component.",
 		Options:     []*discord.ApplicationCommandOption{},
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			return c.ReplyWith(
-				minidis.Message{
+				interactions.Message{
 					Content: "Are you cool?",
 					Components: []discord.MessageComponent{
 						discord.ActionsRow{
@@ -70,12 +70,12 @@ func main() {
 		},
 	})
 
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "selects",
 		Description: "Example for select options.",
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			return c.ReplyWith(
-				minidis.Message{
+				interactions.Message{
 					Content: "What is your favourite programming language?",
 					Components: []discord.MessageComponent{
 						discord.ActionsRow{
@@ -123,24 +123,24 @@ func main() {
 		},
 	})
 
-	bot.HandleComponent("select", func(c *minidis.ComponentContext) error {
+	bot.HandleComponent("select", func(c *interactions.ComponentContext) error {
 		if c.Data.Values[0] == "go" {
 			return c.Update("This is the way.")
 		}
 		return c.Update("It is not the way to go.")
 	})
 
-	bot.HandleComponent("fd_yes", func(c *minidis.ComponentContext) error {
+	bot.HandleComponent("fd_yes", func(c *interactions.ComponentContext) error {
 		// An empty, non-nil slice removes the buttons from the message
-		return c.UpdateWith(minidis.MessageEdit{
+		return c.UpdateWith(interactions.MessageEdit{
 			Content:    discord.String("Wow Nice!"),
 			Components: []discord.MessageComponent{},
 		})
 	})
 
-	bot.HandleComponent("fd_no", func(c *minidis.ComponentContext) error {
+	bot.HandleComponent("fd_no", func(c *interactions.ComponentContext) error {
 		// An empty, non-nil slice removes the buttons from the message
-		return c.UpdateWith(minidis.MessageEdit{
+		return c.UpdateWith(interactions.MessageEdit{
 			Content:    discord.String("Ohhh why???"),
 			Components: []discord.MessageComponent{},
 		})

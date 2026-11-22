@@ -1,4 +1,4 @@
-package minidis
+package interactions
 
 import (
 	"context"
@@ -27,7 +27,7 @@ func (m *Minidis) SyncCommands(ctx context.Context, guildIDs ...string) error {
 
 	guildIDs = nonEmpty(guildIDs)
 	if len(guildIDs) == 0 {
-		return errors.New("minidis: SyncCommands was given only empty guild IDs; call it with none to register the commands globally")
+		return errors.New("interactions: SyncCommands was given only empty guild IDs; call it with none to register the commands globally")
 	}
 
 	commands := m.buildCommands(false)
@@ -50,7 +50,7 @@ func (m *Minidis) ClearCommands(ctx context.Context, guildIDs ...string) error {
 
 	guildIDs = nonEmpty(guildIDs)
 	if len(guildIDs) == 0 {
-		return errors.New("minidis: ClearCommands was given only empty guild IDs; call it with none to clear the global commands")
+		return errors.New("interactions: ClearCommands was given only empty guild IDs; call it with none to clear the global commands")
 	}
 
 	for _, id := range guildIDs {
@@ -80,7 +80,7 @@ func (m *Minidis) validateCommands() error {
 
 	var errs []error
 	report := func(format string, args ...any) {
-		errs = append(errs, fmt.Errorf("minidis: "+format, args...))
+		errs = append(errs, fmt.Errorf("interactions: "+format, args...))
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(m.commands)) {
@@ -162,7 +162,7 @@ func (m *Minidis) globalEntryPoint(ctx context.Context, appID string) (*discord.
 	var commands []*discord.ApplicationCommand
 	path := "/applications/" + appID + "/commands?with_localizations=true"
 	if err := m.Session.Request(ctx, http.MethodGet, path, nil, &commands); err != nil {
-		return nil, fmt.Errorf("minidis: looking for the entry point command: %w", err)
+		return nil, fmt.Errorf("interactions: looking for the entry point command: %w", err)
 	}
 
 	i := slices.IndexFunc(commands, isEntryPoint)
@@ -204,7 +204,7 @@ func (m *Minidis) applicationID(ctx context.Context) (string, error) {
 		ID string `json:"id"`
 	}
 	if err := m.Session.Request(ctx, http.MethodGet, "/applications/@me", nil, &app); err != nil {
-		return "", fmt.Errorf("minidis: looking up the application ID: %w", err)
+		return "", fmt.Errorf("interactions: looking up the application ID: %w", err)
 	}
 
 	m.appID = app.ID

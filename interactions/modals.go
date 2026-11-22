@@ -1,4 +1,4 @@
-package minidis
+package interactions
 
 import (
 	"errors"
@@ -60,7 +60,7 @@ func (c *ModalSubmitContext) Update(content string) error {
 
 // errNoModalMessage is returned by the update methods of a modal opened by a
 // command, which has no message to update.
-var errNoModalMessage = errors.New("minidis: the modal was not opened from a message component, so there is no message to update")
+var errNoModalMessage = errors.New("interactions: the modal was not opened from a message component, so there is no message to update")
 
 // UpdateWith responds by changing the message whose component opened the
 // modal.

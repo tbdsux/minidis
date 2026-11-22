@@ -1,4 +1,4 @@
-package minidis
+package interactions
 
 import (
 	"github.com/tbdsux/minidis/discord"

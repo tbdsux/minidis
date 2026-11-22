@@ -10,14 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	// Set Intents
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
@@ -27,21 +27,21 @@ func main() {
 	})
 
 	// Simple Ping command
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "ping",
 		Description: "Simple ping command.",
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			return c.Reply(fmt.Sprintf("Hello **%s**, pong? Guild: %s", c.Author.Username, c.GuildID))
 		},
 	})
 
 	// Deferred replies
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "defer",
 		Description: "Deferred reply.",
 		// Only members who can manage messages see this command.
 		DefaultMemberPermissions: discord.Int64(discord.PermissionManageMessages),
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			if err := c.DeferReply(true); err != nil {
 				return err
 			}
@@ -59,11 +59,11 @@ func main() {
 	})
 
 	// Followup messages
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "responses",
 		Description: "Responses management.",
 		Options:     []*discord.ApplicationCommandOption{},
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			if err := c.Reply("Hello! this message will be modified after 5 seconds..."); err != nil {
 				return err
 			}
@@ -82,11 +82,11 @@ func main() {
 	})
 
 	// Admin only commands by permission
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:                     "admin-only",
 		Description:              "Admin only command",
 		DefaultMemberPermissions: discord.Int64(0), // 0 = admin only command
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			return c.Reply("You should only see this reply if you are an admin!")
 		},
 	})

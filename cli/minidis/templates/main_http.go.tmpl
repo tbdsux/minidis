@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/interactions"
 
 	"{{.Package}}/commands"
 )
@@ -39,7 +39,7 @@ func run() error {
 		return errors.New("set PUBLIC_KEY to the public key from the General Information page of the Developer Portal")
 	}
 
-	bot := minidis.New(token)
+	bot := interactions.New(token)
 	commands.Register(bot)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

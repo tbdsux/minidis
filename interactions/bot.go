@@ -1,4 +1,4 @@
-package minidis
+package interactions
 
 import (
 	"context"
@@ -22,7 +22,7 @@ const closeTimeout = 10 * time.Second
 // the bot is running. A registered command must not be changed afterwards.
 type Minidis struct {
 	// Session is the Discord client, for the REST endpoints and gateway events
-	// that minidis does not wrap.
+	// that this package does not wrap.
 	Session *client.Session
 
 	mu                sync.RWMutex
@@ -210,7 +210,7 @@ func (m *Minidis) Shutdown(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		if n := run.httpRunning.Load(); n > 0 {
-			err = errors.Join(err, fmt.Errorf("minidis: %d HTTP interaction handlers still running: %w", n, ctx.Err()))
+			err = errors.Join(err, fmt.Errorf("interactions: %d HTTP interaction handlers still running: %w", n, ctx.Err()))
 		}
 		return err
 	}

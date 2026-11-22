@@ -1,4 +1,4 @@
-package minidis
+package interactions
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ import (
 // ErrNoHandler means an interaction arrived that nothing is registered to
 // handle, usually a command Discord still has from before a rename or removal.
 // It reaches the error handler wrapped with the command or custom ID.
-var ErrNoHandler = errors.New("minidis: no handler registered")
+var ErrNoHandler = errors.New("interactions: no handler registered")
 
 // PanicError is passed to the error handlers when a handler panics.
 type PanicError struct {
@@ -20,7 +20,7 @@ type PanicError struct {
 }
 
 func (e *PanicError) Error() string {
-	return fmt.Sprintf("minidis: handler panicked: %v", e.Value)
+	return fmt.Sprintf("interactions: handler panicked: %v", e.Value)
 }
 
 // Unwrap returns the panic value if it is an error, so that errors.Is and
@@ -123,8 +123,8 @@ func recoverErrorHandler(source string) {
 func logError(source string, err error) {
 	var p *PanicError
 	if errors.As(err, &p) {
-		log.Printf("minidis: %s: %v\n%s", source, err, p.Stack)
+		log.Printf("interactions: %s: %v\n%s", source, err, p.Stack)
 		return
 	}
-	log.Printf("minidis: %s: %v", source, err)
+	log.Printf("interactions: %s: %v", source, err)
 }

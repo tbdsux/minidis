@@ -1,4 +1,4 @@
-package minidis
+package interactions
 
 import (
 	"context"
@@ -47,13 +47,13 @@ const (
 func (m *Minidis) HTTPHandler(ctx context.Context, publicKey string) (http.Handler, error) {
 	key, err := hex.DecodeString(publicKey)
 	if err != nil || len(key) != ed25519.PublicKeySize {
-		return nil, errors.New("minidis: the public key must be 64 hex characters")
+		return nil, errors.New("interactions: the public key must be 64 hex characters")
 	}
 
 	if m.Session.User() == nil && m.httpBot.Load() == nil {
 		bot := &discord.User{}
 		if err := m.Session.Request(ctx, http.MethodGet, "/users/@me", nil, bot); err != nil {
-			return nil, fmt.Errorf("minidis: looking up the bot user: %w", err)
+			return nil, fmt.Errorf("interactions: looking up the bot user: %w", err)
 		}
 		m.httpBot.Store(bot)
 	}

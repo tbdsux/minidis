@@ -9,13 +9,13 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
 
@@ -23,7 +23,7 @@ func main() {
 		log.Println("Bot is ready!")
 	})
 
-	greet := func(c *minidis.ChannelMessageContext) error {
+	greet := func(c *interactions.ChannelMessageContext) error {
 		message, err := c.Reply("Hello! This is a message from the bot.")
 		if err != nil {
 			return err
