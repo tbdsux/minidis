@@ -125,7 +125,7 @@ func initProject(o initOptions, stdout, stderr io.Writer) error {
 	}
 
 	// Check everything before writing anything, so a refusal changes nothing.
-	if err := checkConflicts(p.dir, files, o.force); err != nil {
+	if err := checkConflicts(p.dir, files, o.http, o.force); err != nil {
 		return err
 	}
 
@@ -228,7 +228,7 @@ func makePlan(o initOptions) (plan, error) {
 	if err != nil {
 		return plan{}, err
 	}
-	if err := checkNotStandard(p.packagePath); err != nil {
+	if err := checkNotStandard(p.packagePath, o.http); err != nil {
 		return plan{}, fmt.Errorf("%s cannot hold the bot: %w; choose another directory or -module", p.dir, err)
 	}
 	return p, nil
@@ -439,15 +439,28 @@ func checkPackageDir(rel string) error {
 	return nil
 }
 
-// checkNotStandard rejects an import path for the bot whose package, or its
-// commands package, is also a package of the standard library: imports of it
-// would be ambiguous.
-func checkNotStandard(importPath string) error {
+// subpackages are the packages a project has besides main, each in the
+// directory of its name.
+func subpackages(http bool) []string {
+	if http {
+		return []string{"commands"}
+	}
+	return []string{"commands", "events"}
+}
+
+// checkNotStandard rejects an import path for the bot whose package, or one
+// of its subpackages, is also a package of the standard library: imports of
+// it would be ambiguous.
+func checkNotStandard(importPath string, http bool) error {
 	root := goRoot()
 	if root == "" {
 		return nil
 	}
-	for _, pkg := range []string{importPath, importPath + "/commands"} {
+	packages := []string{importPath}
+	for _, sub := range subpackages(http) {
+		packages = append(packages, importPath+"/"+sub)
+	}
+	for _, pkg := range packages {
 		if info, err := os.Stat(filepath.Join(root, "src", filepath.FromSlash(pkg))); err == nil && info.IsDir() {
 			return fmt.Errorf("%q is a package of the standard library", pkg)
 		}
@@ -486,9 +499,13 @@ func isVersionElement(s string) bool {
 // only gets the lines it is missing.
 var keptFiles = map[string]bool{"README.md": true, ".gitignore": true}
 
-func checkConflicts(dir string, files map[string][]byte, force bool) error {
+func checkConflicts(dir string, files map[string][]byte, http, force bool) error {
 	if !force {
-		for _, want := range []struct{ dir, pkg string }{{dir, "main"}, {filepath.Join(dir, "commands"), "commands"}} {
+		wanted := []struct{ dir, pkg string }{{dir, "main"}}
+		for _, sub := range subpackages(http) {
+			wanted = append(wanted, struct{ dir, pkg string }{filepath.Join(dir, sub), sub})
+		}
+		for _, want := range wanted {
 			packages, err := otherPackages(want.dir, want.pkg)
 			if err != nil {
 				return err
@@ -627,6 +644,12 @@ func render(data projectData) (map[string][]byte, error) {
 		"commands/hello.go.tmpl":    "commands/hello.go",
 		"README.md.tmpl":            "README.md",
 		"gitignore.tmpl":            ".gitignore", // embed skips dotfiles
+	}
+	// Text commands and events come over the gateway.
+	if !data.HTTP {
+		outputs["commands/ping.go.tmpl"] = "commands/ping.go"
+		outputs["events/events.go.tmpl"] = "events/events.go"
+		outputs["events/threads.go.tmpl"] = "events/threads.go"
 	}
 
 	files := make(map[string][]byte, len(outputs))

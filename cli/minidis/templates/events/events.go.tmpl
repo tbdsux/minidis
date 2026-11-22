@@ -1,0 +1,30 @@
+// Package events holds the bot's handlers of gateway events: what happens on
+// Discord other than people using its commands.
+package events
+
+import (
+	"log"
+
+	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+)
+
+// Register adds the event handlers to the bot. Add new ones here.
+//
+// minidis.On takes a handler for any event, chosen by the type of its second
+// parameter, and the bot asks Discord for the intents the event needs. Some
+// are privileged and must be enabled for the bot in the Developer Portal,
+// under Bot > Privileged Gateway Intents, or the bot stops with an error that
+// says so: the Server Members Intent for discord.GuildMemberAdd and the other
+// member events, and the Message Content Intent for bot.OnMessage, which
+// handles the messages people send.
+func Register(bot *minidis.Bot) {
+	minidis.On(bot, ready)
+	minidis.On(bot, joinThread)
+}
+
+// ready runs each time the bot has connected.
+func ready(c *minidis.EventContext, e *discord.Ready) error {
+	log.Printf("Logged in as %s. Press Ctrl+C to stop.", e.User.Username)
+	return nil
+}

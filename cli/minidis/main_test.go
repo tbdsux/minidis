@@ -136,6 +136,16 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				t.Errorf("main.go uses HTTPHandler = %v", got)
 			}
 
+			// Events and text commands come over the gateway only.
+			for _, name := range []string{filepath.Join("events", "events.go"), filepath.Join("events", "threads.go"), filepath.Join("commands", "ping.go")} {
+				if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != (variant == "gateway") {
+					t.Errorf("%s exists = %v in a %s project", name, err == nil, variant)
+				}
+			}
+			if readme := readFile(t, filepath.Join(dir, "README.md")); strings.Contains(readme, "## Handle an event") != (variant == "gateway") {
+				t.Errorf("README.md of a %s project:\n%s", variant, readme)
+			}
+
 			if goMod := readFile(t, filepath.Join(dir, "go.mod")); !strings.Contains(goMod, "\ngo "+goFloor+"\n") {
 				t.Errorf("go.mod does not declare go %s:\n%s", goFloor, goMod)
 			}
@@ -735,6 +745,24 @@ func TestInitRefusesAnotherCommandsPackage(t *testing.T) {
 
 	if out, err := minidisInit(t, "-skip-deps", "-force", dir); err != nil {
 		t.Fatalf("-force: %v\n%s", err, out)
+	}
+}
+
+func TestInitRefusesAnotherEventsPackage(t *testing.T) {
+	requireGo(t)
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/bot\n")
+	writeFile(t, filepath.Join(dir, "events", "x.go"), "package calendar\n")
+
+	_, err := minidisInit(t, "-skip-deps", dir)
+	if err == nil || !strings.Contains(err.Error(), "package calendar") || !strings.Contains(err.Error(), "package events") {
+		t.Fatalf("err = %v", err)
+	}
+
+	// An HTTP project has no events package, so the directory is not its concern.
+	if out, err := minidisInit(t, "-skip-deps", "-http", dir); err != nil {
+		t.Fatalf("-http: %v\n%s", err, out)
 	}
 }
 

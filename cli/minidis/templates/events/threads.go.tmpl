@@ -1,0 +1,19 @@
+package events
+
+import (
+	"github.com/tbdsux/minidis"
+	"github.com/tbdsux/minidis/discord"
+)
+
+// joinThread makes the bot a member of every new thread it can see, so that
+// it receives the messages of private threads it is later mentioned in and
+// shows up in the thread's member list.
+func joinThread(c *minidis.EventContext, e *discord.ThreadCreate) error {
+	if !e.NewlyCreated {
+		return nil // the bot was added to an existing thread
+	}
+
+	// c is a context.Context that ends with the handler, or when the bot
+	// closes. c.Session has the rest of the Discord API.
+	return c.Session.ThreadJoin(c, e.ID)
+}

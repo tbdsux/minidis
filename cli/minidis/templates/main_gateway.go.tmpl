@@ -4,18 +4,15 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis/discord"
-	"github.com/tbdsux/minidis/discord/client"
-	"github.com/tbdsux/minidis/interactions"
+	"github.com/tbdsux/minidis"
 
 	"{{.Package}}/commands"
+	"{{.Package}}/events"
 )
 
 func main() {
@@ -30,34 +27,21 @@ func run() error {
 		return errors.New("set TOKEN to the bot token from the Discord Developer Portal")
 	}
 
-	bot := interactions.New(token)
+	bot := minidis.New(token)
 
-	// Interactions need no intents. Add others, such as
-	// discord.IntentsGuildMessages, to receive message or member events.
-	bot.SetIntents(discord.IntentsGuilds)
+	// GUILD is a server to register the commands in, where they show up at
+	// once. Without it, they are registered globally.
+	bot.SetGuilds(os.Getenv("GUILD"))
 
 	commands.Register(bot)
-
-	bot.OnReady(func(*client.Session, *discord.Ready) {
-		log.Println("Bot is ready. Press Ctrl+C to stop.")
-	})
+	events.Register(bot)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	context.AfterFunc(ctx, stop) // a second Ctrl+C ends a slow shutdown at once
 
-	// Register the commands with Discord, replacing any registered before.
-	if err := bot.SyncCommands(ctx, guildIDs()...); err != nil {
-		return fmt.Errorf("syncing commands: %w", err)
-	}
-
+	// Run registers the commands with Discord, replacing any registered
+	// before, connects with the intents the handlers need, and keeps the bot
+	// running until Ctrl+C.
 	return bot.Run(ctx)
-}
-
-// guildIDs reads GUILD, a comma-separated list of the servers to register the
-// commands in. Without it, the commands are registered globally.
-func guildIDs() []string {
-	return strings.FieldsFunc(os.Getenv("GUILD"), func(r rune) bool {
-		return r == ',' || r == ' '
-	})
 }

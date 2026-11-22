@@ -1,15 +1,15 @@
 package commands
 
 import (
+	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
-	"github.com/tbdsux/minidis/interactions"
 )
 
 // waveButtonID is the custom ID of the button hello replies with. The handler
 // set for it in Register runs when the button is pressed.
 const waveButtonID = "hello:wave"
 
-var hello = &interactions.Command{
+var hello = &minidis.Command{
 	Name:        "hello",
 	Description: "Say hi to the bot",
 	Options: []*discord.ApplicationCommandOption{
@@ -19,14 +19,14 @@ var hello = &interactions.Command{
 			Description: "Who to greet instead of you",
 		},
 	},
-	Execute: func(c *interactions.Context) error {
+	Execute: func(c *minidis.Context) error {
 		who := c.Author
 		if user := c.User("who"); user != nil {
 			who = user
 		}
 
-		return c.ReplyWith(interactions.Message{
-			Content: "Hi, <@" + who.ID + ">!",
+		return c.ReplyWith(minidis.Message{
+			Content: "Hi, " + who.Mention() + "!",
 			Components: []discord.MessageComponent{
 				discord.ActionsRow{Components: []discord.MessageComponent{
 					discord.Button{Label: "Wave back", Style: discord.PrimaryButton, CustomID: waveButtonID},
@@ -36,6 +36,6 @@ var hello = &interactions.Command{
 	},
 }
 
-func waveBack(c *interactions.ComponentContext) error {
-	return c.ReplyWith(interactions.Message{Content: "👋", Ephemeral: true})
+func waveBack(c *minidis.ComponentContext) error {
+	return c.ReplyWith(minidis.Message{Content: "👋", Ephemeral: true})
 }

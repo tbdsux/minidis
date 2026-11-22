@@ -1,0 +1,16 @@
+package commands
+
+import "github.com/tbdsux/minidis"
+
+// ping is a text command: write "@{{.Name}} ping" in a channel the bot can
+// see, or in a DM with it. For "@{{.Name}} ping one two", c.Args would be
+// ["one", "two"].
+var ping = &minidis.TextCommand{
+	Name:        "ping",
+	Aliases:     []string{"p"},
+	Description: "Check that the bot is there",
+	Execute: func(c *minidis.MessageContext) error {
+		_, err := c.Reply("Pong!")
+		return err
+	},
+}
