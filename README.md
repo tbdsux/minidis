@@ -1,8 +1,14 @@
 # minidis
 
-Simple Discord bot framework for Go, built directly on the [Discord API](https://docs.discord.com/developers/intro).
+Simple Discord library for Go, built directly on the [Discord API](https://docs.discord.com/developers/intro).
 
-The `discord/client` package is its REST and Gateway client and `discord` holds the API types. Use `Session.Request` for endpoints without a typed method and `Session.OnRawEvent` for gateway events without a typed handler.
+| Package | What it holds |
+| --- | --- |
+| `discord` | The Discord API types. |
+| `discord/client` | The REST and Gateway client. |
+| `interactions` | The bot framework for slash commands, context menus, components, modals and autocomplete. |
+
+The usage below is that of `interactions`. Use `Session.Request` for endpoints without a typed method and `Session.OnRawEvent` for gateway events without a typed handler.
 
 ## Install
 
@@ -32,14 +38,14 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/interactions"
 )
 
 func main() {
 	guilds := strings.Fields(strings.ReplaceAll(os.Getenv("GUILD"), ",", " ")) // none means global
-	bot := minidis.New(os.Getenv("TOKEN"))
+	bot := interactions.New(os.Getenv("TOKEN"))
 
 	// Set intents (not required when doing only slash commands)
 	bot.SetIntents(discord.IntentsGuilds | discord.IntentsGuildMessages)
@@ -49,10 +55,10 @@ func main() {
 	})
 
 	// simple command
-	bot.AddCommand(&minidis.Command{
+	bot.AddCommand(&interactions.Command{
 		Name:        "ping",
 		Description: "Simple ping command.",
-		Execute: func(c *minidis.Context) error {
+		Execute: func(c *interactions.Context) error {
 			return c.Reply(fmt.Sprintf("Hello **%s**, pong?", c.Author.Username))
 		},
 	})
@@ -100,14 +106,14 @@ Contexts: []discord.InteractionContextType{discord.InteractionContextGuild, disc
 ### Subcommands
 
 ```go
-bot.AddCommand(&minidis.Command{
+bot.AddCommand(&interactions.Command{
 	Name:        "role",
 	Description: "Manage roles.",
-	Subcommands: []*minidis.Subcommand{
+	Subcommands: []*interactions.Subcommand{
 		{Name: "list", Description: "List roles.", Execute: listRoles},
 	},
-	Groups: []*minidis.SubcommandGroup{
-		{Name: "member", Description: "Roles of a member.", Subcommands: []*minidis.Subcommand{
+	Groups: []*interactions.SubcommandGroup{
+		{Name: "member", Description: "Roles of a member.", Subcommands: []*interactions.Subcommand{
 			{Name: "add", Description: "Give a role.", Execute: addRole},
 		}},
 	},
@@ -120,21 +126,21 @@ A command with subcommands only runs them, so it cannot have `Options`, an `Exec
 
 ```go
 c.Reply("pong")
-c.ReplyWith(minidis.Message{Content: "only you can see this", Ephemeral: true})
+c.ReplyWith(interactions.Message{Content: "only you can see this", Ephemeral: true})
 
 c.DeferReply(false) // for work that takes more than 3 seconds, then:
 c.Edit("done")
-c.EditWith(minidis.MessageEdit{Content: discord.String("done"), Components: []discord.MessageComponent{}})
+c.EditWith(interactions.MessageEdit{Content: discord.String("done"), Components: []discord.MessageComponent{}})
 
 f, err := c.Followup("one more thing")
-c.ReplyModal(minidis.Modal{CustomID: "feedback", Title: "Feedback", Components: ...})
+c.ReplyModal(interactions.Modal{CustomID: "feedback", Title: "Feedback", Components: ...})
 ```
 
 In a `MessageEdit`, a nil field is left unchanged and an empty one clears it. A slice built with `append` that ends up empty is still nil, so start from an empty slice when the result should clear. `Flags` replaces the message's flags, so include those to keep.
 
-`Message` also takes a `Poll`, `TTS` and further `Flags`. Use `discord.MessageFlagsIsComponentsV2` to lay a message out with components such as `discord.Container`, `discord.Section` and `discord.TextDisplay`. A deferred reply becomes one through `c.EditWith(minidis.MessageEdit{Flags: discord.MessageFlagsIsComponentsV2, Components: ...})`. `c.Response()` fetches the message that was sent, and `c.SendResponse` sends a response built by hand and returns what Discord reports about it.
+`Message` also takes a `Poll`, `TTS` and further `Flags`. Use `discord.MessageFlagsIsComponentsV2` to lay a message out with components such as `discord.Container`, `discord.Section` and `discord.TextDisplay`. A deferred reply becomes one through `c.EditWith(interactions.MessageEdit{Flags: discord.MessageFlagsIsComponentsV2, Components: ...})`. `c.Response()` fetches the message that was sent, and `c.SendResponse` sends a response built by hand and returns what Discord reports about it.
 
-Every handler context is also a `context.Context` for the handler's own work. It is canceled when the handler returns, 15 minutes after the interaction arrived (when Discord stops accepting responses), after 3 seconds if nothing responded by then (with `minidis.ErrNoResponse` as its cause), and when a closing bot stops waiting for its handlers. Pass it to the calls the handler makes, including those on `c.Session`:
+Every handler context is also a `context.Context` for the handler's own work. It is canceled when the handler returns, 15 minutes after the interaction arrived (when Discord stops accepting responses), after 3 seconds if nothing responded by then (with `interactions.ErrNoResponse` as its cause), and when a closing bot stops waiting for its handlers. Pass it to the calls the handler makes, including those on `c.Session`:
 
 ```go
 rows, err := db.QueryContext(c, "SELECT ...")
@@ -160,34 +166,34 @@ target := c.User("target")    // also c.OptionMember, c.Channel, c.Role, c.Attac
 Set `Autocomplete: true` on the option and an `Autocomplete` handler on the command or subcommand.
 
 ```go
-Autocomplete: func(c *minidis.AutocompleteContext) error {
-	return c.Respond(minidis.Choice("Go", "go"))  // c.Input() is what the user typed
+Autocomplete: func(c *interactions.AutocompleteContext) error {
+	return c.Respond(interactions.Choice("Go", "go"))  // c.Input() is what the user typed
 },
 ```
 
 ### Middleware and errors
 
 ```go
-bot.Use(func(next minidis.HandlerFunc) minidis.HandlerFunc {
-	return func(c *minidis.Context) error {
+bot.Use(func(next interactions.HandlerFunc) interactions.HandlerFunc {
+	return func(c *interactions.Context) error {
 		// runs around every command, component and modal handler;
 		// c.WithContext passes values on to the handler
 		return next(c.WithContext(context.WithValue(c, requestIDKey, newRequestID())))
 	}
 })
 
-bot.HandleError(func(c *minidis.Context, err error) {
-	// err is a *minidis.PanicError if a handler panicked (errors.Is and
-	// errors.As see through it), and wraps minidis.ErrNoHandler for a
+bot.HandleError(func(c *interactions.Context, err error) {
+	// err is a *interactions.PanicError if a handler panicked (errors.Is and
+	// errors.As see through it), and wraps interactions.ErrNoHandler for a
 	// command or component that is no longer registered. c is the copy that
 	// middleware passed on, with its values.
 	if c.Interaction.Type == discord.InteractionApplicationCommandAutocomplete {
 		return // autocomplete cannot show a message
 	}
 	if c.Responded() {
-		c.FollowupWith(minidis.Message{Content: "Something went wrong.", Ephemeral: true})
+		c.FollowupWith(interactions.Message{Content: "Something went wrong.", Ephemeral: true})
 	} else {
-		c.ReplyWith(minidis.Message{Content: "Something went wrong.", Ephemeral: true})
+		c.ReplyWith(interactions.Message{Content: "Something went wrong.", Ephemeral: true})
 	}
 })
 ```
@@ -199,18 +205,18 @@ Without `HandleError`, errors are logged. A panic in the error handler is logged
 Handler IDs can capture `:`-separated segments, and modal IDs work the same way. An exact ID wins over a pattern, and a pattern with more fixed segments over one with fewer, so `ticket:close:{id}` wins over `ticket:{action}:{id}`.
 
 ```go
-bot.HandleComponent("vote:{poll}", func(c *minidis.ComponentContext) error {
+bot.HandleComponent("vote:{poll}", func(c *interactions.ComponentContext) error {
 	return c.Update("Voted in " + c.Params["poll"]) // edits the message with the button
 })
 
-bot.HandleModal("feedback", func(c *minidis.ModalSubmitContext) error {
+bot.HandleModal("feedback", func(c *interactions.ModalSubmitContext) error {
 	return c.Reply("Thanks!")
 })
 ```
 
 Use `c.UpdateWith` for embeds and components, passing an empty non-nil slice to clear them, and `c.DeferUpdate` for slow work. A modal opened from a component can update that component's message the same way. A capture is one segment, so a value put there must not contain `:`.
 
-`HandleComponentFallback` and `HandleModalFallback` receive the IDs that no handler matches. Without them, such interactions reach the error handler as `minidis.ErrNoHandler`.
+`HandleComponentFallback` and `HandleModalFallback` receive the IDs that no handler matches. Without them, such interactions reach the error handler as `interactions.ErrNoHandler`.
 
 A submitted modal is read by the custom IDs of its components:
 
@@ -237,13 +243,13 @@ mux.Handle("POST /interactions", handler)
 ### Channel messages
 
 ```go
-bot.HandleChannelMessage(channelID, func(c *minidis.ChannelMessageContext) error {
+bot.HandleChannelMessage(channelID, func(c *interactions.ChannelMessageContext) error {
 	_, err := c.Reply("hello") // or c.Send, which does not reply to the message
 	return err
 })
 ```
 
-`SendWith` and `ReplyWith` take a `minidis.Message`. When the content repeats what users wrote, set `AllowedMentions` so that it cannot ping `@everyone`.
+`SendWith` and `ReplyWith` take a `interactions.Message`. When the content repeats what users wrote, set `AllowedMentions` so that it cannot ping `@everyone`.
 
 ### Presence
 
@@ -251,9 +257,59 @@ bot.HandleChannelMessage(channelID, func(c *minidis.ChannelMessageContext) error
 bot.SetPresence(discord.StatusIdle, &discord.Activity{Name: "the logs", Type: discord.ActivityWatching})
 ```
 
-### Client
+## Client
 
-`bot.Session` has typed methods, each taking a `context.Context` first, for messages, pins, reactions, channels, guilds, members, roles, bans, application commands and their permissions, and interaction responses, and handlers such as `OnMessageUpdate`, `OnMessageDelete`, `OnMessageReactionAdd`, `OnGuildCreate`, `OnGuildMemberAdd` and `OnGuildMemberRemove`. The member events need the privileged `discord.IntentsGuildMembers` intent.
+`discord/client` is the whole Discord API for bots, and works on its own, without `interactions` ([example](./example/client/main.go)). A bot made with `interactions.New` has the same client as `bot.Session`.
+
+```go
+s := client.New("Bot " + os.Getenv("TOKEN"))
+s.Intents = discord.IntentsGuilds | discord.IntentsGuildMessages | discord.IntentsMessageContent
+
+s.OnMessageCreate(func(s *client.Session, e *discord.MessageCreate) {
+	if e.Content == "!ping" {
+		s.ChannelMessageSend(context.Background(), e.ChannelID, "pong")
+	}
+})
+
+if err := s.Open(ctx); err != nil {
+	log.Fatal(err)
+}
+defer s.Close()
+<-ctx.Done()
+```
+
+### REST
+
+Every method takes a `context.Context` first. They cover:
+
+- messages, reactions, pins, polls and crossposting;
+- channels, permission overwrites, computed permissions, voice channel statuses, invites, typing and followed announcement channels;
+- threads and forum posts, their members and the archived ones;
+- guilds, members (nicknames, roles, timeouts, moving between voice channels), roles, bans, pruning, the audit log, integrations, the widget, the welcome screen, onboarding and templates;
+- webhooks and the messages they send;
+- emojis of guilds and of the app, stickers and soundboard sounds;
+- auto moderation rules, scheduled events and stage instances;
+- the bot's user and application, application commands, interaction responses, linked role metadata, SKUs, entitlements and subscriptions.
+
+Fields that Discord clears with `null` are a `discord.Optional`: leave it unset to keep the value, or use `discord.Some(v)` and `discord.Null[T]()`.
+
+```go
+s.GuildMemberTimeout(ctx, guildID, userID, time.Now().Add(time.Hour))
+s.ChannelEdit(ctx, channelID, &discord.ChannelParams{Name: "general", ParentID: discord.Null[string]()})
+s.GuildBanCreate(client.WithAuditLogReason(ctx, "spam"), guildID, userID, 0)
+```
+
+`Session.Request` reaches any endpoint without a typed method.
+
+### Gateway
+
+There is an `On…` handler for every gateway event, such as `OnMessageCreate`, `OnGuildMemberAdd`, `OnChannelUpdate`, `OnThreadCreate`, `OnVoiceStateUpdate` and `OnPresenceUpdate`, and `OnRawEvent` receives them all undecoded. Each handler runs in its own goroutine. Some events need an intent in `Session.Intents`, and the member, presence and message content ones are privileged: enable them in the developer portal.
+
+`RequestGuildMembers` asks for the members of a guild, answered in `OnGuildMembersChunk`. Discord limits how often all members can be requested, and reports a refused request in `OnRateLimited`. `UpdateVoiceState` joins and leaves voice channels, but sending and receiving audio is not part of this library: `OnVoiceStateUpdate` and `OnVoiceServerUpdate` give a voice library what it needs to connect.
+
+### Helpers
+
+`discord` has the small things a bot keeps needing: `User.Mention`, `User.AvatarURL`, `Member.DisplayName`, `Emoji.MessageFormat`, `Message.URL`, `discord.Timestamp`, `discord.SnowflakeTime`, `discord.ImageData` for uploading avatars and emojis, and `discord.MemberPermissions` to compute what a member may do in a channel.
 
 ##
 
