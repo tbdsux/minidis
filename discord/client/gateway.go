@@ -100,7 +100,15 @@ func (s *Session) waitIdentify(ctx context.Context) error {
 // GatewayBot fetches the gateway URL, the number of shards Discord recommends
 // for the bot, and how many sessions it may still start today.
 func (s *Session) GatewayBot(ctx context.Context) (*discord.GatewayBot, error) {
-	return fetch[*discord.GatewayBot](ctx, s, "/gateway/bot")
+	info, err := fetch[*discord.GatewayBot](ctx, s, "/gateway/bot")
+	if err != nil {
+		return nil, err
+	}
+	// An empty or null answer decodes into nothing, without an error.
+	if info == nil {
+		return nil, errors.New("discord: GET /gateway/bot: the response has no gateway information")
+	}
+	return info, nil
 }
 
 // ErrShuttingDown is returned by an Open that races a Shutdown: one that was

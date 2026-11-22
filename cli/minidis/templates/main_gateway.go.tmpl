@@ -30,7 +30,8 @@ func run() error {
 	bot := minidis.New(token)
 
 	// GUILD is a server to register the commands in, where they show up at
-	// once. Without it, they are registered globally.
+	// once, or several separated by commas. Without it, they are registered
+	// globally.
 	bot.SetGuilds(os.Getenv("GUILD"))
 
 	commands.Register(bot)

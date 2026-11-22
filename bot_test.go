@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -220,6 +222,10 @@ func TestIntentsComeFromHandlers(t *testing.T) {
 			b.AddIntents(discord.IntentsGuilds)
 			On(b, func(*EventContext, *discord.GuildBanAdd) error { return nil })
 		}, discord.IntentsGuilds | discord.IntentsGuildModeration},
+		{"with those set on the session", func(b *Bot) {
+			b.Session.Intents = discord.IntentsGuildVoiceStates
+			On(b, func(*EventContext, *discord.GuildBanAdd) error { return nil })
+		}, discord.IntentsGuildVoiceStates | discord.IntentsGuildModeration},
 		{"set explicitly", func(b *Bot) {
 			b.SetIntents(discord.IntentsGuilds)
 			b.OnMessage(func(*MessageContext) error { return nil })
@@ -249,7 +255,7 @@ func TestOnPanicsForATypeThatIsNotAnEvent(t *testing.T) {
 
 func TestRunSyncsConnectsAndHandlesEvents(t *testing.T) {
 	bot, d := newTestBot(t)
-	bot.SetGuilds("", " g1 ")
+	bot.SetGuilds("", " g1 , g2", "g3 g4")
 	bot.AddCommand(&Command{Name: "ping", Description: "Pong.", Execute: func(c *Context) error { return c.Reply("pong") }})
 
 	joined := make(chan string, 1)
@@ -276,8 +282,10 @@ func TestRunSyncsConnectsAndHandlesEvents(t *testing.T) {
 	if want := discord.IntentsGuildMembers | discord.IntentsGuildModeration; d.intents != want {
 		t.Errorf("identified with intents %b, want %b", d.intents, want)
 	}
-	if got := d.seen(); !slices.Contains(got, "PUT /applications/99/guilds/g1/commands") {
-		t.Errorf("commands were not registered in the guild: %v", got)
+	for _, guild := range []string{"g1", "g2", "g3", "g4"} {
+		if got := d.seen(); !slices.Contains(got, "PUT /applications/99/guilds/"+guild+"/commands") {
+			t.Errorf("commands were not registered in guild %s: %v", guild, got)
+		}
 	}
 
 	d.send("GUILD_MEMBER_ADD", map[string]any{"guild_id": "g1", "user": map[string]any{"id": "u1"}})
@@ -397,6 +405,11 @@ func TestMessagesAndTextCommands(t *testing.T) {
 	fromHook["webhook_id"] = "w1"
 	d.send("MESSAGE_CREATE", fromHook)
 
+	// Neither are Discord's notices, which name a user as their author.
+	joined := message("!echo joined")
+	joined["type"] = discord.MessageTypeUserJoin
+	d.send("MESSAGE_CREATE", joined)
+
 	d.send("MESSAGE_CREATE", message("!ECHO  hello   there "))
 	if got := recv(t, heard, "the message"); got != "!ECHO  hello   there " {
 		t.Errorf("heard %q", got)
@@ -426,11 +439,15 @@ func TestMessagesAndTextCommands(t *testing.T) {
 		t.Errorf("error = %q", got)
 	}
 
-	// Not commands: unknown names, and text that only looks like one.
+	// Not commands: unknown names, and text that only looks like one. A reply
+	// is a message like any other.
 	d.send("MESSAGE_CREATE", message("!unknown"))
 	d.send("MESSAGE_CREATE", message("say hi"))
 	d.send("MESSAGE_CREATE", message("!"))
-	for range 4 {
+	answer := message("a reply")
+	answer["type"] = discord.MessageTypeReply
+	d.send("MESSAGE_CREATE", answer)
+	for range 5 {
 		recv(t, heard, "the other messages")
 	}
 
@@ -438,7 +455,7 @@ func TestMessagesAndTextCommands(t *testing.T) {
 	case c := <-ran:
 		t.Errorf("a command ran for %q", c.Content)
 	case got := <-heard:
-		t.Errorf("a handler heard a bot or webhook: %q", got)
+		t.Errorf("a handler heard a bot, a webhook or Discord: %q", got)
 	case <-time.After(50 * time.Millisecond):
 	}
 }
@@ -489,6 +506,68 @@ func TestTextCommandsReplaceAndList(t *testing.T) {
 	}
 	if bot.textCommands["old"] != nil || bot.textCommands["new"] == nil || bot.textCommands["b"].Name != "B" {
 		t.Errorf("lookup = %v", bot.textCommands)
+	}
+}
+
+func TestALaterCommandTakesOverNames(t *testing.T) {
+	bot := New("token")
+	b := &TextCommand{Name: "b", Aliases: []string{"bee"}}
+	c := &TextCommand{Name: "c", Aliases: []string{"shared"}}
+	bot.AddTextCommand(b, c)
+
+	// a takes the name of b, which could then not be run, and an alias of c.
+	a := &TextCommand{Name: "a", Aliases: []string{"B", "shared"}}
+	bot.AddTextCommand(a)
+
+	if got := bot.TextCommands(); !slices.Equal(got, []*TextCommand{a, c}) {
+		t.Errorf("commands = %v", got)
+	}
+	for name, want := range map[string]*TextCommand{"a": a, "b": a, "shared": a, "c": c, "bee": nil} {
+		if got := bot.textCommands[name]; got != want {
+			t.Errorf("%q runs %v, want %v", name, got, want)
+		}
+	}
+
+	// Adding a command again does not list it twice.
+	bot.AddTextCommand(a)
+	if got := bot.TextCommands(); len(got) != 2 {
+		t.Errorf("commands = %v", got)
+	}
+}
+
+func TestAHandlerAddedTooLateIsReported(t *testing.T) {
+	bot, d := newTestBot(t)
+	On(bot, func(*EventContext, *discord.GuildBanAdd) error { return nil })
+
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+
+	if err := bot.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	recv(t, d.identify, "the Identify")
+
+	// Covered by what the bot connected with, or needing nothing.
+	On(bot, func(*EventContext, *discord.GuildBanRemove) error { return nil })
+	bot.AddCommand(&Command{Name: "late", Description: "d"})
+	if logged.Len() != 0 {
+		t.Errorf("logged for a handler the bot has the intents of: %s", logged.String())
+	}
+
+	On(bot, func(*EventContext, *discord.GuildMemberAdd) error { return nil })
+	if !strings.Contains(logged.String(), "while the bot is running") {
+		t.Errorf("a handler without its intent was not reported: %q", logged.String())
+	}
+
+	// Closed, the bot can take it: it connects with the intent next time.
+	if err := bot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	logged.Reset()
+	On(bot, func(*EventContext, *discord.PresenceUpdateEvent) error { return nil })
+	if logged.Len() != 0 {
+		t.Errorf("logged while closed: %s", logged.String())
 	}
 }
 

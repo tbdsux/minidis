@@ -28,8 +28,12 @@ func (s *Session) RequestGuildMembers(req discord.GuildMembersRequest) error {
 }
 
 // RequestSoundboardSounds asks Discord for the soundboard sounds of guilds,
-// which arrive in SOUNDBOARD_SOUNDS events; see OnSoundboardSounds.
+// which arrive in SOUNDBOARD_SOUNDS events; see OnSoundboardSounds. Without
+// guilds there is nothing to ask, and nothing is sent.
 func (s *Session) RequestSoundboardSounds(guildIDs ...string) error {
+	if len(guildIDs) == 0 {
+		return nil
+	}
 	return s.command(opRequestSoundboardSounds, struct {
 		GuildIDs []string `json:"guild_ids"`
 	}{guildIDs})
@@ -37,8 +41,12 @@ func (s *Session) RequestSoundboardSounds(guildIDs ...string) error {
 
 // RequestChannelInfo asks Discord for the short-lived state of the voice
 // channels of a guild, which arrives in a CHANNEL_INFO event; see
-// OnChannelInfo. fields are "status", "voice_start_time", or both.
+// OnChannelInfo. fields are "status", "voice_start_time", or both, which is
+// also what is asked for when none are given.
 func (s *Session) RequestChannelInfo(guildID string, fields ...string) error {
+	if len(fields) == 0 {
+		fields = []string{"status", "voice_start_time"}
+	}
 	return s.command(opRequestChannelInfo, struct {
 		GuildID string   `json:"guild_id"`
 		Fields  []string `json:"fields"`

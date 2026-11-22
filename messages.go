@@ -63,15 +63,21 @@ func newMessageContext(c *EventContext, m *discord.Message) *MessageContext {
 }
 
 // fromPerson reports whether a message was written by a user, rather than by
-// a bot, this one included, a webhook or Discord itself.
+// a bot, this one included, a webhook or Discord itself. Discord's own
+// messages, such as "ann joined the server" and "ann pinned a message", name
+// the user they are about as their author, and are told apart by their type.
 func fromPerson(m *discord.Message) bool {
-	return m.Author != nil && !m.Author.Bot && !m.Author.System && m.WebhookID == ""
+	if m.Author == nil || m.Author.Bot || m.Author.System || m.WebhookID != "" {
+		return false
+	}
+	return m.Type == discord.MessageTypeDefault || m.Type == discord.MessageTypeReply
 }
 
 // OnMessage adds a handler for the messages people send, in every channel the
 // bot can see and in its DMs. Messages from bots, the bot itself included,
 // and from webhooks are left out, so that bots do not answer each other
-// forever; On with a discord.MessageCreate sees those too.
+// forever, and so are Discord's own, such as the notice that someone joined;
+// On with a discord.MessageCreate sees those too.
 //
 // It asks for the privileged discord.IntentsMessageContent, which must also
 // be enabled for the bot in the developer portal. Without it, the content of
@@ -215,20 +221,27 @@ func (b *Bot) SetPrefix(prefix string) {
 	}
 }
 
-// AddTextCommand adds text commands, replacing any of the same name. Names
-// and aliases are matched without regard to case. They are run for messages
-// from people only, like the handlers of OnMessage, which see those messages
-// too.
+// AddTextCommand adds text commands. Names and aliases are matched without
+// regard to case, and one added later wins: it replaces a command of the
+// same name, and one whose name is among its aliases, and takes over an alias
+// that another command had. They are run for messages from people only, like
+// the handlers of OnMessage, which see those messages too.
 func (b *Bot) AddTextCommand(cmds ...*TextCommand) {
 	b.mu.Lock()
 	for _, cmd := range cmds {
-		// Forget what a command of the same name answered to.
-		if old := b.textCommands[strings.ToLower(cmd.Name)]; old != nil && strings.EqualFold(old.Name, cmd.Name) {
-			b.forget(old)
+		names := append([]string{cmd.Name}, cmd.Aliases...)
+
+		// A command that loses its own name could no longer be run, so it
+		// goes altogether, with what else it answered to.
+		for _, name := range names {
+			if old := b.textCommands[strings.ToLower(name)]; old != nil && old != cmd && strings.EqualFold(old.Name, name) {
+				b.forget(old)
+			}
 		}
 
+		b.forget(cmd) // added before, perhaps with other aliases
 		b.textCommandList = append(b.textCommandList, cmd)
-		for _, name := range append([]string{cmd.Name}, cmd.Aliases...) {
+		for _, name := range names {
 			b.textCommands[strings.ToLower(name)] = cmd
 		}
 	}

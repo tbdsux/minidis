@@ -102,13 +102,22 @@ func TestMemberPermissions(t *testing.T) {
 		{ID: "admin", Permissions: PermissionAdministrator},
 	}}
 	channel := &Channel{PermissionOverwrites: []*PermissionOverwrite{
-		{ID: "u", Type: PermissionOverwriteMember, Allow: PermissionAttachFiles},
+		{ID: "u", Type: PermissionOverwriteMember, Allow: PermissionAttachFiles | PermissionAddReactions},
+		{ID: "hidden", Type: PermissionOverwriteMember, Deny: PermissionViewChannel},
 		{ID: "mod", Type: PermissionOverwriteRole, Allow: PermissionSendMessages},
 		{ID: "g", Type: PermissionOverwriteRole, Deny: PermissionSendMessages},
 		{ID: "other", Type: PermissionOverwriteRole, Allow: PermissionBanMembers},
 	}}
 
 	member := func(id string, roles ...string) *Member { return &Member{User: &User{ID: id}, Roles: roles} }
+	timedOut := func(m *Member) *Member {
+		until := time.Now().Add(time.Hour)
+		m.TimeoutEnds = &until
+		return m
+	}
+	expired := member("x", "mod")
+	past := time.Now().Add(-time.Hour)
+	expired.TimeoutEnds = &past
 
 	tests := []struct {
 		name    string
@@ -117,7 +126,13 @@ func TestMemberPermissions(t *testing.T) {
 		want    int64
 	}{
 		{"guild-wide", nil, member("u"), PermissionViewChannel | PermissionSendMessages},
-		{"everyone is denied, the member allowed", channel, member("u"), PermissionViewChannel | PermissionAttachFiles},
+		{"everyone is denied; files go with sending", channel, member("u"), PermissionViewChannel | PermissionAddReactions},
+		{"nothing without seeing the channel", channel, member("hidden", "mod"), 0},
+		{"a timeout leaves viewing", channel, timedOut(member("x", "mod")), PermissionViewChannel},
+		{"in the guild too", nil, timedOut(member("x", "mod")), PermissionViewChannel},
+		{"but not for administrators", channel, timedOut(member("x", "admin")), PermissionAll},
+		{"a timeout that is over does nothing", nil, expired,
+			PermissionViewChannel | PermissionSendMessages | PermissionManageMessages},
 		{"a role overrides the denial of everyone", channel, member("x", "mod"),
 			PermissionViewChannel | PermissionSendMessages | PermissionManageMessages},
 		{"administrators skip overwrites", channel, member("x", "admin"), PermissionAll},

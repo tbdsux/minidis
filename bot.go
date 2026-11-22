@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
+	"unicode"
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
@@ -23,9 +25,15 @@ import (
 // HandleComponent, HandleModal, Use and HandleError for interactions,
 // SetPresence, HTTPHandler, and Session for the Discord client.
 //
-// Its methods are safe for concurrent use, except that the settings (SetIntents,
-// AddIntents, SetGuilds, DisableSync and SetPrefix) must be made before the
-// bot runs.
+// Add everything before the bot runs. Its methods are safe for concurrent
+// use, and commands, components and modals can still be added while it runs,
+// but the settings (SetIntents, AddIntents, SetGuilds, DisableSync and
+// SetPrefix) cannot be changed then, and neither can a handler be added that
+// needs a gateway intent the bot did not connect with: Discord would not send
+// its events, which the bot logs.
+//
+// Set intents with SetIntents or AddIntents rather than on Session, though
+// the bot connects with those of Session.Intents as well.
 type Bot struct {
 	*interactions.Minidis
 
@@ -33,6 +41,10 @@ type Bot struct {
 
 	intents  discord.Intent // what the handlers need
 	explicit bool           // SetIntents was called, so intents are not inferred
+
+	// connected is whether the bot is running, and with which intents.
+	connected  bool
+	identified discord.Intent
 
 	guilds []string
 	noSync bool
@@ -64,8 +76,15 @@ func (b *Bot) need(intents discord.Intent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if !b.explicit {
-		b.intents |= intents
+	if b.explicit {
+		return
+	}
+	b.intents |= intents
+
+	// Intents are sent once, when the bot connects.
+	if missing := intents &^ b.identified; b.connected && missing != 0 {
+		log.Printf("minidis: a handler was added while the bot is running that needs gateway intents "+
+			"the bot did not connect with (%#b), so Discord will not send its events; add handlers before the bot runs", missing)
 	}
 }
 
@@ -91,24 +110,46 @@ func (b *Bot) AddIntents(intents discord.Intent) {
 }
 
 // Intents returns the gateway intents the bot connects with: those of its
-// handlers and AddIntents, or those given to SetIntents.
+// handlers and AddIntents, or those given to SetIntents, and in either case
+// those set on Session.Intents.
 func (b *Bot) Intents() discord.Intent {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	return b.intents
+	return b.intents | b.Session.Intents
+}
+
+// connect sets the intents the session identifies with.
+func (b *Bot) connect() {
+	intents := b.Intents()
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.Session.Intents = intents
+	b.connected, b.identified = true, intents
+}
+
+func (b *Bot) disconnected() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.connected = false
 }
 
 // SetGuilds makes the bot register its commands in the given guilds rather
 // than globally. Use it while developing: commands of a guild show up at
-// once, and global ones can take a while. Empty IDs are ignored, so that
-// SetGuilds(os.Getenv("GUILD")) registers globally when the variable is unset.
+// once, and global ones can take a while.
+//
+// Each argument may hold several IDs, separated by commas or spaces, and
+// empty ones are ignored, so that SetGuilds(os.Getenv("GUILD")) takes one
+// guild or a list, and registers globally when the variable is unset.
 func (b *Bot) SetGuilds(guildIDs ...string) {
 	var guilds []string
-	for _, id := range guildIDs {
-		if id = strings.TrimSpace(id); id != "" {
-			guilds = append(guilds, id)
-		}
+	for _, ids := range guildIDs {
+		guilds = append(guilds, strings.FieldsFunc(ids, func(r rune) bool {
+			return r == ',' || unicode.IsSpace(r)
+		})...)
 	}
 
 	b.mu.Lock()
@@ -144,8 +185,27 @@ func (b *Bot) OnMessageCreate(h func(*client.Session, *discord.MessageCreate)) {
 // Open connects to the Discord gateway and returns once the bot is ready,
 // without registering commands. Most bots call Run or Start instead.
 func (b *Bot) Open(ctx context.Context) error {
-	b.Session.Intents = b.Intents()
-	return b.explain(b.Minidis.Open(ctx))
+	b.connect()
+
+	err := b.Minidis.Open(ctx)
+	if err != nil && !errors.Is(err, client.ErrAlreadyOpen) {
+		b.disconnected()
+	}
+	return b.explain(err)
+}
+
+// Close stops the bot and gives running handlers up to 10 seconds to finish;
+// see the interactions package.
+func (b *Bot) Close() error {
+	defer b.disconnected()
+	return b.Minidis.Close()
+}
+
+// Shutdown stops the bot, waiting for running handlers until ctx ends; see
+// the interactions package.
+func (b *Bot) Shutdown(ctx context.Context) error {
+	defer b.disconnected()
+	return b.Minidis.Shutdown(ctx)
 }
 
 // Run registers the bot's commands with Discord, connects, and keeps the bot
@@ -167,19 +227,27 @@ func (b *Bot) Run(ctx context.Context) error {
 		}
 	}
 
-	b.Session.Intents = b.Intents()
+	b.connect()
+	defer b.disconnected()
+
 	return b.explain(b.Minidis.Run(ctx))
 }
 
 // Start runs the bot until the program is interrupted with Ctrl+C or asked
 // to terminate; see Run.
 //
-//	log.Fatal(bot.Start())
+//	if err := bot.Start(); err != nil {
+//		log.Fatal(err)
+//	}
 //
-// It returns nil when the bot was stopped that way and closed cleanly.
+// It returns nil when the bot was stopped that way and closed cleanly. While
+// the bot is closing, a second Ctrl+C ends the program at once.
 func (b *Bot) Start() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Once the first signal has arrived, the next one is no longer caught.
+	context.AfterFunc(ctx, stop)
 
 	return b.Run(ctx)
 }

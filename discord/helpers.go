@@ -207,10 +207,27 @@ func Timestamp(t time.Time, style TimestampStyle) string {
 	return "<t:" + strconv.FormatInt(t.Unix(), 10) + ":" + string(style) + ">"
 }
 
+// timedOutPermissions is all that a member keeps while timed out.
+const timedOutPermissions = PermissionViewChannel | PermissionReadMessageHistory
+
+// needSendMessages are the permissions that are of no use to a member who
+// cannot send messages, and that Discord takes away with it.
+const needSendMessages = PermissionMentionEveryone | PermissionSendTTSMessages | PermissionAttachFiles | PermissionEmbedLinks
+
 // MemberPermissions computes the permissions of a member in a channel from
 // the guild's roles and the channel's overwrites, the way Discord does. Pass
 // a nil channel for the member's permissions in the guild as a whole.
 // guild needs its ID, OwnerID and Roles, and member its User and Roles.
+//
+// The owner of the guild and administrators have every permission. For
+// others, a timeout leaves only viewing channels and reading their history,
+// a member who cannot view a channel has no permission in it, and one who
+// cannot send messages cannot attach files, embed links, mention everyone
+// or send text-to-speech messages either.
+//
+// Session.ChannelMemberPermissions asks Discord instead, which also knows
+// what this cannot see, such as whether a member is connected to a voice
+// channel.
 func MemberPermissions(guild *Guild, channel *Channel, member *Member) int64 {
 	userID := ""
 	if member.User != nil {
@@ -235,6 +252,9 @@ func MemberPermissions(guild *Guild, channel *Channel, member *Member) int64 {
 		return PermissionAll
 	}
 	if channel == nil {
+		if member.TimedOut() {
+			perms &= timedOutPermissions
+		}
 		return perms
 	}
 
@@ -256,5 +276,14 @@ func MemberPermissions(guild *Guild, channel *Channel, member *Member) int64 {
 	perms = perms&^roleDeny | roleAllow
 	perms = perms&^memberDeny | memberAllow
 
+	if member.TimedOut() {
+		perms &= timedOutPermissions
+	}
+	if perms&PermissionViewChannel == 0 {
+		return 0
+	}
+	if perms&PermissionSendMessages == 0 {
+		perms &^= needSendMessages
+	}
 	return perms
 }

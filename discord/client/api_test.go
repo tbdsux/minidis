@@ -293,7 +293,6 @@ func TestAPIEndpoints(t *testing.T) {
 			return err
 		}},
 		{"GET /voice/regions", func(s *Session) error { _, err := s.VoiceRegions(ctx); return err }},
-		{"GET /gateway/bot", func(s *Session) error { _, err := s.GatewayBot(ctx); return err }},
 		{"GET /applications/@me", func(s *Session) error { _, err := s.CurrentApplication(ctx); return err }},
 		{"PATCH /applications/@me", func(s *Session) error {
 			_, err := s.CurrentApplicationEdit(ctx, &discord.ApplicationParams{})
@@ -504,6 +503,37 @@ func TestGuildStickerCreateSendsForm(t *testing.T) {
 	}
 }
 
+func TestGatewayBot(t *testing.T) {
+	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/gateway/bot" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		io.WriteString(w, `{"url":"wss://gateway.example","shards":3,"session_start_limit":{"total":1000,"remaining":9,"reset_after":5,"max_concurrency":2}}`)
+	})
+
+	info, err := s.GatewayBot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.URL != "wss://gateway.example" || info.Shards != 3 || info.SessionStartLimit.Remaining != 9 || info.SessionStartLimit.MaxConcurrency != 2 {
+		t.Errorf("info = %+v", info)
+	}
+}
+
+func TestGatewayBotWithoutABodyIsAnError(t *testing.T) {
+	for _, body := range []string{"", "null"} {
+		s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) })
+
+		if info, err := s.GatewayBot(context.Background()); err == nil || info != nil {
+			t.Errorf("body %q: info = %v, err = %v", body, info, err)
+		}
+		// Open reads the answer, and must fail rather than panic.
+		if err := s.Open(t.Context()); err == nil {
+			t.Errorf("body %q: Open succeeded", body)
+		}
+	}
+}
+
 func TestGatewayCommandsNeedConnection(t *testing.T) {
 	s := New("Bot token")
 
@@ -520,7 +550,7 @@ func TestGatewayCommandsAndNewEvents(t *testing.T) {
 		op int
 		d  map[string]any
 	}
-	commands := make(chan sent, 4)
+	commands := make(chan sent, 5)
 	seen := make(chan string, 32)
 	ready := make(chan struct{})
 
@@ -529,7 +559,7 @@ func TestGatewayCommandsAndNewEvents(t *testing.T) {
 		c.read(opIdentify)
 		c.ready(1)
 
-		for _, op := range []int{opRequestGuildMembers, opRequestGuildMembers, opVoiceStateUpdate, opVoiceStateUpdate} {
+		for _, op := range []int{opRequestGuildMembers, opRequestGuildMembers, opVoiceStateUpdate, opVoiceStateUpdate, opRequestChannelInfo} {
 			p := c.read(op)
 			var d map[string]any
 			if err := json.Unmarshal(p.D, &d); err != nil {
@@ -634,6 +664,18 @@ func TestGatewayCommandsAndNewEvents(t *testing.T) {
 	leave := <-commands
 	if v, ok := leave.d["channel_id"]; !ok || v != nil {
 		t.Errorf("leaving must send a null channel, got %v", leave.d)
+	}
+
+	// Without guilds there is nothing to request, and without fields all are.
+	if err := s.RequestSoundboardSounds(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestChannelInfo("g1"); err != nil {
+		t.Fatal(err)
+	}
+	info := <-commands
+	if fields, _ := info.d["fields"].([]any); info.op != opRequestChannelInfo || len(fields) != 2 {
+		t.Errorf("channel info request = %v", info.d)
 	}
 	close(ready)
 

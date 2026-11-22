@@ -19,7 +19,9 @@
 //		return nil
 //	})
 //
-//	log.Fatal(bot.Start())
+//	if err := bot.Start(); err != nil {
+//		log.Fatal(err)
+//	}
 //
 // Start, or Run with a context of your own, registers the commands with
 // Discord, connects, and keeps the bot running until the program is

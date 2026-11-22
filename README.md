@@ -13,7 +13,9 @@ bot.AddCommand(&minidis.Command{
 	},
 })
 
-log.Fatal(bot.Start())
+if err := bot.Start(); err != nil {
+	log.Fatal(err)
+}
 ```
 
 It is made of layers, and each works without the ones above it:
@@ -56,8 +58,8 @@ import (
 func main() {
 	bot := minidis.New(os.Getenv("TOKEN"))
 
-	// Commands show up at once in a guild, so name one while developing.
-	// With GUILD unset, they are registered globally.
+	// Commands show up at once in a guild, so name one while developing, or
+	// several separated by commas. With GUILD unset, they are registered globally.
 	bot.SetGuilds(os.Getenv("GUILD"))
 
 	// A slash command
@@ -95,7 +97,7 @@ func main() {
 
 `Start` is `Run` with a context that ends on CTRL+C; call `bot.Run(ctx)` to decide yourself when the bot stops. Both register the commands first, replacing the ones Discord has, unless the bot has none or `bot.DisableSync()` was called. `Run` also returns if Discord ends the connection for good, such as for an invalid token. Use `bot.Open(ctx)` and `bot.Close` to manage the connection yourself. A handler that closes the bot should call `Close` in a new goroutine, as `Close` waits for running handlers.
 
-There are no intents to set: the bot asks Discord for the ones its handlers need. The privileged ones must also be enabled for the bot in the developer portal, under Bot > Privileged Gateway Intents, and `Run` says which when Discord refuses them. `bot.AddIntents` asks for more, and `bot.SetIntents` takes over.
+There are no intents to set: the bot asks Discord for the ones its handlers need. The privileged ones must also be enabled for the bot in the developer portal, under Bot > Privileged Gateway Intents, and `Run` says which when Discord refuses them. `bot.AddIntents` asks for more, and `bot.SetIntents` takes over. Add handlers before the bot runs: intents are sent when it connects, so a handler added later that needs a new one gets no events, which the bot logs.
 
 More [examples...](./example/)
 
@@ -116,7 +118,7 @@ The `EventContext` is a `context.Context` for the handler's work, canceled when 
 
 ### Messages
 
-`bot.OnMessage` handles the messages people send, in every channel the bot can see and in its DMs. Messages from bots, the bot itself included, and from webhooks are left out; use `minidis.On` with a `discord.MessageCreate` to see those too.
+`bot.OnMessage` handles the messages people send, in every channel the bot can see and in its DMs. Messages from bots, the bot itself included, from webhooks, and Discord's own notices, such as that someone joined, are left out; use `minidis.On` with a `discord.MessageCreate` to see those too.
 
 ```go
 bot.OnMessage(func(c *minidis.MessageContext) error {
