@@ -111,12 +111,16 @@ func (b *Bot) AddIntents(intents discord.Intent) {
 
 // Intents returns the gateway intents the bot connects with: those of its
 // handlers and AddIntents, or those given to SetIntents, and in either case
-// those set on Session.Intents.
+// those set on Session.Intents and those that Session.State needs.
 func (b *Bot) Intents() discord.Intent {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	return b.intents | b.Session.Intents
+	intents := b.intents | b.Session.Intents
+	if st := b.Session.State; st != nil {
+		intents |= st.Intents()
+	}
+	return intents
 }
 
 // connect sets the intents the session identifies with.

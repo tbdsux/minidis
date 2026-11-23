@@ -695,6 +695,9 @@ func (s *Session) sendIdentify(c *gatewayConn) error {
 		Intents:        s.Intents,
 		LargeThreshold: 250,
 	}
+	if s.State != nil {
+		identify.Intents |= s.State.Intents()
+	}
 
 	if s.ShardCount > 1 {
 		identify.Shard = &[2]int{s.ShardID, s.ShardCount}
@@ -854,6 +857,12 @@ func (s *Session) runConnection(ctx context.Context, onReady func()) (connOutcom
 					return reconnect, err
 				}
 				onReady()
+			case "USER_UPDATE":
+				// The bot's own user changed, so that User stays current.
+				var u discord.User
+				if err := json.Unmarshal(p.D, &u); err == nil && u.ID != "" {
+					s.user.Store(&u)
+				}
 			}
 
 			s.dispatch(p.T, p.D)
@@ -880,8 +889,13 @@ func classifyDisconnect(err error) (connOutcome, error) {
 	}
 }
 
-// dispatch decodes an event and starts its handlers.
+// dispatch updates the state with an event, then decodes it and starts its
+// handlers, so that they see the state with the event applied.
 func (s *Session) dispatch(event string, data json.RawMessage) {
+	if s.State != nil {
+		s.State.apply(event, data)
+	}
+
 	s.handlersMu.RLock()
 	defer s.handlersMu.RUnlock()
 

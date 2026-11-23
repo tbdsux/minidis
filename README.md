@@ -377,6 +377,60 @@ There is an `On…` handler for every gateway event, such as `OnMessageCreate`, 
 
 `RequestGuildMembers` asks for the members of a guild, answered in `OnGuildMembersChunk`. Discord limits how often all members can be requested, and reports a refused request in `OnRateLimited`. `UpdateVoiceState` joins and leaves voice channels, but sending and receiving audio is not part of this library: `OnVoiceStateUpdate` and `OnVoiceServerUpdate` give a voice library what it needs to connect.
 
+### State
+
+A `client.State` keeps what the gateway sends, so that a handler can look up a guild, channel or member without a REST request. Set it before the bot or session opens:
+
+```go
+bot.Session.State = client.NewState(client.StateOptions{
+	Members:       true, // all members; asks for the privileged Server Members Intent
+	ThreadMembers: true, // who is in each thread; the same intent
+	VoiceStates:   true,
+	Presences:     false, // the privileged Presence Intent
+	Messages:      100,   // the latest messages of each channel, with their reactions and poll votes
+})
+
+bot.OnMessage(func(c *minidis.MessageContext) error {
+	perms, ok := c.Session.State.Permissions(c.ChannelID, c.Session.User().ID)
+	if ok && perms&discord.PermissionAddReactions != 0 {
+		return c.React("👀")
+	}
+	return nil
+})
+```
+
+What is kept, and how to read it:
+
+| Kept                                                         | Read with                                                                        |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Always: guilds with their roles, emojis and stickers         | `Guild`, `Guilds`, `Role`, `Emoji`, `Sticker`                                    |
+| Always: channels, active threads and DM channels             | `Channel`, `GuildChannels`, `GuildThreads`                                       |
+| Always: stage instances, scheduled events, soundboard sounds | `StageInstance(s)`, `ScheduledEvent(s)`, `SoundboardSound(s)`                    |
+| Always: the bot's own member                                 | `Member`, `Permissions`                                                          |
+| `Members` or `KeepMember`                                    | `Member`, `Members`, `Permissions`                                               |
+| `ThreadMembers`                                              | `ThreadMember`, `ThreadMembers`                                                  |
+| `VoiceStates`                                                | `VoiceState`, `VoiceStates`                                                      |
+| `Presences`                                                  | `Presence`, `Presences`                                                          |
+| `Messages`                                                   | `Message`, `Messages`, with reactions and poll votes counted as they come        |
+
+Members are also picked up from messages, reactions, typing, interactions and voice states, which is how `KeepMember` without `Members` finds them. The bot's own member is enough for `Permissions` to say what the bot may do in a channel. The session asks for the intents the state needs. Bans, invites, webhooks, integrations, auto moderation rules and entitlements are not kept: Discord never sends all of them on the gateway, so they could not be complete.
+
+`KeepMember` chooses which members to keep, to save memory in large guilds. A member is dropped as soon as it no longer passes, such as after losing a role. Without `Members`, it chooses among the members Discord sends without the privileged intent: those of messages, voice states and `RequestGuildMembers`.
+
+```go
+client.StateOptions{
+	Members:    true,
+	KeepMember: func(guildID string, m *discord.Member) bool { return slices.Contains(m.Roles, staffRoleID) },
+}
+```
+
+The `…Cached` methods of the session take what the state has and ask Discord for the rest, so code works whether or not something is cached, and without a state at all: `GuildCached`, `ChannelCached`, `GuildRoleCached`, `GuildMemberCached`, `ChannelMessageCached` and `ChannelMemberPermissionsCached`. A member fetched this way is then kept, if the options keep it.
+
+```go
+member, err := c.Session.GuildMemberCached(c, guildID, userID)
+perms, err := c.Session.ChannelMemberPermissionsCached(c, channelID, userID) // no request when all is cached
+``` The state is updated before an event's handlers run, and starts over with each new gateway session. What it returns is shared: treat it as read-only. An update replaces a value instead of changing it, so a value already returned stays as it was. A bot that receives interactions over HTTP has no gateway, so its state stays empty.
+
 ### Helpers
 
 `discord` has the small things a bot keeps needing: `User.Mention`, `User.AvatarURL`, `Member.DisplayName`, `Emoji.MessageFormat`, `Message.URL`, `discord.Timestamp`, `discord.SnowflakeTime`, `discord.ImageData` for uploading avatars and emojis, and `discord.MemberPermissions` to compute what a member may do in a channel.
