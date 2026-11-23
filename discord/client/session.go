@@ -48,7 +48,7 @@ const (
 	APIVersion = 10
 
 	// LibraryVersion is reported in the User-Agent header.
-	LibraryVersion = "0.1.0"
+	LibraryVersion = "0.2.0"
 
 	libraryName = "minidis"
 	libraryURL  = "https://github.com/tbdsux/minidis"
