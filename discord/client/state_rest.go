@@ -9,8 +9,7 @@ import (
 
 // The methods below take what Session.State has, and ask Discord for what it
 // does not, so that code works whether or not the state has it, and without
-// a State at all. Treat what they return as read-only, as it may be the
-// state's.
+// a State at all. What they return may be the state's, so it is read-only.
 
 // GuildCached returns a guild from Session.State, or asks Discord for it if
 // the state does not have it or it is unavailable. A guild from Discord has
@@ -47,8 +46,9 @@ func (s *Session) GuildRoleCached(ctx context.Context, guildID, roleID string) (
 }
 
 // GuildMemberCached returns a member from Session.State, or asks Discord for
-// it. A member from Discord is then kept in the state if its options keep
-// that member, so that the next call finds it there.
+// it. A copy of a member from Discord is then kept in the state if its
+// options keep that member, so that the next call finds it there; the one
+// returned is the caller's. One from the state is shared and read-only.
 func (s *Session) GuildMemberCached(ctx context.Context, guildID, userID string) (*discord.Member, error) {
 	if s.State != nil {
 		if m := s.State.Member(guildID, userID); m != nil {

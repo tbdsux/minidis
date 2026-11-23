@@ -30,8 +30,9 @@ type StateOptions struct {
 	// of messages, reactions, typing, interactions, voice states and
 	// RequestGuildMembers.
 	//
-	// It is called while the state is being updated, so it must be quick and
-	// must not call the State's methods.
+	// It runs on the gateway's goroutine, after the event is applied and
+	// before its handlers start, so it may call the State's methods but must
+	// be quick: events wait for it.
 	KeepMember func(guildID string, m *discord.Member) bool
 
 	// ThreadMembers keeps who is in each active thread, and asks for the
@@ -85,10 +86,14 @@ type State struct {
 	opts StateOptions
 
 	mu            sync.RWMutex
-	self          string // the bot's user ID
+	pending       []pendingMember // left to KeepMember by the update in progress
+	self          string          // the bot's user ID
 	guilds        map[string]*guildState
-	channels      map[string]*discord.Channel                 // guild channels, active threads and DMs
-	messages      map[string]*channelMessages                 // by channel ID
+	channels      map[string]*discord.Channel // guild channels, active threads and DMs
+	messages      map[string]*channelMessages // by channel ID
+	dms           map[string]uint64           // DM channel IDs, by when they were last written in
+	dmClock       uint64
+	maxDMs        int
 	threadMembers map[string]map[string]*discord.ThreadMember // by thread ID, then user ID
 }
 
@@ -116,8 +121,14 @@ func NewState(opts StateOptions) *State {
 		channels:      map[string]*discord.Channel{},
 		messages:      map[string]*channelMessages{},
 		threadMembers: map[string]map[string]*discord.ThreadMember{},
+		dms:           map[string]uint64{},
+		maxDMs:        maxDMChannels,
 	}
 }
+
+// maxDMChannels is how many DM channels the state keeps, with their
+// messages: those most recently written in.
+const maxDMChannels = 1000
 
 // Intents returns the gateway intents that the state needs to be kept up to
 // date. A Session identifies with them as well as its own Intents.
@@ -195,7 +206,8 @@ func (st *State) Guilds() []*discord.Guild {
 
 // Channel returns the guild channel, active thread or DM channel with the
 // given ID, or nil. A DM channel is there once someone sends the bot a
-// message in it, or Discord sends it in a CHANNEL_CREATE event.
+// message in it, or Discord sends it in a CHANNEL_CREATE event. The 1000 DM
+// channels most recently written in are kept, with their messages.
 func (st *State) Channel(id string) *discord.Channel {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
@@ -460,7 +472,12 @@ var stateUpdates = map[string]func(*State, json.RawMessage) error{
 	"GUILD_SOUNDBOARD_SOUNDS_UPDATE": stateUpdate((*State).soundsUpdate),
 	"SOUNDBOARD_SOUNDS":              stateUpdate((*State).soundsList),
 
-	"MESSAGE_CREATE":      stateUpdate((*State).messageCreate),
+	"MESSAGE_CREATE": func(st *State, data json.RawMessage) error {
+		if st.opts.Messages > 0 {
+			return messageCreateFull(st, data)
+		}
+		return messageCreateHead(st, data)
+	},
 	"MESSAGE_UPDATE":      stateUpdate((*State).messageUpdate),
 	"MESSAGE_DELETE":      stateUpdate(func(st *State, e *discord.MessageDelete) { st.deleteMessages(e.ChannelID, e.ID) }),
 	"MESSAGE_DELETE_BULK": stateUpdate(func(st *State, e *discord.MessageDeleteBulk) { st.deleteMessages(e.ChannelID, e.IDs...) }),
@@ -477,6 +494,33 @@ var stateUpdates = map[string]func(*State, json.RawMessage) error{
 	}),
 }
 
+// A state that keeps no messages decodes only the part of a message it
+// uses, as it sees every one.
+var (
+	messageCreateFull = stateUpdate((*State).messageCreate)
+	messageCreateHead = stateUpdate(func(st *State, h *messageHead) {
+		st.messageCreate(&discord.MessageCreate{Message: &discord.Message{
+			ID: h.ID, ChannelID: h.ChannelID, GuildID: h.GuildID, Author: h.Author, Member: h.Member,
+		}})
+	})
+)
+
+// messageHead is the part of a message that a state without messages uses.
+type messageHead struct {
+	ID        string          `json:"id"`
+	ChannelID string          `json:"channel_id"`
+	GuildID   string          `json:"guild_id"`
+	Author    *discord.User   `json:"author"`
+	Member    *discord.Member `json:"member"`
+}
+
+// interactionHead is the part of an interaction that the state uses: the
+// member who used it. Decoding only this skips the interaction's data.
+type interactionHead struct {
+	GuildID string          `json:"guild_id"`
+	Member  *discord.Member `json:"member"`
+}
+
 // stateUpdate decodes an event into an E of the state's own, so that the
 // state never shares a value with handlers, which may change theirs, and
 // applies it with f.
@@ -486,10 +530,53 @@ func stateUpdate[E any](f func(*State, *E)) func(*State, json.RawMessage) error 
 		if err := json.Unmarshal(data, e); err != nil {
 			return err
 		}
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		f(st, e)
+		st.update(func() { f(st, e) })
 		return nil
+	}
+}
+
+// pendingMember is a member whose fate is up to StateOptions.KeepMember.
+type pendingMember struct {
+	guildID  string
+	member   *discord.Member
+	ifAbsent bool // keep it only if the state has no member for the user
+}
+
+// update runs f holding the lock. Then it asks StateOptions.KeepMember about
+// the members f left to it, without the lock, so that KeepMember may call
+// the State's methods, and stores its answers.
+func (st *State) update(f func()) {
+	var pending []pendingMember
+	func() {
+		st.mu.Lock()
+		defer func() {
+			pending, st.pending = st.pending, nil
+			st.mu.Unlock()
+		}()
+		f()
+	}()
+	if len(pending) == 0 {
+		return
+	}
+
+	keep := make([]bool, len(pending))
+	for i, p := range pending {
+		keep[i] = st.opts.KeepMember(p.guildID, p.member)
+	}
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for i, p := range pending {
+		gs := st.available(p.guildID)
+		id := p.member.User.ID
+		if gs == nil || (p.ifAbsent && gs.members[id] != nil) {
+			continue
+		}
+		if keep[i] {
+			gs.members[id] = p.member
+		} else {
+			delete(gs.members, id)
+		}
 	}
 }
 
@@ -542,6 +629,7 @@ func (st *State) ready(e *discord.Ready) {
 				delete(st.messages, id)
 			}
 		}
+		clear(st.dms)
 	}
 
 	for _, g := range e.Guilds {
@@ -664,7 +752,7 @@ func (st *State) guildCreate(e *discord.GuildCreate) {
 		gs.stages[s.ID] = s
 	}
 	for _, ev := range events {
-		ev.GuildID = g.ID
+		ev.GuildID, ev.UserCount = g.ID, 0
 		gs.events[ev.ID] = ev
 	}
 	for _, s := range sounds {
@@ -744,23 +832,26 @@ func (st *State) stickersUpdate(e *discord.GuildStickersUpdate) {
 }
 
 // putMember keeps a member, which must have its User, if it is the bot's or
-// the options keep it, and otherwise drops the one the state has.
+// the options keep it, and otherwise drops the one the state has. A member
+// that is up to StateOptions.KeepMember is left to update, which asks it
+// without the lock.
 func (st *State) putMember(gs *guildState, m *discord.Member) {
+	st.putMemberIf(gs, m, false)
+}
+
+func (st *State) putMemberIf(gs *guildState, m *discord.Member, ifAbsent bool) {
 	if m == nil || m.User == nil {
 		return
 	}
-	if m.User.ID != st.self && !st.keepsMember(gs.guild.ID, m) {
-		delete(gs.members, m.User.ID)
-		return
+	id := m.User.ID
+	switch {
+	case id != st.self && st.opts.KeepMember != nil:
+		st.pending = append(st.pending, pendingMember{gs.guild.ID, m, ifAbsent})
+	case id != st.self && !st.opts.Members:
+		delete(gs.members, id)
+	default:
+		gs.members[id] = m
 	}
-	gs.members[m.User.ID] = m
-}
-
-func (st *State) keepsMember(guildID string, m *discord.Member) bool {
-	if st.opts.KeepMember != nil {
-		return st.opts.KeepMember(guildID, m)
-	}
-	return st.opts.Members
 }
 
 // eventMember keeps the member that came with an event, with its user.
@@ -770,17 +861,27 @@ func (st *State) eventMember(guildID string, m *discord.Member) {
 	}
 }
 
-// fetchedMember keeps a member fetched from the REST API, unless the state
-// has one already: that came from the gateway, and may be newer.
+// fetchedMember keeps a copy of a member fetched from the REST API, so that
+// the caller may change theirs, unless the state has one already: that came
+// from the gateway, and may be newer.
 func (st *State) fetchedMember(guildID string, m *discord.Member) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	gs := st.available(guildID)
-	if gs == nil || m == nil || m.User == nil || gs.members[m.User.ID] != nil {
+	if m == nil || m.User == nil {
 		return
 	}
-	st.putMember(gs, m)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("discord: state: panic while keeping a fetched member: %v\n%s", r, debug.Stack())
+		}
+	}()
+
+	c := *m
+	u := *m.User
+	c.User, c.Roles = &u, slices.Clone(m.Roles)
+	st.update(func() {
+		if gs := st.available(guildID); gs != nil && gs.members[u.ID] == nil {
+			st.putMemberIf(gs, &c, true)
+		}
+	})
 }
 
 func (st *State) memberAdd(e *discord.GuildMemberAdd) {
@@ -833,8 +934,8 @@ func (st *State) membersChunk(e *discord.GuildMembersChunk) {
 
 // interactionCreate keeps the member who used an interaction in a guild.
 // Its Permissions are about the interaction's channel, so they are left out.
-func (st *State) interactionCreate(e *discord.InteractionCreate) {
-	if e.Interaction == nil || e.Member == nil {
+func (st *State) interactionCreate(e *interactionHead) {
+	if e.Member == nil {
 		return
 	}
 	e.Member.Permissions = 0
@@ -894,6 +995,24 @@ func (st *State) forgetChannel(id string) {
 	delete(st.channels, id)
 	delete(st.messages, id)
 	delete(st.threadMembers, id)
+	delete(st.dms, id)
+}
+
+// touchDM records that a DM channel was written in, and forgets the one
+// least recently written in once there are more than the state keeps.
+func (st *State) touchDM(id string) {
+	st.dmClock++
+	st.dms[id] = st.dmClock
+	if len(st.dms) <= st.maxDMs {
+		return
+	}
+	oldest, at := "", st.dmClock
+	for cid, t := range st.dms {
+		if t < at {
+			oldest, at = cid, t
+		}
+	}
+	st.forgetChannel(oldest)
 }
 
 // removeChannel forgets a channel of a guild, and the threads in it.
@@ -918,6 +1037,7 @@ func (st *State) channelUpdate(c *discord.Channel) {
 	}
 	if c.GuildID == "" {
 		st.putChannel(nil, c)
+		st.touchDM(c.ID)
 		return
 	}
 	if gs := st.available(c.GuildID); gs != nil {
@@ -1143,7 +1263,9 @@ func (st *State) messageCreate(e *discord.MessageCreate) {
 	}
 	st.changeChannel(m.ChannelID, func(c *discord.Channel) {
 		c.LastMessageID = m.ID
-		if c.IsThread() {
+		// Discord does not count the first message of a forum post, whose
+		// ID is the thread's.
+		if c.IsThread() && m.ID != c.ID {
 			c.MessageCount++
 			c.TotalMessageSent++
 		}
@@ -1155,6 +1277,7 @@ func (st *State) messageCreate(e *discord.MessageCreate) {
 			st.putChannel(nil, &discord.Channel{ID: m.ChannelID, Type: discord.ChannelTypeDM,
 				LastMessageID: m.ID, Recipients: []*discord.User{m.Author}})
 		}
+		defer st.touchDM(m.ChannelID) // after its message is kept, so that it can be forgotten with it
 	} else if m.Member != nil && m.Author != nil {
 		// The member of a message comes without its user.
 		m.Member.User = m.Author
@@ -1179,19 +1302,46 @@ func (st *State) messageCreate(e *discord.MessageCreate) {
 
 // messageUpdate replaces a message that the state has. An update without
 // the author, which Discord used to send for embeds it added, is ignored.
+// What an update leaves out is kept: the reactions and poll votes counted
+// from their own events, and the author's member.
 func (st *State) messageUpdate(e *discord.MessageUpdate) {
 	m := e.Message
 	if m == nil || m.Author == nil {
 		return
 	}
-	if cm := st.messages[m.ChannelID]; cm != nil {
-		if i := slices.IndexFunc(cm.list, func(old *discord.Message) bool { return old.ID == m.ID }); i >= 0 {
-			cm.list[i] = m
-		}
+	cm := st.messages[m.ChannelID]
+	if cm == nil {
+		return
 	}
+	i := slices.IndexFunc(cm.list, func(old *discord.Message) bool { return old.ID == m.ID })
+	if i < 0 {
+		return
+	}
+	old := cm.list[i]
+	if m.Reactions == nil {
+		m.Reactions = old.Reactions
+	}
+	if m.Poll != nil && m.Poll.Results == nil && old.Poll != nil {
+		m.Poll.Results = old.Poll.Results
+	}
+	if m.Member == nil {
+		m.Member = old.Member
+	}
+	cm.list[i] = m
 }
 
+// deleteMessages forgets deleted messages, and takes them off the message
+// count of a thread, which, unlike TotalMessageSent, does not count them.
 func (st *State) deleteMessages(channelID string, ids ...string) {
+	if c := st.channels[channelID]; c != nil && c.IsThread() {
+		n := len(ids)
+		if slices.Contains(ids, c.ID) {
+			n--
+		}
+		if n > 0 {
+			st.changeChannel(channelID, func(c *discord.Channel) { c.MessageCount = max(c.MessageCount-n, 0) })
+		}
+	}
 	if cm := st.messages[channelID]; cm != nil {
 		cm.list = slices.DeleteFunc(cm.list, func(m *discord.Message) bool { return slices.Contains(ids, m.ID) })
 	}

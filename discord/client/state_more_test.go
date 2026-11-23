@@ -3,6 +3,7 @@ package client
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/tbdsux/minidis/discord"
 )
@@ -52,7 +53,7 @@ func TestStateGuildExtras(t *testing.T) {
 	if s := st.StageInstance("g1", "st1"); s == nil || s.Topic != "talk" || s.GuildID != "g1" {
 		t.Errorf("stage = %+v", s)
 	}
-	if ev := st.ScheduledEvent("g1", "ev1"); ev == nil || ev.Name != "party" || ev.GuildID != "g1" {
+	if ev := st.ScheduledEvent("g1", "ev1"); ev == nil || ev.Name != "party" || ev.GuildID != "g1" || ev.UserCount != 0 {
 		t.Errorf("event = %+v", ev)
 	}
 	if s := st.SoundboardSound("g1", "snd1"); s == nil || s.Name != "honk" || s.GuildID != "g1" {
@@ -262,5 +263,90 @@ func TestStateUserUpdate(t *testing.T) {
 	}
 	if before.User.Username != "u42" {
 		t.Error("a member that was returned changed")
+	}
+}
+
+func TestStateMessageEditsKeepWhatTheyLeaveOut(t *testing.T) {
+	st := readyState(t, StateOptions{Messages: 5})
+	apply(t, st, "GUILD_CREATE", guildCreate())
+	apply(t, st, "MESSAGE_CREATE", obj{"id": "m1", "channel_id": "c1", "guild_id": "g1", "author": user("7"),
+		"member": obj{"roles": []string{}, "joined_at": "2024-01-01T00:00:00Z"},
+		"poll":   obj{"question": obj{"text": "?"}, "answers": []obj{{"answer_id": 1}}}})
+	apply(t, st, "MESSAGE_REACTION_ADD", obj{"user_id": "8", "channel_id": "c1", "message_id": "m1", "emoji": obj{"name": "👍"}})
+	apply(t, st, "MESSAGE_POLL_VOTE_ADD", obj{"user_id": "8", "channel_id": "c1", "message_id": "m1", "answer_id": 1})
+
+	apply(t, st, "MESSAGE_UPDATE", obj{"id": "m1", "channel_id": "c1", "guild_id": "g1", "author": user("7"), "content": "edited",
+		"poll": obj{"question": obj{"text": "?"}, "answers": []obj{{"answer_id": 1}}}})
+	m := st.Message("c1", "m1")
+	if m.Content != "edited" || len(m.Reactions) != 1 || m.Member == nil {
+		t.Errorf("edited message = %+v", m)
+	}
+	if m.Poll.Results == nil || m.Poll.Results.AnswerCounts[0].Count != 1 {
+		t.Errorf("poll results after an edit = %+v", m.Poll.Results)
+	}
+}
+
+func TestStateThreadCountsFollowDeletes(t *testing.T) {
+	st := readyState(t, StateOptions{})
+	apply(t, st, "GUILD_CREATE", guildCreate())
+	send := func(id string) {
+		apply(t, st, "MESSAGE_CREATE", obj{"id": id, "channel_id": "t1", "guild_id": "g1", "author": user("7")})
+	}
+
+	send("t1") // the first message of a forum post has the thread's ID
+	send("m1")
+	send("m2")
+	send("m3")
+	apply(t, st, "MESSAGE_DELETE", obj{"id": "m1", "channel_id": "t1", "guild_id": "g1"})
+	apply(t, st, "MESSAGE_DELETE_BULK", obj{"ids": []string{"m2", "t1"}, "channel_id": "t1", "guild_id": "g1"})
+
+	if c := st.Channel("t1"); c.MessageCount != 1 || c.TotalMessageSent != 3 {
+		t.Errorf("MessageCount = %d, TotalMessageSent = %d; want 1 and 3", c.MessageCount, c.TotalMessageSent)
+	}
+}
+
+func TestStateKeepsTheLatestDMChannels(t *testing.T) {
+	st := readyState(t, StateOptions{Messages: 5})
+	st.maxDMs = 2
+	dm := func(channel, id string) {
+		apply(t, st, "MESSAGE_CREATE", obj{"id": id, "channel_id": channel, "author": user("7")})
+	}
+
+	dm("dm1", "a")
+	dm("dm2", "b")
+	dm("dm1", "c") // dm1 is now the latest
+	dm("dm3", "d") // so dm2 goes, with its messages
+	if st.Channel("dm2") != nil || st.Messages("dm2") != nil {
+		t.Error("the DM channel least recently written in is kept")
+	}
+	if st.Channel("dm1") == nil || len(st.Messages("dm1")) != 2 || st.Channel("dm3") == nil {
+		t.Error("a recent DM channel was forgotten")
+	}
+
+	// The bot's own DMs have no channel here, but their messages count too.
+	apply(t, st, "MESSAGE_CREATE", obj{"id": "e", "channel_id": "dm4", "author": user("42")})
+	if st.Messages("dm4") == nil || st.Channel("dm1") != nil {
+		t.Error("messages in a DM channel without a channel are not limited")
+	}
+}
+
+func TestKeepMemberMayUseTheState(t *testing.T) {
+	var st *State
+	st = readyState(t, StateOptions{KeepMember: func(guildID string, m *discord.Member) bool {
+		return st.Guild(guildID) != nil && st.Role(guildID, "r1") != nil
+	}})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		apply(t, st, "GUILD_CREATE", guildCreate())
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a KeepMember that reads the state blocks the update")
+	}
+	if st.Member("g1", "7") == nil {
+		t.Error("the member KeepMember kept is missing")
 	}
 }

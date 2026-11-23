@@ -204,6 +204,15 @@ func TestFetchedMembersAreKept(t *testing.T) {
 		t.Errorf("requests = %v, want one: the member is kept after it", got)
 	}
 
+	// The member returned from Discord is the caller's to change.
+	s.State = readyState(t, StateOptions{KeepMember: hasRole("r1")})
+	apply(t, s.State, "GUILD_CREATE", guildCreate())
+	m, _ := s.GuildMemberCached(ctx, "g1", "7")
+	m.Roles[0], m.User.Username = "changed", "changed"
+	if kept := s.State.Member("g1", "7"); kept.Roles[0] != "r1" || kept.User.Username != "u7" {
+		t.Errorf("changing the returned member changed the state's: %+v", kept)
+	}
+
 	// A member from the gateway is not replaced by one fetched later, which
 	// may be older.
 	apply(t, s.State, "GUILD_MEMBER_UPDATE", obj{"guild_id": "g1", "user": user("7"), "nick": "gateway", "roles": []string{"r1"}})
