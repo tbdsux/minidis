@@ -14,8 +14,8 @@ import (
 const maxTrackedBuckets = 2048
 
 // globalRequestsPerSecond is Discord's global limit for a bot, which the
-// limiter keeps to ahead of time. A variable so tests can change it.
-var globalRequestsPerSecond = 50.0
+// limiter keeps to ahead of time.
+const globalRequestsPerSecond = 50.0
 
 type bucket struct {
 	// gate serializes requests in this bucket and is held across the HTTP call,
@@ -39,11 +39,16 @@ type rateLimiter struct {
 	routes      map[string]string
 	globalUntil time.Time
 	globalNext  time.Time // when the global limit next has room; see reserveGlobal
+	globalRate  float64   // requests per second allowed by the global limit; set before use
 	sweepAt     int       // the map size that triggers the next sweep
 }
 
 func newRateLimiter() *rateLimiter {
-	return &rateLimiter{buckets: map[string]*bucket{}, routes: map[string]string{}}
+	return &rateLimiter{
+		buckets:    map[string]*bucket{},
+		routes:     map[string]string{},
+		globalRate: globalRequestsPerSecond,
+	}
 }
 
 func (l *rateLimiter) bucketFor(route string) *bucket {
@@ -150,8 +155,8 @@ func (l *rateLimiter) acquire(ctx context.Context, route string, global bool) (*
 // for it. It allows a burst of a second's worth of requests, then spaces them
 // evenly; a slot is taken even if the caller then gives up.
 func (l *rateLimiter) reserveGlobal() time.Duration {
-	interval := time.Duration(float64(time.Second) / globalRequestsPerSecond)
-	burst := time.Duration(globalRequestsPerSecond) * interval
+	interval := time.Duration(float64(time.Second) / l.globalRate)
+	burst := time.Duration(l.globalRate) * interval
 
 	l.mu.Lock()
 	defer l.mu.Unlock()

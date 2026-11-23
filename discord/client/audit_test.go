@@ -159,7 +159,9 @@ func TestCloudflare429IsGlobal(t *testing.T) {
 		io.WriteString(w, `{"id":"1"}`)
 	})
 
-	go func() { _, _ = s.ChannelMessage(context.Background(), "1", "1") }()
+	var wg sync.WaitGroup
+	defer wg.Wait() // do not leave the retrying request running into the next test
+	wg.Go(func() { _, _ = s.ChannelMessage(context.Background(), "1", "1") })
 	time.Sleep(50 * time.Millisecond) // the 429 has arrived
 	if _, err := s.ChannelMessage(t.Context(), "2", "2"); err != nil {
 		t.Fatal(err)
@@ -170,14 +172,12 @@ func TestCloudflare429IsGlobal(t *testing.T) {
 }
 
 func TestGlobalLimitIsKeptAheadOfTime(t *testing.T) {
-	defer func(rate float64) { globalRequestsPerSecond = rate }(globalRequestsPerSecond)
-	globalRequestsPerSecond = 100 // a burst of 100, then one per 10ms
-
 	var callbacks atomic.Int32
 	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
 		callbacks.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	})
+	s.limiter.globalRate = 100 // a burst of 100, then one per 10ms
 
 	start := time.Now()
 	for i := range 120 {
