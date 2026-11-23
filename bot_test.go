@@ -226,6 +226,9 @@ func TestIntentsComeFromHandlers(t *testing.T) {
 			b.Session.Intents = discord.IntentsGuildVoiceStates
 			On(b, func(*EventContext, *discord.GuildBanAdd) error { return nil })
 		}, discord.IntentsGuildVoiceStates | discord.IntentsGuildModeration},
+		{"with those of the state", func(b *Bot) {
+			b.Session.State = client.NewState(client.StateOptions{Members: true})
+		}, discord.IntentsGuilds | discord.IntentsGuildExpressions | discord.IntentsGuildScheduledEvents | discord.IntentsGuildMembers},
 		{"set explicitly", func(b *Bot) {
 			b.SetIntents(discord.IntentsGuilds)
 			b.OnMessage(func(*MessageContext) error { return nil })

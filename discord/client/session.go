@@ -66,6 +66,10 @@ type Session struct {
 	ShardID    int
 	ShardCount int // sharding is only enabled when this is greater than 1
 
+	// State, if set, caches what the gateway sends; see NewState. The
+	// session identifies with its intents as well as Intents.
+	State *State
+
 	BaseURL    string
 	UserAgent  string
 	HTTPClient *http.Client
