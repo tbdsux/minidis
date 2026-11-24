@@ -112,14 +112,30 @@ Between `Open` and `Close`, the session reconnects by itself, and resumes when D
 
 ## Sharding
 
-Discord requires sharding from 2,500 guilds: each gateway connection, or shard, gets a share of the guilds. Set the shard before opening:
+Discord requires sharding from 2,500 guilds: each gateway connection, or shard, gets a share of the guilds. A session shards by itself. `Open` connects as many shards as Discord recommends, one after another as Discord requires, and returns once they are all ready. Their events go to the same handlers and the same state cache, and the gateway commands about a guild, such as `UpdateVoiceState` and `RequestGuildMembers`, go to the shard that has it. A bot under 2,500 guilds has one shard, and nothing changes.
+
+To choose the number of shards rather than take Discord's, set it before opening:
 
 ```go
-bot.Session.ShardID = shardID       // from 0 to ShardCount-1
-bot.Session.ShardCount = shardCount // sharding is on when greater than 1
+bot.Session.TotalShards = 16
 ```
 
-`s.GatewayBot(ctx)` returns the number of shards Discord recommends in `Shards`. A session is one shard, so run a bot or session per shard, in one process or several. Sessions of the same token in one process wait their turn to connect, as Discord requires. Commands are the same for every shard, so let one register them and call `bot.DisableSync()` on the others.
+The number is settled when the session opens. As a bot grows, Discord recommends more shards, and eventually closes a shard that has too many guilds. A session that took Discord's number then reconnects every shard with the number Discord recommends at that point, or twice as many as before if that is more. A session given `TotalShards` stops instead, as its number is yours to change.
+
+> Up to version 0.2, `ShardCount` and `ShardID` made a session one shard. `TotalShards` replaces `ShardCount`, and without `Shards` a session now connects every shard: give each process its `Shards`, including the one that connected shard 0.
+
+`READY` arrives once for each shard, with the shard in `e.Shard`, and `s.ShardOf(guildID)` says which shard has a guild. If Discord ends one shard for good, such as for intents the bot is not allowed, they all stop, and `s.Done()` and `s.Err()` say why.
+
+### Across processes
+
+A large bot can split its shards across processes, or machines, by giving each process's session its shards:
+
+```go
+bot.Session.TotalShards = 16
+bot.Session.Shards = []int{0, 1, 2, 3} // this process's; the next has 4 to 7, and so on
+```
+
+Every process must use the same `TotalShards`. A gateway command for a guild on another process's shard fails with `client.ErrNotConnected`; with several shards, one for a guild ID that is not a number fails too, as its shard is unknown. Commands are the same for every shard, so let one process register them and call `bot.DisableSync()` on the others. Sessions of the same token in one process wait their turn to connect, but sessions in different processes do not know of each other: start them some seconds apart, or Discord may refuse some of their connections, which they retry.
 
 ## Helpers
 

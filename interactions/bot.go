@@ -263,7 +263,9 @@ func (m *Minidis) SetPresence(status discord.Status, activities ...*discord.Acti
 }
 
 // OnReady adds a handler that runs each time the bot starts a gateway session:
-// on Open and after a reconnect that could not resume, but not on a resume.
+// on Open and after a reconnect that could not resume, but not on a resume. A
+// bot with several shards starts a session for each, and the Ready event says
+// which.
 func (m *Minidis) OnReady(h func(*client.Session, *discord.Ready)) {
 	m.Session.OnReady(h)
 }

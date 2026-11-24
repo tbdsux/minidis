@@ -75,8 +75,12 @@ func TestOpenRetriesFailuresBeforeReady(t *testing.T) {
 }
 
 func TestIdentifyIsSpacedAcrossShards(t *testing.T) {
-	for _, mc := range []int32{1, 2} {
-		t.Run(fmt.Sprintf("max_concurrency %d", mc), func(t *testing.T) {
+	for _, tc := range []struct {
+		mc    int32
+		split bool // a Session for each shard
+	}{{1, false}, {2, false}, {1, true}, {2, true}} {
+		mc, split := tc.mc, tc.split
+		t.Run(fmt.Sprintf("max_concurrency %d, split %t", mc, split), func(t *testing.T) {
 			var mu sync.Mutex
 			var identified []time.Time
 			shard := func(c *fakeConn) {
@@ -93,11 +97,17 @@ func TestIdentifyIsSpacedAcrossShards(t *testing.T) {
 			g.maxConcurrency.Store(mc)
 			identifyInterval = 300 * time.Millisecond
 
+			// Sessions in one process share the Identify buckets of a token,
+			// whether one connects every shard or they split them.
 			token := "Bot shards-" + t.Name() // a fresh Identify bucket
-			sessions := []*Session{first, New(token)}
-			for i, s := range sessions {
-				s.Token, s.BaseURL = token, g.server.URL
-				s.ShardID, s.ShardCount = i, 2
+			sessions := []*Session{first}
+			first.Token, first.TotalShards = token, 2
+			if split {
+				second := New(token)
+				second.BaseURL = g.server.URL
+				first.Shards, second.Shards = []int{0}, []int{1}
+				second.TotalShards = 2
+				sessions = append(sessions, second)
 			}
 
 			var wg sync.WaitGroup
