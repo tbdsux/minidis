@@ -80,8 +80,8 @@ type StateOptions struct {
 // entitlements are not kept: Discord never sends them all on the gateway,
 // so they would be incomplete.
 //
-// The methods of a nil State panic. Several Sessions, the shards of one bot,
-// can share a State.
+// The methods of a nil State panic. The shards of a Session share its State,
+// and so can several Sessions that split the shards of one bot.
 type State struct {
 	opts StateOptions
 

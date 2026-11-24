@@ -23,6 +23,7 @@ type fakeGateway struct {
 	conns  atomic.Int32
 	starts atomic.Int32
 	remain atomic.Int32
+	shards atomic.Int32 // the number recommended
 
 	maxConcurrency atomic.Int32
 }
@@ -100,13 +101,14 @@ func newFakeGateway(t *testing.T, script ...func(c *fakeConn)) (*Session, *fakeG
 	g := &fakeGateway{t: t, script: script}
 	g.remain.Store(1000)
 	g.maxConcurrency.Store(1)
+	g.shards.Store(1)
 
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/gateway/bot", func(w http.ResponseWriter, r *http.Request) {
 		g.starts.Add(1)
-		fmt.Fprintf(w, `{"url":"ws://%s/gw","shards":1,"session_start_limit":{"total":1000,"remaining":%d,"reset_after":1000,"max_concurrency":%d}}`,
-			r.Host, g.remain.Load(), g.maxConcurrency.Load())
+		fmt.Fprintf(w, `{"url":"ws://%s/gw","shards":%d,"session_start_limit":{"total":1000,"remaining":%d,"reset_after":1000,"max_concurrency":%d}}`,
+			r.Host, g.shards.Load(), g.remain.Load(), g.maxConcurrency.Load())
 	})
 	serveWS := func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)

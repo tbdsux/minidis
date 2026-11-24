@@ -17,6 +17,12 @@
 //	}
 //	defer s.Close()
 //
+// Open connects every shard of the bot, as many as Discord recommends unless
+// Session.TotalShards says otherwise, and their events all go to the same
+// handlers. Gateway commands about a guild, such as UpdateVoiceState, go to
+// the shard of that guild. To split the shards across processes, give each
+// process's Session the shards it runs in Session.Shards.
+//
 // Endpoints without a typed method can be reached with Session.Request, and
 // gateway events without a typed handler with Session.OnRawEvent. Voice is
 // limited to joining and leaving channels with UpdateVoiceState: the session
@@ -54,17 +60,26 @@ const (
 	libraryURL  = "https://github.com/tbdsux/minidis"
 )
 
-// Session is a connection to Discord: a REST client plus a Gateway connection.
+// Session is a connection to Discord: a REST client plus a Gateway connection
+// for each shard of the bot.
 //
 // Configure its exported fields before calling Open. Event handlers each run
 // in their own goroutine, so a slow handler does not block the gateway, and
 // they may run concurrently. A handler that panics is logged and does not stop
 // the bot.
 type Session struct {
-	Token      string // the full Authorization value, including the "Bot " prefix
-	Intents    discord.Intent
-	ShardID    int
-	ShardCount int // sharding is only enabled when this is greater than 1
+	Token   string // the full Authorization value, including the "Bot " prefix
+	Intents discord.Intent
+
+	// TotalShards is how many shards the bot's guilds are split into, each
+	// with a gateway connection of its own. With 0, Open uses the number
+	// Discord recommends, which is 1 below 2,500 guilds.
+	TotalShards int
+
+	// Shards are the shards this Session connects, each from 0 to
+	// TotalShards-1. Leave it nil to connect them all; set it, together
+	// with TotalShards, to split a bot's shards across processes.
+	Shards []int
 
 	// State, if set, caches what the gateway sends; see NewState. The
 	// session identifies with its intents as well as Intents.
@@ -85,14 +100,16 @@ type Session struct {
 	user  atomic.Pointer[discord.User]
 	appID atomic.Pointer[string]
 
-	conn       atomic.Pointer[gatewayConn] // nil until READY or RESUMED
-	presence   atomic.Pointer[discord.PresenceUpdate]
-	presenceMu sync.Mutex // serializes storing and sending the presence
+	presence atomic.Pointer[discord.PresenceUpdate] // sent by each shard; see shard.presenceMu
 
 	// lifecycle serializes Open and Shutdown. It is a one-slot channel rather
 	// than a mutex so that waiting for it obeys ctx.
 	lifecycle chan struct{}
-	run       atomic.Pointer[gatewayRun] // the last Open; nil before the first
+	run       atomic.Pointer[gatewayRun] // the last Open that succeeded; nil before the first
+
+	// active is the run of the last Open that got as far as connecting,
+	// whose shards the gateway commands and presence updates go to.
+	active atomic.Pointer[gatewayRun]
 
 	// drain holds the handlers of every run whose handlers have not been
 	// waited for by a Shutdown yet. Guarded by lifecycle.
@@ -110,15 +127,6 @@ type Session struct {
 	// running tracks the handlers of the current run. It is replaced by Open,
 	// before the gateway goroutine that uses it starts.
 	running *sync.WaitGroup
-
-	// Owned by the gateway goroutine while it runs, and by Open before.
-	gatewayURL     string
-	sessionID      string
-	resumeURL      string
-	maxConcurrency int  // from GET /gateway/bot
-	identified     bool // an Identify was sent since Open
-
-	sequence atomic.Int64 // shared with the heartbeat goroutine; 0 means none yet
 }
 
 // New creates a Session. token is the full Authorization value, such as "Bot abc123".

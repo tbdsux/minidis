@@ -165,6 +165,6 @@ if err := bot.Run(ctx); err != nil {
 }
 ```
 
-`bot.OnReady` runs each time the bot starts a gateway session, and `bot.SetIntents` subscribes to gateway events for handlers added on `bot.Session`. Such a bot can also [receive interactions over HTTP](./http.md) without connecting to the gateway at all.
+`bot.OnReady` runs each time the bot starts a gateway session, once for each [shard](./client.md#sharding), and `bot.SetIntents` subscribes to gateway events for handlers added on `bot.Session`. Such a bot can also [receive interactions over HTTP](./http.md) without connecting to the gateway at all.
 
 Next: [Slash commands](./commands.md).

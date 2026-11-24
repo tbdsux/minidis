@@ -42,7 +42,9 @@ func (s *Session) OnRawEvent(h func(s *Session, event string, data json.RawMessa
 	s.onRawEvents = append(s.onRawEvents, h)
 }
 
-// OnReady registers a handler for the READY event.
+// OnReady registers a handler for the READY event, sent when a shard starts a
+// gateway session: on Open, once for each shard, and after a reconnect that
+// could not resume.
 func (s *Session) OnReady(h func(*Session, *discord.Ready)) {
 	on(s, "READY", h)
 }
