@@ -364,6 +364,9 @@ func TestRouteKey(t *testing.T) {
 		{"/channels/123456789012345678/messages/223456789012345678", "GET /channels/123456789012345678/messages/:id", "123456789012345678"},
 		{"/applications/123456789012345678/commands/223456789012345678?x=1", "GET /applications/:id/commands/:id", ""},
 		{"/webhooks/123456789012345678/tok/messages/@original", "GET /webhooks/123456789012345678/tok/messages/@original", "123456789012345678/tok"},
+		{"/channels/123456789012345678/messages/223456789012345678/reactions/%F0%9F%91%8D/@me", "GET /channels/123456789012345678/messages/:id/reactions/:code/@me", "123456789012345678"},
+		{"/invites/abc", "GET /invites/:code", ""},
+		{"/guilds/templates/abc", "GET /guilds/templates/:code", "templates"},
 	}
 
 	for _, tt := range tests {
