@@ -440,3 +440,33 @@ func TestTokenRoutesSendNoBotToken(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMultipartChecksFiles(t *testing.T) {
+	for _, f := range []*discord.File{nil, {Name: "a.png"}} {
+		if _, _, err := encodeMultipart(map[string]any{}, []*discord.File{f}); err == nil {
+			t.Errorf("file %+v was accepted", f)
+		}
+	}
+
+	body, contentType, err := encodeMultipart(map[string]any{}, []*discord.File{
+		{Name: "a.png", ContentType: "image/png\r\nX-Injected: yes", Reader: strings.NewReader("x")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, params, _ := mime.ParseMediaType(contentType)
+	r := multipart.NewReader(strings.NewReader(string(body)), params["boundary"])
+	if _, err := r.NextPart(); err != nil { // payload_json
+		t.Fatal(err)
+	}
+	part, err := r.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := part.Header.Get("X-Injected"); got != "" {
+		t.Errorf("a content type added the header X-Injected: %q", got)
+	}
+	if got := part.Header.Get("Content-Type"); got != "image/pngX-Injected: yes" {
+		t.Errorf("Content-Type = %q", got)
+	}
+}
