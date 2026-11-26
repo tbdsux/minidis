@@ -145,6 +145,9 @@ func (s *Session) requestWithFiles(ctx context.Context, method, path string, bod
 
 var multipartEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\r", "", "\n", "")
 
+// headerEscaper keeps a header value from ending its line.
+var headerEscaper = strings.NewReplacer("\r", "", "\n", "")
+
 func encodeMultipart(body any, files []*discord.File) ([]byte, string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -167,22 +170,8 @@ func encodeMultipart(body any, files []*discord.File) ([]byte, string, error) {
 	}
 
 	for i, f := range files {
-		contentType := f.ContentType
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-
-		header := textproto.MIMEHeader{}
-		header.Set("Content-Disposition",
-			fmt.Sprintf(`form-data; name="files[%d]"; filename="%s"`, i, multipartEscaper.Replace(f.Name)))
-		header.Set("Content-Type", contentType)
-
-		part, err := w.CreatePart(header)
-		if err != nil {
+		if err := writeFile(w, fmt.Sprintf("files[%d]", i), f); err != nil {
 			return nil, "", err
-		}
-		if _, err = io.Copy(part, f.Reader); err != nil {
-			return nil, "", fmt.Errorf("discord: read file %q: %w", f.Name, err)
 		}
 	}
 
@@ -191,6 +180,32 @@ func encodeMultipart(body any, files []*discord.File) ([]byte, string, error) {
 	}
 
 	return buf.Bytes(), w.FormDataContentType(), nil
+}
+
+// writeFile adds f to w as the form field name.
+func writeFile(w *multipart.Writer, name string, f *discord.File) error {
+	if f == nil || f.Reader == nil {
+		return fmt.Errorf("discord: file %s has no Reader", name)
+	}
+
+	contentType := f.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition",
+		fmt.Sprintf(`form-data; name="%s"; filename="%s"`, name, multipartEscaper.Replace(f.Name)))
+	header.Set("Content-Type", headerEscaper.Replace(contentType))
+
+	part, err := w.CreatePart(header)
+	if err != nil {
+		return err
+	}
+	if _, err = io.Copy(part, f.Reader); err != nil {
+		return fmt.Errorf("discord: read file %q: %w", f.Name, err)
+	}
+	return nil
 }
 
 func (s *Session) send(ctx context.Context, method, path, contentType string, payload []byte, out any) error {
