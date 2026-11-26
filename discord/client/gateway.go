@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"maps"
 	"math/rand/v2"
 	"net/http"
@@ -565,7 +565,7 @@ func (s *Session) gatewayLoop(ctx context.Context, run *gatewayRun, ready chan<-
 					stopSet()
 				default:
 					if run.opened.Load() {
-						log.Printf("discord: %s stopped: %v", sh.name(), err)
+						s.logger().Error("discord: shard stopped", "shard", sh.name(), "err", err)
 					}
 					run.fail(err)
 				}
@@ -581,7 +581,7 @@ func (s *Session) gatewayLoop(ctx context.Context, run *gatewayRun, ready chan<-
 		next, err := s.reshard(ctx, run)
 		if err != nil {
 			if ctx.Err() == nil {
-				log.Printf("discord: gateway stopped: %v", err)
+				s.logger().Error("discord: gateway stopped", "err", err)
 				run.fail(err)
 			}
 			return
@@ -632,7 +632,7 @@ func (s *Session) shardLoop(ctx context.Context, run *gatewayRun, sh *shard, rea
 			}
 			run.lastErr.Store(&err)
 		case err != nil:
-			log.Printf("discord: %s disconnected, reconnecting: %v", sh.name(), err)
+			s.logger().Warn("discord: shard disconnected, reconnecting", "shard", sh.name(), "err", err)
 		}
 
 		wait := delay/2 + rand.N(delay/2+1)
@@ -660,7 +660,7 @@ func (s *Session) prepareIdentify(ctx context.Context, run *gatewayRun, sh *shar
 
 		if info.SessionStartLimit.Remaining <= 0 {
 			wait := time.Duration(info.SessionStartLimit.ResetAfter) * time.Millisecond
-			log.Printf("discord: %s: no session starts remaining, waiting %s", sh.name(), wait)
+			s.logger().Warn("discord: no session starts remaining, waiting", "shard", sh.name(), "wait", wait)
 			if err := sleep(ctx, wait); err != nil {
 				return err
 			}
@@ -757,7 +757,7 @@ func sendHeartbeat(sh *shard, c *gatewayConn) error {
 
 // heartbeat runs until ctx ends. Closing the socket without a close frame keeps
 // the session resumable and unblocks the read loop.
-func heartbeat(ctx context.Context, sh *shard, c *gatewayConn, interval time.Duration) {
+func heartbeat(ctx context.Context, logger *slog.Logger, sh *shard, c *gatewayConn, interval time.Duration) {
 	timer := time.NewTimer(time.Duration(rand.Float64() * float64(interval)))
 	defer timer.Stop()
 
@@ -769,7 +769,7 @@ func heartbeat(ctx context.Context, sh *shard, c *gatewayConn, interval time.Dur
 		}
 
 		if !c.acked.Swap(false) {
-			log.Printf("discord: %s: no heartbeat ACK, reconnecting", sh.name())
+			logger.Warn("discord: no heartbeat ACK, reconnecting", "shard", sh.name())
 			c.ws.Close()
 			return
 		}
@@ -895,7 +895,7 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 
 		var p gatewayPayload
 		if err := json.Unmarshal(data, &p); err != nil {
-			log.Printf("discord: %s: invalid payload: %v", sh.name(), err)
+			s.logger().Error("discord: invalid payload", "shard", sh.name(), "err", err)
 			continue
 		}
 
@@ -914,7 +914,7 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 				return reconnect, err
 			}
 
-			go heartbeat(connCtx, sh, conn, time.Duration(hello.HeartbeatInterval)*time.Millisecond)
+			go heartbeat(connCtx, s.logger(), sh, conn, time.Duration(hello.HeartbeatInterval)*time.Millisecond)
 
 			if resuming {
 				err = s.sendResume(sh, conn)
@@ -1013,7 +1013,7 @@ func classifyDisconnect(err error) (connOutcome, error) {
 // handlers, so that they see the state with the event applied.
 func (s *Session) dispatch(event string, data json.RawMessage) {
 	if s.State != nil {
-		s.State.apply(event, data)
+		s.State.apply(s.logger(), event, data)
 	}
 
 	s.handlersMu.RLock()
@@ -1031,7 +1031,7 @@ func (s *Session) dispatch(event string, data json.RawMessage) {
 	// The event is decoded once, and its handlers share the result.
 	v, err := e.decode(data)
 	if err != nil {
-		log.Printf("discord: invalid %s event: %v", event, err)
+		s.logger().Error("discord: invalid event", "event", event, "err", err)
 		return
 	}
 	for _, h := range e.handlers {
@@ -1046,7 +1046,7 @@ func (s *Session) spawn(event string, h func()) {
 	s.running.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("discord: panic in %s handler: %v\n%s", event, r, debug.Stack())
+				s.logger().Error("discord: panic in handler", "event", event, "panic", r, "stack", string(debug.Stack()))
 			}
 		}()
 		h()

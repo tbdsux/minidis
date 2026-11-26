@@ -2,7 +2,7 @@ package client
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"maps"
 	"runtime/debug"
 	"slices"
@@ -591,18 +591,18 @@ func (st *State) update(f func()) {
 
 // apply updates the state with a gateway event. A panic, such as in
 // StateOptions.KeepMember, is logged rather than stopping the gateway.
-func (st *State) apply(event string, data json.RawMessage) {
+func (st *State) apply(logger *slog.Logger, event string, data json.RawMessage) {
 	update := stateUpdates[event]
 	if update == nil {
 		return
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("discord: state: panic while applying %s: %v\n%s", event, r, debug.Stack())
+			logger.Error("discord: state: panic while applying event", "event", event, "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 	if err := update(st, data); err != nil {
-		log.Printf("discord: state: invalid %s event: %v", event, err)
+		logger.Error("discord: state: invalid event", "event", event, "err", err)
 	}
 }
 
@@ -886,13 +886,13 @@ func (st *State) memberRemovals(guildID string) uint64 {
 // the caller may change theirs, unless the state has one already: that came
 // from the gateway, and may be newer. Nor is it kept if a member was removed
 // since memberRemovals returned removals: it may be this one.
-func (st *State) fetchedMember(guildID string, m *discord.Member, removals uint64) {
+func (st *State) fetchedMember(logger *slog.Logger, guildID string, m *discord.Member, removals uint64) {
 	if m == nil || m.User == nil {
 		return
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("discord: state: panic while keeping a fetched member: %v\n%s", r, debug.Stack())
+			logger.Error("discord: state: panic while keeping a fetched member", "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 

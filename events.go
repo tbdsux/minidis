@@ -1,9 +1,10 @@
 package minidis
 
 import (
+	"cmp"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"runtime/debug"
 	"time"
 
@@ -124,23 +125,25 @@ func (b *Bot) eventError(c *EventContext, err error) {
 	b.mu.RUnlock()
 
 	if h == nil {
-		logError(c.Event+" handler", err)
+		b.logError(c.Event+" handler", err)
 		return
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			logError("error handler of "+c.Event, &PanicError{Value: r, Stack: debug.Stack()})
+			b.logError("error handler of "+c.Event, &PanicError{Value: r, Stack: debug.Stack()})
 		}
 	}()
 	h(c, err)
 }
 
-func logError(source string, err error) {
+func (b *Bot) logger() *slog.Logger { return cmp.Or(b.Session.Logger, slog.Default()) }
+
+func (b *Bot) logError(source string, err error) {
 	var p *PanicError
 	if errors.As(err, &p) {
-		log.Printf("minidis: %s: %v\n%s", source, err, p.Stack)
+		b.logger().Error("minidis: "+source, "err", err, "stack", string(p.Stack))
 		return
 	}
-	log.Printf("minidis: %s: %v", source, err)
+	b.logger().Error("minidis: "+source, "err", err)
 }

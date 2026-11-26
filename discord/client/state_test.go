@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"log/slog"
 	"slices"
 	"sync"
 	"testing"
@@ -18,7 +19,7 @@ func apply(t *testing.T, st *State, event string, payload any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.apply(event, data)
+	st.apply(slog.Default(), event, data)
 }
 
 func user(id string) obj { return obj{"id": id, "username": "u" + id} }

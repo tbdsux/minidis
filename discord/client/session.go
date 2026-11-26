@@ -38,9 +38,11 @@
 package client
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -89,6 +91,10 @@ type Session struct {
 	UserAgent  string
 	HTTPClient *http.Client
 
+	// Logger receives what the session logs, such as reconnects, invalid
+	// events and panics in handlers. With nil, it uses slog.Default().
+	Logger *slog.Logger
+
 	limiter  *rateLimiter
 	rejected atomic.Pointer[rejection] // set once Discord rejects the token
 	invalid  invalidRequests
@@ -128,6 +134,8 @@ type Session struct {
 	// before the gateway goroutine that uses it starts.
 	running *sync.WaitGroup
 }
+
+func (s *Session) logger() *slog.Logger { return cmp.Or(s.Logger, slog.Default()) }
 
 // New creates a Session. token is the full Authorization value, such as "Bot abc123".
 func New(token string) *Session {

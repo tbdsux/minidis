@@ -1,9 +1,10 @@
 package interactions
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"runtime/debug"
 	"slices"
 )
@@ -89,11 +90,11 @@ func (m *Minidis) handleError(c *Context, err error) {
 
 	source := "interaction " + c.ID
 	if h == nil {
-		logError(source, err)
+		m.logError(source, err)
 		return
 	}
 
-	defer recoverErrorHandler(source)
+	defer m.recoverErrorHandler(source)
 	h(c, err)
 }
 
@@ -104,27 +105,28 @@ func (m *Minidis) handleChannelError(c *ChannelMessageContext, err error) {
 
 	source := "channel message handler for " + c.ChannelID
 	if h == nil {
-		logError(source, err)
+		m.logError(source, err)
 		return
 	}
 
-	defer recoverErrorHandler(source)
+	defer m.recoverErrorHandler(source)
 	h(c, err)
 }
 
 // recoverErrorHandler logs a panic in an error handler. Passing it on would
 // end the program, as nothing above it recovers on the HTTP path.
-func recoverErrorHandler(source string) {
+func (m *Minidis) recoverErrorHandler(source string) {
 	if r := recover(); r != nil {
-		logError("error handler of "+source, &PanicError{Value: r, Stack: debug.Stack()})
+		m.logError("error handler of "+source, &PanicError{Value: r, Stack: debug.Stack()})
 	}
 }
 
-func logError(source string, err error) {
+func (m *Minidis) logError(source string, err error) {
+	logger := cmp.Or(m.Session.Logger, slog.Default())
 	var p *PanicError
 	if errors.As(err, &p) {
-		log.Printf("interactions: %s: %v\n%s", source, err, p.Stack)
+		logger.Error("interactions: "+source, "err", err, "stack", string(p.Stack))
 		return
 	}
-	log.Printf("interactions: %s: %v", source, err)
+	logger.Error("interactions: "+source, "err", err)
 }

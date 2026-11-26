@@ -62,7 +62,7 @@ func (s *Session) GuildMemberCached(ctx context.Context, guildID, userID string)
 		return nil, err
 	}
 	if s.State != nil {
-		s.State.fetchedMember(guildID, m, removals)
+		s.State.fetchedMember(s.logger(), guildID, m, removals)
 	}
 	return m, nil
 }

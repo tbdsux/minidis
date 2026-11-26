@@ -137,6 +137,20 @@ bot.Session.Shards = []int{0, 1, 2, 3} // this process's; the next has 4 to 7, a
 
 Every process must use the same `TotalShards`. A gateway command for a guild on another process's shard fails with `client.ErrNotConnected`; with several shards, one for a guild ID that is not a number fails too, as its shard is unknown. Commands are the same for every shard, so let one process register them and call `bot.DisableSync()` on the others. Sessions of the same token in one process wait their turn to connect, but sessions in different processes do not know of each other: start them some seconds apart, or Discord may refuse some of their connections, which they retry.
 
+## Logging
+
+The session logs reconnects, invalid events and panics in handlers with `log/slog`, to `slog.Default()` unless `Session.Logger` is set. The bot's own logs, such as errors with no error handler, go to the same logger:
+
+```go
+s.Logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+// or, with the framework:
+bot.Session.Logger = logger
+
+// to log nothing:
+s.Logger = slog.New(slog.DiscardHandler)
+```
+
 ## Helpers
 
 `discord` has the small things a bot keeps needing: `User.Mention`, `User.AvatarURL`, `Member.DisplayName`, `Emoji.MessageFormat`, `Message.URL`, `discord.Timestamp`, `discord.SnowflakeTime`, `discord.ImageData` for uploading avatars and emojis, and `discord.MemberPermissions` to compute what a member may do in a channel.

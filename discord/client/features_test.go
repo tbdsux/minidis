@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,6 +31,9 @@ func TestHandlerPanicDoesNotStopTheSession(t *testing.T) {
 		c.waitClosed()
 	})
 
+	logged := make(logLines, 64)
+	s.Logger = slog.New(slog.NewTextHandler(logged, nil))
+
 	s.OnMessageCreate(func(_ *Session, m *discord.MessageCreate) {
 		if m.Content == "boom" {
 			panic("handler bug")
@@ -42,6 +47,33 @@ func TestHandlerPanicDoesNotStopTheSession(t *testing.T) {
 	defer s.Close()
 
 	waitFor(t, survived, "the event after the panic")
+	logged.waitFor(t, `level=ERROR msg="discord: panic in handler" event=MESSAGE_CREATE panic="handler bug"`)
+}
+
+// logLines is a log writer that tests can wait on. Lines past its buffer are dropped.
+type logLines chan string
+
+func (l logLines) Write(p []byte) (int, error) {
+	select {
+	case l <- string(p):
+	default:
+	}
+	return len(p), nil
+}
+
+func (l logLines) waitFor(t *testing.T, want string) {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case line := <-l:
+			if strings.Contains(line, want) {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("not logged: %s", want)
+		}
+	}
 }
 
 func TestShutdownWaitsForHandlers(t *testing.T) {

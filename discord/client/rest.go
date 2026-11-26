@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"github.com/tbdsux/minidis/discord"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -82,7 +82,7 @@ const (
 	invalidRequestLimit  = 10000
 )
 
-func (r *invalidRequests) record(status int, h http.Header) {
+func (r *invalidRequests) record(logger *slog.Logger, status int, h http.Header) {
 	switch {
 	case status == http.StatusUnauthorized, status == http.StatusForbidden:
 	case status == http.StatusTooManyRequests && h.Get("X-RateLimit-Scope") != "shared":
@@ -101,8 +101,8 @@ func (r *invalidRequests) record(status int, h http.Header) {
 	for _, tenths := range []int{9, 5} {
 		if r.warned < tenths && r.count >= invalidRequestLimit*tenths/10 {
 			r.warned = tenths
-			log.Printf("discord: %d invalid requests (401, 403 or 429) in the last %s; at %d Discord bans the IP for a while",
-				r.count, invalidRequestWindow, invalidRequestLimit)
+			logger.Warn("discord: invalid requests (401, 403 or 429) add up; past the limit Discord bans the IP for a while",
+				"count", r.count, "window", invalidRequestWindow, "limit", invalidRequestLimit)
 			break
 		}
 	}
@@ -237,7 +237,7 @@ func (s *Session) send(ctx context.Context, method, path, contentType string, pa
 			return fmt.Errorf("discord: %s %s: %w", method, safePath, err)
 		}
 
-		s.invalid.record(status, header)
+		s.invalid.record(s.logger(), status, header)
 
 		switch {
 		case status >= 200 && status < 300:
