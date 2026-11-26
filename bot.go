@@ -46,6 +46,10 @@ type Bot struct {
 	connected  bool
 	identified discord.Intent
 
+	// sessionIntents is Session.Intents as it was before connect replaced
+	// it, put back on disconnect so that it does not keep the bot's intents.
+	sessionIntents discord.Intent
+
 	guilds []string
 	noSync bool
 
@@ -130,6 +134,9 @@ func (b *Bot) connect() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if !b.connected {
+		b.sessionIntents = b.Session.Intents
+	}
 	b.Session.Intents = intents
 	b.connected, b.identified = true, intents
 }
@@ -138,6 +145,9 @@ func (b *Bot) disconnected() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.connected {
+		b.Session.Intents = b.sessionIntents
+	}
 	b.connected = false
 }
 
