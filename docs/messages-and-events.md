@@ -59,6 +59,39 @@ A `MessageContext` has:
 
 Reading the content of messages needs the privileged Message Content intent, which `OnMessage` asks for. Without it enabled in the Developer Portal, `Content` is empty unless the message mentions the bot or is a DM.
 
+## Waiting for a message
+
+`bot.WaitForMessage` waits for the next message that a filter accepts, among those `OnMessage` would see, such as to ask for a confirmation:
+
+```go
+bot.AddTextCommand(&minidis.TextCommand{
+	Name: "purge",
+	Execute: func(c *minidis.MessageContext) error {
+		if _, err := c.Reply("Delete every message here? Answer yes or no."); err != nil {
+			return err
+		}
+
+		ctx, cancel := context.WithTimeout(c, 30*time.Second)
+		defer cancel()
+
+		answer, err := c.Bot.WaitForMessage(ctx, func(m *minidis.MessageContext) bool {
+			return m.ChannelID == c.ChannelID && m.Author.ID == c.Author.ID
+		})
+		if err != nil {
+			_, err = c.Reply("No answer, so nothing was deleted.")
+			return err
+		}
+		if !strings.EqualFold(answer.Content, "yes") {
+			_, err = answer.Reply("Nothing was deleted.")
+			return err
+		}
+		return purge(c)
+	},
+})
+```
+
+It returns `ctx`'s error once `ctx` ends, and `context.Canceled` when the bot closes. Unlike a click, the message also reaches `OnMessage` and text commands. It needs the same intents as `OnMessage`, which the bot asks for when it connects only if some handler of messages was added before: a bot whose only use of messages is `WaitForMessage` calls `bot.AddIntents(discord.IntentsGuildMessages | discord.IntentsDirectMessages | discord.IntentsMessageContent)` before it runs.
+
 ## Text commands
 
 Slash commands are the better choice for most bots: Discord shows them to users, checks their options, and they need no privileged intent. Commands written as messages are there too:

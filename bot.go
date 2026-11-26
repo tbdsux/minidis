@@ -15,6 +15,7 @@ import (
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
 	"github.com/tbdsux/minidis/interactions"
+	"github.com/tbdsux/minidis/internal/wait"
 )
 
 // Bot is a Discord bot. Add commands and handlers to it, then call Start or
@@ -60,6 +61,9 @@ type Bot struct {
 
 	onEventError   func(*EventContext, error)
 	onMessageError func(*MessageContext, error)
+
+	messageWaiters  wait.Set[*MessageContext]
+	waitingMessages sync.Once // the handler that offers messages to them is registered
 }
 
 // New creates a bot that authenticates with the given bot token.
