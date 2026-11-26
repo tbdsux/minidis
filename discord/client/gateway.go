@@ -88,12 +88,13 @@ func (s *Session) waitIdentify(ctx context.Context, sh *shard) error {
 	key := s.Token + "|" + strconv.Itoa(sh.id%max(sh.maxConcurrency, 1))
 
 	identifySlots.mu.Lock()
-	at := time.Now()
+	now := time.Now()
+	at := now
 	if next := identifySlots.next[key]; next.After(at) {
 		at = next
 	}
 	// Past slots no longer delay anyone; drop them so old tokens do not pile up.
-	maps.DeleteFunc(identifySlots.next, func(_ string, next time.Time) bool { return next.Before(at) })
+	maps.DeleteFunc(identifySlots.next, func(_ string, next time.Time) bool { return next.Before(now) })
 	identifySlots.next[key] = at.Add(identifyInterval)
 	identifySlots.mu.Unlock()
 
