@@ -860,6 +860,12 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 	}
 	defer ws.Close()
 
+	// Heartbeats only start with Hello, so until then a stalled socket is
+	// caught by a read deadline.
+	if err := ws.SetReadDeadline(time.Now().Add(gatewayOpenTimeout)); err != nil {
+		return reconnect, err
+	}
+
 	conn := &gatewayConn{ws: ws}
 	conn.acked.Store(true)
 	defer s.disconnected(sh, conn)
@@ -896,6 +902,12 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 			}
 			if err := json.Unmarshal(p.D, &hello); err != nil {
 				return reconnect, fmt.Errorf("discord: invalid Hello: %w", err)
+			}
+			if hello.HeartbeatInterval <= 0 {
+				return reconnect, fmt.Errorf("discord: invalid Hello: heartbeat interval %d", hello.HeartbeatInterval)
+			}
+			if err := ws.SetReadDeadline(time.Time{}); err != nil {
+				return reconnect, err
 			}
 
 			go heartbeat(connCtx, sh, conn, time.Duration(hello.HeartbeatInterval)*time.Millisecond)
