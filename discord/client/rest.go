@@ -145,6 +145,9 @@ func (s *Session) requestWithFiles(ctx context.Context, method, path string, bod
 
 var multipartEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\r", "", "\n", "")
 
+// headerEscaper keeps a header value from ending its line.
+var headerEscaper = strings.NewReplacer("\r", "", "\n", "")
+
 func encodeMultipart(body any, files []*discord.File) ([]byte, string, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -167,22 +170,8 @@ func encodeMultipart(body any, files []*discord.File) ([]byte, string, error) {
 	}
 
 	for i, f := range files {
-		contentType := f.ContentType
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-
-		header := textproto.MIMEHeader{}
-		header.Set("Content-Disposition",
-			fmt.Sprintf(`form-data; name="files[%d]"; filename="%s"`, i, multipartEscaper.Replace(f.Name)))
-		header.Set("Content-Type", contentType)
-
-		part, err := w.CreatePart(header)
-		if err != nil {
+		if err := writeFile(w, fmt.Sprintf("files[%d]", i), f); err != nil {
 			return nil, "", err
-		}
-		if _, err = io.Copy(part, f.Reader); err != nil {
-			return nil, "", fmt.Errorf("discord: read file %q: %w", f.Name, err)
 		}
 	}
 
@@ -191,6 +180,32 @@ func encodeMultipart(body any, files []*discord.File) ([]byte, string, error) {
 	}
 
 	return buf.Bytes(), w.FormDataContentType(), nil
+}
+
+// writeFile adds f to w as the form field name.
+func writeFile(w *multipart.Writer, name string, f *discord.File) error {
+	if f == nil || f.Reader == nil {
+		return fmt.Errorf("discord: file %s has no Reader", name)
+	}
+
+	contentType := f.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition",
+		fmt.Sprintf(`form-data; name="%s"; filename="%s"`, name, multipartEscaper.Replace(f.Name)))
+	header.Set("Content-Type", headerEscaper.Replace(contentType))
+
+	part, err := w.CreatePart(header)
+	if err != nil {
+		return err
+	}
+	if _, err = io.Copy(part, f.Reader); err != nil {
+		return fmt.Errorf("discord: read file %q: %w", f.Name, err)
+	}
+	return nil
 }
 
 func (s *Session) send(ctx context.Context, method, path, contentType string, payload []byte, out any) error {
@@ -279,17 +294,18 @@ func isWebhookTokenPath(path string) bool {
 }
 
 // attempt sends one request, holding the route's rate limit bucket if limited.
+// A bot request carries the bot token and counts against the global limit.
 // The bucket is released even if the round trip panics.
-func (s *Session) attempt(ctx context.Context, limited, global bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
+func (s *Session) attempt(ctx context.Context, limited, bot bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
 	if limited {
-		b, err := s.limiter.acquire(ctx, route, global)
+		b, err := s.limiter.acquire(ctx, route, bot)
 		if err != nil {
 			return 0, nil, nil, err
 		}
 		defer func() { s.limiter.release(b, route, major, header) }()
 	}
 
-	return s.roundTrip(ctx, method, path, contentType, payload)
+	return s.roundTrip(ctx, bot, method, path, contentType, payload)
 }
 
 // idempotent reports whether a request with method can be sent again safely.
@@ -302,7 +318,9 @@ func idempotent(method string) bool {
 	return false
 }
 
-func (s *Session) roundTrip(ctx context.Context, method, path, contentType string, payload []byte) (int, http.Header, []byte, error) {
+// roundTrip sends one request, with the bot token if bot: routes with a token
+// of their own are authenticated by it.
+func (s *Session) roundTrip(ctx context.Context, bot bool, method, path, contentType string, payload []byte) (int, http.Header, []byte, error) {
 	var body io.Reader
 	if payload != nil {
 		body = bytes.NewReader(payload)
@@ -313,7 +331,9 @@ func (s *Session) roundTrip(ctx context.Context, method, path, contentType strin
 		return 0, nil, nil, unwrapURLError(err)
 	}
 
-	req.Header.Set("Authorization", s.Token)
+	if bot && s.Token != "" {
+		req.Header.Set("Authorization", s.Token)
+	}
 	req.Header.Set("User-Agent", s.UserAgent)
 	if reason, ok := ctx.Value(auditLogReasonKey{}).(string); ok && reason != "" {
 		req.Header.Set("X-Audit-Log-Reason", url.PathEscape(reason))

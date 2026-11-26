@@ -84,6 +84,8 @@ type replyState struct {
 	delivered bool // a response certainly reached Discord
 	closed    bool // the 3-second window has passed
 
+	window *time.Timer // calls closeWindow; stopped once a response is delivered
+
 	ack    func() // called once Discord has a response or none can come
 	cancel context.CancelCauseFunc
 
@@ -456,6 +458,9 @@ func (c *Context) sendResponse(send func(context.Context) error) error {
 	case err == nil:
 		r.delivered = true
 		r.state = responded // even past the cutoff: Discord took it
+		if r.window != nil {
+			r.window.Stop() // nothing is left for it to do; let c be freed
+		}
 		acked = true
 	case !notDelivered(err):
 		// Possibly delivered, or refused because another response was.

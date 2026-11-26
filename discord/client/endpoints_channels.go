@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -476,20 +474,8 @@ func (s *Session) GuildStickerCreate(ctx context.Context, guildID string, params
 		}
 	}
 
-	contentType := params.File.ContentType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	header := textproto.MIMEHeader{}
-	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, multipartEscaper.Replace(params.File.Name)))
-	header.Set("Content-Type", contentType)
-
-	part, err := w.CreatePart(header)
-	if err != nil {
+	if err := writeFile(w, "file", params.File); err != nil {
 		return nil, err
-	}
-	if _, err := io.Copy(part, params.File.Reader); err != nil {
-		return nil, fmt.Errorf("discord: read sticker file: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return nil, err

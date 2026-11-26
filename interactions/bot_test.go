@@ -168,14 +168,14 @@ func TestContextMenuCommands(t *testing.T) {
 		return nil
 	}})
 	bot.AddUserCommand(&UserCommand{Name: "u", Execute: func(c *UserCommandContext) error {
-		gotUser = c.TargetUser.Username + "/" + c.TargetMember.Nick
+		gotUser = c.TargetUser.Username + "/" + c.TargetMember.Nick + "/" + c.TargetMember.User.Username
 		return nil
 	}})
 
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"m","type":3,"target_id":"t","resolved":{"messages":{"t":{"id":"t","content":"body"}}}}}`))
 	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"u","type":2,"target_id":"t","resolved":{"users":{"t":{"id":"t","username":"ann"}},"members":{"t":{"nick":"a","permissions":"0"}}}}}`))
 
-	if gotMessage != "body" || gotUser != "ann/a" {
+	if gotMessage != "body" || gotUser != "ann/a/ann" {
 		t.Errorf("message=%q user=%q", gotMessage, gotUser)
 	}
 }

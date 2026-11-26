@@ -252,6 +252,10 @@ func routeKey(method, path string) (route, major string) {
 			kept = append(kept, seg)
 		case isSnowflake(seg):
 			segments[i] = ":id"
+		// Emojis and invite or template codes share their route's limit, and
+		// left literal would add a route for each one.
+		case i > 0 && (segments[i-1] == "reactions" || segments[i-1] == "invites" || segments[i-1] == "templates"):
+			segments[i] = ":code"
 		}
 	}
 

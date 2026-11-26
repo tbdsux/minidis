@@ -216,14 +216,16 @@ const needSendMessages = PermissionMentionEveryone | PermissionSendTTSMessages |
 
 // MemberPermissions computes the permissions of a member in a channel from
 // the guild's roles and the channel's overwrites, the way Discord does. Pass
-// a nil channel for the member's permissions in the guild as a whole.
+// a nil channel for the member's permissions in the guild as a whole. A
+// thread has no overwrites of its own: pass it with those of its parent.
 // guild needs its ID, OwnerID and Roles, and member its User and Roles.
 //
 // The owner of the guild and administrators have every permission. For
 // others, a timeout leaves only viewing channels and reading their history,
 // a member who cannot view a channel has no permission in it, and one who
 // cannot send messages cannot attach files, embed links, mention everyone
-// or send text-to-speech messages either.
+// or send text-to-speech messages either. In a thread, sending is
+// PermissionSendMessagesInThreads.
 //
 // Session.ChannelMemberPermissions asks Discord instead, which also knows
 // what this cannot see, such as whether a member is connected to a voice
@@ -282,7 +284,11 @@ func MemberPermissions(guild *Guild, channel *Channel, member *Member) int64 {
 	if perms&PermissionViewChannel == 0 {
 		return 0
 	}
-	if perms&PermissionSendMessages == 0 {
+	send := PermissionSendMessages
+	if channel.IsThread() {
+		send = PermissionSendMessagesInThreads
+	}
+	if perms&send == 0 {
 		perms &^= needSendMessages
 	}
 	return perms

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -608,5 +609,34 @@ func TestShardsIdentifyingAgainShareAGatewayFetch(t *testing.T) {
 
 	if n := g.starts.Load(); n != 2 {
 		t.Errorf("GET /gateway/bot = %d times, want one for Open and one for both shards identifying again", n)
+	}
+}
+
+func TestWaitIdentifyKeepsOtherBucketsQueuedSlots(t *testing.T) {
+	s := New("Bot identify-slots-test")
+	own, other := s.Token+"|0", s.Token+"|1"
+	t.Cleanup(func() {
+		identifySlots.mu.Lock()
+		delete(identifySlots.next, own)
+		delete(identifySlots.next, other)
+		identifySlots.mu.Unlock()
+	})
+
+	// Bucket 1 has a slot coming up before bucket 0's next one.
+	now := time.Now()
+	identifySlots.mu.Lock()
+	identifySlots.next[own] = now.Add(5 * time.Second)
+	identifySlots.next[other] = now.Add(2 * time.Second)
+	identifySlots.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // the slot is taken without waiting for it
+	_ = s.waitIdentify(ctx, &shard{id: 0, maxConcurrency: 2})
+
+	identifySlots.mu.Lock()
+	_, kept := identifySlots.next[other]
+	identifySlots.mu.Unlock()
+	if !kept {
+		t.Error("the queued slot of another bucket was dropped")
 	}
 }

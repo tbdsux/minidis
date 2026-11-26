@@ -364,6 +364,9 @@ func TestRouteKey(t *testing.T) {
 		{"/channels/123456789012345678/messages/223456789012345678", "GET /channels/123456789012345678/messages/:id", "123456789012345678"},
 		{"/applications/123456789012345678/commands/223456789012345678?x=1", "GET /applications/:id/commands/:id", ""},
 		{"/webhooks/123456789012345678/tok/messages/@original", "GET /webhooks/123456789012345678/tok/messages/@original", "123456789012345678/tok"},
+		{"/channels/123456789012345678/messages/223456789012345678/reactions/%F0%9F%91%8D/@me", "GET /channels/123456789012345678/messages/:id/reactions/:code/@me", "123456789012345678"},
+		{"/invites/abc", "GET /invites/:code", ""},
+		{"/guilds/templates/abc", "GET /guilds/templates/:code", "templates"},
 	}
 
 	for _, tt := range tests {
@@ -420,5 +423,50 @@ func TestRESTErrorMessage(t *testing.T) {
 		if got := tt.err.Error(); got != tt.want {
 			t.Errorf("got %q, want %q", got, tt.want)
 		}
+	}
+}
+
+func TestTokenRoutesSendNoBotToken(t *testing.T) {
+	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, ok := r.Header["Authorization"]; ok {
+			t.Errorf("%s: Authorization = %q", r.URL.Path, got)
+		}
+	})
+
+	if err := s.Request(context.Background(), "POST", "/webhooks/1/tok", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Request(context.Background(), "POST", "/interactions/1/tok/callback", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMultipartChecksFiles(t *testing.T) {
+	for _, f := range []*discord.File{nil, {Name: "a.png"}} {
+		if _, _, err := encodeMultipart(map[string]any{}, []*discord.File{f}); err == nil {
+			t.Errorf("file %+v was accepted", f)
+		}
+	}
+
+	body, contentType, err := encodeMultipart(map[string]any{}, []*discord.File{
+		{Name: "a.png", ContentType: "image/png\r\nX-Injected: yes", Reader: strings.NewReader("x")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, params, _ := mime.ParseMediaType(contentType)
+	r := multipart.NewReader(strings.NewReader(string(body)), params["boundary"])
+	if _, err := r.NextPart(); err != nil { // payload_json
+		t.Fatal(err)
+	}
+	part, err := r.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := part.Header.Get("X-Injected"); got != "" {
+		t.Errorf("a content type added the header X-Injected: %q", got)
+	}
+	if got := part.Header.Get("Content-Type"); got != "image/pngX-Injected: yes" {
+		t.Errorf("Content-Type = %q", got)
 	}
 }

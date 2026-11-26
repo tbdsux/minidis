@@ -46,6 +46,10 @@ type Bot struct {
 	connected  bool
 	identified discord.Intent
 
+	// sessionIntents is Session.Intents as it was before connect replaced
+	// it, put back on disconnect so that it does not keep the bot's intents.
+	sessionIntents discord.Intent
+
 	guilds []string
 	noSync bool
 
@@ -116,7 +120,12 @@ func (b *Bot) Intents() discord.Intent {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	intents := b.intents | b.Session.Intents
+	return b.intentsWith(b.Session.Intents)
+}
+
+// intentsWith is Intents with session in place of Session.Intents. b.mu must be held.
+func (b *Bot) intentsWith(session discord.Intent) discord.Intent {
+	intents := b.intents | session
 	if st := b.Session.State; st != nil {
 		intents |= st.Intents()
 	}
@@ -125,11 +134,15 @@ func (b *Bot) Intents() discord.Intent {
 
 // connect sets the intents the session identifies with.
 func (b *Bot) connect() {
-	intents := b.Intents()
-
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	// Still connected means the last connection stopped on its own and Open
+	// is called again without Close: Session.Intents then holds its intents.
+	if !b.connected {
+		b.sessionIntents = b.Session.Intents
+	}
+	intents := b.intentsWith(b.sessionIntents)
 	b.Session.Intents = intents
 	b.connected, b.identified = true, intents
 }
@@ -138,6 +151,9 @@ func (b *Bot) disconnected() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.connected {
+		b.Session.Intents = b.sessionIntents
+	}
 	b.connected = false
 }
 

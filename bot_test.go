@@ -580,3 +580,28 @@ func TestMessageContextOutsideGuilds(t *testing.T) {
 		t.Errorf("context = %+v", c)
 	}
 }
+
+func TestIntentsOfAConnectionAreNotKept(t *testing.T) {
+	b := New("token")
+	b.OnMessage(func(*MessageContext) error { return nil })
+	b.connect()
+	b.disconnected()
+
+	b.SetIntents(discord.IntentsGuilds)
+	if got := b.Intents(); got != discord.IntentsGuilds {
+		t.Errorf("intents = %b after reconnecting with fewer", got)
+	}
+}
+
+func TestIntentsOfAConnectionThatStoppedAreNotKept(t *testing.T) {
+	b := New("token")
+	b.OnMessage(func(*MessageContext) error { return nil })
+	b.connect()
+	// The connection stops on its own, and the bot is opened again without Close.
+
+	b.SetIntents(discord.IntentsGuilds)
+	b.connect()
+	if got := b.Session.Intents; got != discord.IntentsGuilds {
+		t.Errorf("reopened with intents %b, want %b", got, discord.IntentsGuilds)
+	}
+}

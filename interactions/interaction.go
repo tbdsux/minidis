@@ -42,7 +42,7 @@ func (m *Minidis) runInteraction(run context.Context, s *client.Session, i *disc
 	// Discord drops an interaction that is not responded to in time, so stop
 	// the handler's work rather than let it respond in vain. The cutoff runs
 	// even after the handler returns, for responses sent from a goroutine.
-	time.AfterFunc(responseWindow, c.reply.closeWindow)
+	c.reply.window = time.AfterFunc(responseWindow, c.reply.closeWindow)
 
 	defer func() {
 		if r := recover(); r != nil {

@@ -109,6 +109,12 @@ func TestMemberPermissions(t *testing.T) {
 		{ID: "other", Type: PermissionOverwriteRole, Allow: PermissionBanMembers},
 	}}
 
+	// A forum post: members cannot start posts but can reply in them.
+	thread := &Channel{Type: ChannelTypeGuildPublicThread, PermissionOverwrites: []*PermissionOverwrite{
+		{ID: "u", Type: PermissionOverwriteMember, Allow: PermissionAttachFiles},
+		{ID: "g", Type: PermissionOverwriteRole, Deny: PermissionSendMessages, Allow: PermissionSendMessagesInThreads},
+	}}
+
 	member := func(id string, roles ...string) *Member { return &Member{User: &User{ID: id}, Roles: roles} }
 	timedOut := func(m *Member) *Member {
 		until := time.Now().Add(time.Hour)
@@ -137,6 +143,8 @@ func TestMemberPermissions(t *testing.T) {
 			PermissionViewChannel | PermissionSendMessages | PermissionManageMessages},
 		{"administrators skip overwrites", channel, member("x", "admin"), PermissionAll},
 		{"so does the owner", channel, member("owner"), PermissionAll},
+		{"files go with sending in threads in a thread", thread, member("u"),
+			PermissionViewChannel | PermissionSendMessagesInThreads | PermissionAttachFiles},
 	}
 	for _, tt := range tests {
 		if got := MemberPermissions(guild, tt.channel, tt.member); got != tt.want {

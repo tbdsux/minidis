@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -87,10 +88,13 @@ func (s *Session) waitIdentify(ctx context.Context, sh *shard) error {
 	key := s.Token + "|" + strconv.Itoa(sh.id%max(sh.maxConcurrency, 1))
 
 	identifySlots.mu.Lock()
-	at := time.Now()
+	now := time.Now()
+	at := now
 	if next := identifySlots.next[key]; next.After(at) {
 		at = next
 	}
+	// Past slots no longer delay anyone; drop them so old tokens do not pile up.
+	maps.DeleteFunc(identifySlots.next, func(_ string, next time.Time) bool { return next.Before(now) })
 	identifySlots.next[key] = at.Add(identifyInterval)
 	identifySlots.mu.Unlock()
 
@@ -860,6 +864,12 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 	}
 	defer ws.Close()
 
+	// Heartbeats only start with Hello, so until then a stalled socket is
+	// caught by a read deadline.
+	if err := ws.SetReadDeadline(time.Now().Add(gatewayOpenTimeout)); err != nil {
+		return reconnect, err
+	}
+
 	conn := &gatewayConn{ws: ws}
 	conn.acked.Store(true)
 	defer s.disconnected(sh, conn)
@@ -896,6 +906,12 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 			}
 			if err := json.Unmarshal(p.D, &hello); err != nil {
 				return reconnect, fmt.Errorf("discord: invalid Hello: %w", err)
+			}
+			if hello.HeartbeatInterval <= 0 {
+				return reconnect, fmt.Errorf("discord: invalid Hello: heartbeat interval %d", hello.HeartbeatInterval)
+			}
+			if err := ws.SetReadDeadline(time.Time{}); err != nil {
+				return reconnect, err
 			}
 
 			go heartbeat(connCtx, sh, conn, time.Duration(hello.HeartbeatInterval)*time.Millisecond)

@@ -458,3 +458,34 @@ func TestUpdateToComponentsV2ClearsEmbeds(t *testing.T) {
 		}
 	}
 }
+
+func TestTheCutoffStopsOnceAResponseIsDelivered(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport http.RoundTripper
+		running   bool
+	}{
+		{"delivered", inMemoryAPI{}, false},
+		// A refusal may be of a second response, so the cutoff still decides.
+		{"refused", refusingAPI{}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot := New("token")
+			bot.Session.HTTPClient = &http.Client{Transport: tt.transport}
+
+			var reply *replyState
+			bot.AddCommand(&Command{Name: "c", Execute: func(c *Context) error {
+				reply = c.reply
+				_ = c.Reply("hi")
+				return nil
+			}})
+			bot.handleInteraction(bot.Session, interaction(t, slashPayload("c", "")))
+
+			if running := reply.window.Stop(); running != tt.running {
+				t.Errorf("the cutoff timer was running: %v, want %v", running, tt.running)
+			}
+		})
+	}
+}
