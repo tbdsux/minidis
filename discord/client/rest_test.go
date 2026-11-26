@@ -425,3 +425,18 @@ func TestRESTErrorMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenRoutesSendNoBotToken(t *testing.T) {
+	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+		if got, ok := r.Header["Authorization"]; ok {
+			t.Errorf("%s: Authorization = %q", r.URL.Path, got)
+		}
+	})
+
+	if err := s.Request(context.Background(), "POST", "/webhooks/1/tok", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Request(context.Background(), "POST", "/interactions/1/tok/callback", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+}

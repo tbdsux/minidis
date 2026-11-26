@@ -294,17 +294,18 @@ func isWebhookTokenPath(path string) bool {
 }
 
 // attempt sends one request, holding the route's rate limit bucket if limited.
+// A bot request carries the bot token and counts against the global limit.
 // The bucket is released even if the round trip panics.
-func (s *Session) attempt(ctx context.Context, limited, global bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
+func (s *Session) attempt(ctx context.Context, limited, bot bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
 	if limited {
-		b, err := s.limiter.acquire(ctx, route, global)
+		b, err := s.limiter.acquire(ctx, route, bot)
 		if err != nil {
 			return 0, nil, nil, err
 		}
 		defer func() { s.limiter.release(b, route, major, header) }()
 	}
 
-	return s.roundTrip(ctx, method, path, contentType, payload)
+	return s.roundTrip(ctx, bot, method, path, contentType, payload)
 }
 
 // idempotent reports whether a request with method can be sent again safely.
@@ -317,7 +318,9 @@ func idempotent(method string) bool {
 	return false
 }
 
-func (s *Session) roundTrip(ctx context.Context, method, path, contentType string, payload []byte) (int, http.Header, []byte, error) {
+// roundTrip sends one request, with the bot token if bot: routes with a token
+// of their own are authenticated by it.
+func (s *Session) roundTrip(ctx context.Context, bot bool, method, path, contentType string, payload []byte) (int, http.Header, []byte, error) {
 	var body io.Reader
 	if payload != nil {
 		body = bytes.NewReader(payload)
@@ -328,7 +331,9 @@ func (s *Session) roundTrip(ctx context.Context, method, path, contentType strin
 		return 0, nil, nil, unwrapURLError(err)
 	}
 
-	req.Header.Set("Authorization", s.Token)
+	if bot && s.Token != "" {
+		req.Header.Set("Authorization", s.Token)
+	}
 	req.Header.Set("User-Agent", s.UserAgent)
 	if reason, ok := ctx.Value(auditLogReasonKey{}).(string); ok && reason != "" {
 		req.Header.Set("X-Audit-Log-Reason", url.PathEscape(reason))
