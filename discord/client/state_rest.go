@@ -97,9 +97,13 @@ func (s *Session) ChannelMemberPermissionsCached(ctx context.Context, channelID,
 		return 0, fmt.Errorf("discord: channel %s is not in a guild", channelID)
 	}
 	if c.IsThread() {
-		if c, err = s.ChannelCached(ctx, c.ParentID); err != nil {
+		parent, err := s.ChannelCached(ctx, c.ParentID)
+		if err != nil {
 			return 0, err
 		}
+		thread := *c
+		thread.PermissionOverwrites = parent.PermissionOverwrites
+		c = &thread
 	}
 	g, err := s.GuildCached(ctx, c.GuildID)
 	if err != nil {

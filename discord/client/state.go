@@ -411,9 +411,13 @@ func (st *State) Permissions(channelID, userID string) (perms int64, ok bool) {
 		return 0, false
 	}
 	if c.IsThread() {
-		if c = st.channels[c.ParentID]; c == nil {
+		parent := st.channels[c.ParentID]
+		if parent == nil {
 			return 0, false
 		}
+		thread := *c
+		thread.PermissionOverwrites = parent.PermissionOverwrites
+		c = &thread
 	}
 	gs := st.guilds[c.GuildID]
 	if gs == nil || gs.guild.Unavailable {
