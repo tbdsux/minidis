@@ -355,6 +355,12 @@ func TestStateVoiceAndPresences(t *testing.T) {
 		t.Error("a member is kept without StateOptions.Members")
 	}
 
+	// A member who leaves leaves voice too.
+	apply(t, st, "GUILD_MEMBER_REMOVE", obj{"guild_id": "g1", "user": user("8")})
+	if st.VoiceState("g1", "8") != nil {
+		t.Error("the voice state of a member who left is kept")
+	}
+
 	apply(t, st, "PRESENCE_UPDATE", obj{"guild_id": "g1", "user": obj{"id": "7"}, "status": "offline"})
 	apply(t, st, "PRESENCE_UPDATE", obj{"guild_id": "g1", "user": obj{"id": "8"}, "status": "dnd"})
 	if st.Presence("g1", "7") != nil || st.Presence("g1", "8") == nil {
