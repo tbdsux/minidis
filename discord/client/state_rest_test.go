@@ -216,8 +216,16 @@ func TestFetchedMembersAreKept(t *testing.T) {
 	// A member from the gateway is not replaced by one fetched later, which
 	// may be older.
 	apply(t, s.State, "GUILD_MEMBER_UPDATE", obj{"guild_id": "g1", "user": user("7"), "nick": "gateway", "roles": []string{"r1"}})
-	s.State.fetchedMember("g1", &discord.Member{User: &discord.User{ID: "7"}, Nick: "rest", Roles: []string{"r1"}})
+	s.State.fetchedMember("g1", &discord.Member{User: &discord.User{ID: "7"}, Nick: "rest", Roles: []string{"r1"}}, 0)
 	if m := s.State.Member("g1", "7"); m.Nick != "gateway" {
 		t.Errorf("nick = %q", m.Nick)
+	}
+
+	// Nor is a member kept if one left while it was fetched: it may be this one.
+	removals := s.State.memberRemovals("g1")
+	apply(t, s.State, "GUILD_MEMBER_REMOVE", obj{"guild_id": "g1", "user": user("7")})
+	s.State.fetchedMember("g1", &discord.Member{User: &discord.User{ID: "7"}, Roles: []string{"r1"}}, removals)
+	if m := s.State.Member("g1", "7"); m != nil {
+		t.Errorf("a member who left was kept: %+v", m)
 	}
 }

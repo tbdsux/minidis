@@ -50,17 +50,19 @@ func (s *Session) GuildRoleCached(ctx context.Context, guildID, roleID string) (
 // options keep that member, so that the next call finds it there; the one
 // returned is the caller's. One from the state is shared and read-only.
 func (s *Session) GuildMemberCached(ctx context.Context, guildID, userID string) (*discord.Member, error) {
+	var removals uint64
 	if s.State != nil {
 		if m := s.State.Member(guildID, userID); m != nil {
 			return m, nil
 		}
+		removals = s.State.memberRemovals(guildID)
 	}
 	m, err := s.GuildMember(ctx, guildID, userID)
 	if err != nil {
 		return nil, err
 	}
 	if s.State != nil {
-		s.State.fetchedMember(guildID, m)
+		s.State.fetchedMember(guildID, m, removals)
 	}
 	return m, nil
 }

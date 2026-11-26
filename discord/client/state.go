@@ -106,6 +106,10 @@ type guildState struct {
 	stages    map[string]*discord.StageInstance
 	events    map[string]*discord.GuildScheduledEvent
 	sounds    map[string]*discord.SoundboardSound
+
+	// removals counts members removed, so that a member fetched from the
+	// REST API while one left is not kept.
+	removals uint64
 }
 
 type channelMessages struct {
@@ -539,7 +543,8 @@ func stateUpdate[E any](f func(*State, *E)) func(*State, json.RawMessage) error 
 type pendingMember struct {
 	guildID  string
 	member   *discord.Member
-	ifAbsent bool // keep it only if the state has no member for the user
+	ifAbsent bool   // keep it only if the state has no member for the user
+	removals uint64 // guildState.removals when the member was put
 }
 
 // update runs f holding the lock. Then it asks StateOptions.KeepMember about
@@ -569,7 +574,7 @@ func (st *State) update(f func()) {
 	for i, p := range pending {
 		gs := st.available(p.guildID)
 		id := p.member.User.ID
-		if gs == nil || (p.ifAbsent && gs.members[id] != nil) {
+		if gs == nil || gs.removals != p.removals || (p.ifAbsent && gs.members[id] != nil) {
 			continue
 		}
 		if keep[i] {
@@ -846,7 +851,7 @@ func (st *State) putMemberIf(gs *guildState, m *discord.Member, ifAbsent bool) {
 	id := m.User.ID
 	switch {
 	case id != st.self && st.opts.KeepMember != nil:
-		st.pending = append(st.pending, pendingMember{gs.guild.ID, m, ifAbsent})
+		st.pending = append(st.pending, pendingMember{gs.guild.ID, m, ifAbsent, gs.removals})
 	case id != st.self && !st.opts.Members:
 		delete(gs.members, id)
 	default:
@@ -861,10 +866,23 @@ func (st *State) eventMember(guildID string, m *discord.Member) {
 	}
 }
 
+// memberRemovals returns the guild's count of removed members, to pass to
+// fetchedMember.
+func (st *State) memberRemovals(guildID string) uint64 {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	if gs := st.available(guildID); gs != nil {
+		return gs.removals
+	}
+	return 0
+}
+
 // fetchedMember keeps a copy of a member fetched from the REST API, so that
 // the caller may change theirs, unless the state has one already: that came
-// from the gateway, and may be newer.
-func (st *State) fetchedMember(guildID string, m *discord.Member) {
+// from the gateway, and may be newer. Nor is it kept if a member was removed
+// since memberRemovals returned removals: it may be this one.
+func (st *State) fetchedMember(guildID string, m *discord.Member, removals uint64) {
 	if m == nil || m.User == nil {
 		return
 	}
@@ -878,7 +896,7 @@ func (st *State) fetchedMember(guildID string, m *discord.Member) {
 	u := *m.User
 	c.User, c.Roles = &u, slices.Clone(m.Roles)
 	st.update(func() {
-		if gs := st.available(guildID); gs != nil && gs.members[u.ID] == nil {
+		if gs := st.available(guildID); gs != nil && gs.removals == removals && gs.members[u.ID] == nil {
 			st.putMemberIf(gs, &c, true)
 		}
 	})
@@ -913,6 +931,7 @@ func (st *State) memberRemove(e *discord.GuildMemberRemove) {
 	}
 	delete(gs.members, e.User.ID)
 	delete(gs.presences, e.User.ID)
+	gs.removals++
 	st.changeGuild(e.GuildID, func(g *discord.Guild) { g.MemberCount = max(g.MemberCount-1, 0) })
 }
 
