@@ -931,6 +931,7 @@ func (st *State) memberRemove(e *discord.GuildMemberRemove) {
 	}
 	delete(gs.members, e.User.ID)
 	delete(gs.presences, e.User.ID)
+	delete(gs.voice, e.User.ID)
 	gs.removals++
 	st.changeGuild(e.GuildID, func(g *discord.Guild) { g.MemberCount = max(g.MemberCount-1, 0) })
 }
