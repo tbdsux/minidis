@@ -120,7 +120,12 @@ func (b *Bot) Intents() discord.Intent {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	intents := b.intents | b.Session.Intents
+	return b.intentsWith(b.Session.Intents)
+}
+
+// intentsWith is Intents with session in place of Session.Intents. b.mu must be held.
+func (b *Bot) intentsWith(session discord.Intent) discord.Intent {
+	intents := b.intents | session
 	if st := b.Session.State; st != nil {
 		intents |= st.Intents()
 	}
@@ -129,14 +134,15 @@ func (b *Bot) Intents() discord.Intent {
 
 // connect sets the intents the session identifies with.
 func (b *Bot) connect() {
-	intents := b.Intents()
-
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	// Still connected means the last connection stopped on its own and Open
+	// is called again without Close: Session.Intents then holds its intents.
 	if !b.connected {
 		b.sessionIntents = b.Session.Intents
 	}
+	intents := b.intentsWith(b.sessionIntents)
 	b.Session.Intents = intents
 	b.connected, b.identified = true, intents
 }
