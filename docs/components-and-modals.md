@@ -64,6 +64,47 @@ return c.UpdateWith(minidis.MessageEdit{
 
 Components keep working as long as the message exists, also after the bot restarts, so put what the handler needs into the custom ID rather than in memory.
 
+## Waiting for a click
+
+`bot.WaitForComponent` lets a command wait for the next use of a component, such as for a confirmation, instead of handling it elsewhere. It returns the click to respond to, or `ctx`'s error once `ctx` ends:
+
+```go
+bot.AddCommand(&minidis.Command{
+	Name:        "reset",
+	Description: "Reset your progress.",
+	Execute: func(c *minidis.Context) error {
+		id := "reset:" + c.ID // unique, so that other runs of the command do not take the click
+		err := c.ReplyWith(minidis.Message{
+			Content:   "Reset your progress?",
+			Ephemeral: true,
+			Components: []discord.MessageComponent{
+				discord.ActionsRow{Components: []discord.MessageComponent{
+					discord.Button{Label: "Reset", Style: discord.DangerButton, CustomID: id},
+				}},
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel := context.WithTimeout(c, time.Minute)
+		defer cancel()
+
+		click, err := bot.WaitForComponent(ctx, func(cc *minidis.ComponentContext) bool {
+			return cc.Data.CustomID == id && cc.Author.ID == c.Author.ID
+		})
+		if err != nil {
+			return c.EditWith(minidis.MessageEdit{Content: discord.String("Timed out."), Components: []discord.MessageComponent{}})
+		}
+
+		resetProgress(c.Author.ID)
+		return click.UpdateWith(minidis.MessageEdit{Content: discord.String("Done."), Components: []discord.MessageComponent{}})
+	},
+})
+```
+
+The filter picks the clicks to take; the others go to their handlers as usual, and so does a click that comes after the wait ended, which is why the example removes the button then. A taken click goes through middleware but not to a handler, and must be responded to within 3 seconds like any other. It works for interactions from the gateway and [over HTTP](./http.md). The wait also ends, with `context.Canceled`, when the bot closes, and does not survive a restart.
+
 ## Handler IDs
 
 A handler ID can capture `:`-separated segments with `{name}`, which end up in `c.Params`:

@@ -1,6 +1,7 @@
 package minidis
 
 import (
+	"context"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -97,6 +98,48 @@ func (b *Bot) OnMessage(h func(c *MessageContext) error) {
 	})
 
 	b.need(messageIntents | discord.IntentsMessageContent)
+}
+
+// WaitForMessage waits for the next message that filter accepts, or any if
+// filter is nil, among those people send, as OnMessage sees them, and returns
+// it. A handler uses it to ask for an answer:
+//
+//	ctx, cancel := context.WithTimeout(c, time.Minute)
+//	defer cancel()
+//
+//	answer, err := c.Bot.WaitForMessage(ctx, func(m *minidis.MessageContext) bool {
+//		return m.ChannelID == c.ChannelID && m.Author.ID == c.Author.ID
+//	})
+//
+// Handlers of OnMessage and text commands see the message as well. The first
+// waiter to begin gets it if several accept it, and filter may run for
+// several messages at once.
+//
+// Like OnMessage, it needs gateway intents, among them the privileged
+// discord.IntentsMessageContent. As it is called while the bot runs, a bot
+// that has no handler of messages asks for them with AddIntents before it
+// runs; otherwise Discord does not send the messages, which the bot logs.
+//
+// It returns ctx's error if ctx ends first, and context.Canceled once the bot
+// closes. The MessageContext it returns is canceled when ctx ends.
+func (b *Bot) WaitForMessage(ctx context.Context, filter func(c *MessageContext) bool) (*MessageContext, error) {
+	b.need(messageIntents | discord.IntentsMessageContent)
+	b.waitingMessages.Do(func() { client.Handle(b.Session, b.offerMessage) })
+
+	return b.messageWaiters.Wait(ctx, b.Minidis.Context().Done(), filter)
+}
+
+func (b *Bot) offerMessage(s *client.Session, e *discord.MessageCreate) {
+	if !fromPerson(e.Message) || b.messageWaiters.Len() == 0 {
+		return
+	}
+
+	c, done := b.newEvent(s, messageCreate)
+	if waiting, ok := b.messageWaiters.Offer(newMessageContext(c, e.Message)); ok {
+		context.AfterFunc(waiting, done)
+		return
+	}
+	done()
 }
 
 // runMessage runs a message handler and reports its error or panic.

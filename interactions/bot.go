@@ -10,6 +10,7 @@ import (
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/internal/wait"
 )
 
 // closeTimeout is how long Close gives running handlers to return.
@@ -33,6 +34,7 @@ type Minidis struct {
 	componentFallback func(*ComponentContext) error
 	modals            idHandlers[func(*ModalSubmitContext) error]
 	modalFallback     func(*ModalSubmitContext) error
+	componentWaiters  wait.Set[*ComponentContext]
 	channelHandlers   map[string]func(*ChannelMessageContext) error
 	middleware        []Middleware
 	onError           func(*Context, error)
