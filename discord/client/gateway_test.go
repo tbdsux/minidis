@@ -445,3 +445,61 @@ func TestCloseAllowsReopen(t *testing.T) {
 		t.Errorf("connections = %d", n)
 	}
 }
+
+// shortHelloWait makes a connection give up on Hello quickly, until the test ends.
+func shortHelloWait(t *testing.T) {
+	old := gatewayOpenTimeout
+	gatewayOpenTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { gatewayOpenTimeout = old })
+}
+
+func TestReconnectWithoutHelloTimesOut(t *testing.T) {
+	done := make(chan struct{})
+
+	s, _ := newFakeGateway(t, func(c *fakeConn) {
+		c.hello(60000)
+		c.read(opIdentify)
+		c.ready(1)
+		c.closeWith(4000)
+		c.waitClosed()
+	}, func(c *fakeConn) {
+		// Never says Hello, and waits for the client to give up on it.
+		for {
+			if _, _, err := c.ws.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}, resumeScript(t, 1, done))
+	shortHelloWait(t)
+
+	if err := s.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	waitFor(t, done, "resume after a connection without Hello")
+}
+
+func TestHelloWithoutHeartbeatIntervalReconnects(t *testing.T) {
+	s, g := newFakeGateway(t, func(c *fakeConn) {
+		c.hello(0)
+		_ = c.ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+		if _, msg, err := c.ws.ReadMessage(); err == nil {
+			t.Errorf("sent %s after a Hello without a heartbeat interval", msg)
+		}
+	}, func(c *fakeConn) {
+		c.hello(60000)
+		c.read(opIdentify)
+		c.ready(1)
+		c.waitClosed()
+	})
+
+	if err := s.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if n := g.conns.Load(); n != 2 {
+		t.Errorf("connections = %d, want 2", n)
+	}
+}
