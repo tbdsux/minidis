@@ -13,10 +13,11 @@ func (m *Minidis) routeMessage(data discord.ApplicationCommandInteractionData) H
 	}
 
 	return func(c *Context) error {
-		return cmd.Execute(&MessageCommandContext{
-			Context: c,
-			Message: data.Resolved.Messages[data.TargetID],
-		})
+		mc := &MessageCommandContext{Context: c}
+		if data.Resolved != nil {
+			mc.Message = data.Resolved.Messages[data.TargetID]
+		}
+		return cmd.Execute(mc)
 	}
 }
 
@@ -27,11 +28,17 @@ func (m *Minidis) routeUser(data discord.ApplicationCommandInteractionData) Hand
 	}
 
 	return func(c *Context) error {
-		return cmd.Execute(&UserCommandContext{
-			Context:      c,
-			TargetMember: data.Resolved.Members[data.TargetID],
-			TargetUser:   data.Resolved.Users[data.TargetID],
-		})
+		uc := &UserCommandContext{Context: c}
+		if r := data.Resolved; r != nil {
+			uc.TargetUser = r.Users[data.TargetID]
+			// Discord leaves the user out of a resolved member.
+			if m := r.Members[data.TargetID]; m != nil {
+				member := *m
+				member.User = uc.TargetUser
+				uc.TargetMember = &member
+			}
+		}
+		return cmd.Execute(uc)
 	}
 }
 
