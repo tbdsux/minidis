@@ -49,6 +49,19 @@ s.GuildBanCreate(client.WithAuditLogReason(ctx, "spam"), guildID, userID, 0)
 
 `client.WithAuditLogReason` attaches a reason that shows in the server's audit log to the requests made with that context.
 
+### Every page
+
+`ChannelMessagesAll`, `GuildMembersAll`, `GuildBansAll` and `MessageReactionsAll` go through a whole list, fetching the next page as the loop reaches it. Breaking out of the loop stops the fetching, and a page that fails ends it with the error:
+
+```go
+for m, err := range s.GuildMembersAll(ctx, guildID) {
+	if err != nil {
+		return err
+	}
+	fmt.Println(m.DisplayName())
+}
+```
+
 ### Optional fields
 
 Fields that Discord clears with `null` are a `discord.Optional`: leave it unset to keep the value, or use `discord.Some(v)` to set it and `discord.Null[T]()` to clear it. Other pointer fields take `discord.String`, `discord.Int64` and `discord.Bool`.
