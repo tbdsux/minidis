@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -91,6 +92,8 @@ func (s *Session) waitIdentify(ctx context.Context, sh *shard) error {
 	if next := identifySlots.next[key]; next.After(at) {
 		at = next
 	}
+	// Past slots no longer delay anyone; drop them so old tokens do not pile up.
+	maps.DeleteFunc(identifySlots.next, func(_ string, next time.Time) bool { return next.Before(at) })
 	identifySlots.next[key] = at.Add(identifyInterval)
 	identifySlots.mu.Unlock()
 
