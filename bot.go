@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -87,8 +86,9 @@ func (b *Bot) need(intents discord.Intent) {
 
 	// Intents are sent once, when the bot connects.
 	if missing := intents &^ b.identified; b.connected && missing != 0 {
-		log.Printf("minidis: a handler was added while the bot is running that needs gateway intents "+
-			"the bot did not connect with (%#b), so Discord will not send its events; add handlers before the bot runs", missing)
+		b.logger().Warn("minidis: a handler was added while the bot is running that needs gateway intents "+
+			"the bot did not connect with, so Discord will not send its events; add handlers before the bot runs",
+			"missing", fmt.Sprintf("%#b", missing))
 	}
 }
 

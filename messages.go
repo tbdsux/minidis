@@ -136,7 +136,7 @@ func (b *Bot) messageError(c *MessageContext, err error) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			logError("error handler of a message", &PanicError{Value: r, Stack: debug.Stack()})
+			b.logError("error handler of a message", &PanicError{Value: r, Stack: debug.Stack()})
 		}
 	}()
 	h(c, err)

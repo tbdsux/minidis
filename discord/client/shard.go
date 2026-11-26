@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"slices"
 	"strconv"
@@ -209,7 +208,7 @@ func (s *Session) reshard(ctx context.Context, run *gatewayRun) (*shardSet, erro
 			if errors.As(err, &restErr) && restErr.StatusCode == http.StatusUnauthorized {
 				return nil, err
 			}
-			log.Printf("discord: resharding: %v", err)
+			s.logger().Error("discord: resharding", "err", err)
 			if err := sleep(ctx, delay); err != nil {
 				return nil, err
 			}
@@ -224,7 +223,7 @@ func (s *Session) reshard(ctx context.Context, run *gatewayRun) (*shardSet, erro
 
 		if err := checkSessionStarts(info, count); err != nil {
 			wait := time.Duration(info.SessionStartLimit.ResetAfter) * time.Millisecond
-			log.Printf("discord: resharding: %v; waiting", err)
+			s.logger().Warn("discord: resharding, waiting", "err", err)
 			if err := sleep(ctx, max(wait, delay)); err != nil {
 				return nil, err
 			}
@@ -237,7 +236,7 @@ func (s *Session) reshard(ctx context.Context, run *gatewayRun) (*shardSet, erro
 		run.info = nil
 		run.infoMu.Unlock()
 
-		log.Printf("discord: Discord asked for more shards, reconnecting with %d instead of %d", count, old.count)
+		s.logger().Info("discord: Discord asked for more shards, reconnecting", "shards", count, "was", old.count)
 		return newShardSet(info, count, allShards(count)), nil
 	}
 }
