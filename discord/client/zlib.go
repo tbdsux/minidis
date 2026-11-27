@@ -40,8 +40,8 @@ func (z *inflater) inflate(msg []byte) ([]byte, error) {
 	}
 
 	if !z.started {
-		// CMF and FLG: deflate with a 32 KiB window, and a valid check.
-		if len(data) < 2 || data[0] != 0x78 || (uint(data[0])<<8|uint(data[1]))%31 != 0 || data[1]&0x20 != 0 {
+		// CMF and FLG: deflate with a window of at most 32 KiB, and a valid check.
+		if len(data) < 2 || data[0]&0x0f != 8 || data[0]>>4 > 7 || (uint(data[0])<<8|uint(data[1]))%31 != 0 || data[1]&0x20 != 0 {
 			return nil, errors.New("discord: invalid zlib header")
 		}
 		data = data[2:]
