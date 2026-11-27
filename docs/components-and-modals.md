@@ -103,7 +103,7 @@ bot.AddCommand(&minidis.Command{
 })
 ```
 
-The filter picks the clicks to take; the others go to their handlers as usual, and so does a click that comes after the wait ended, which is why the example removes the button then. A taken click goes through middleware but not to a handler, and must be responded to within 3 seconds like any other. It works for interactions from the gateway and [over HTTP](./http.md). The wait also ends, with `context.Canceled`, when the bot closes, and does not survive a restart.
+The filter picks the clicks to take; the others go to their handlers as usual, and so does a click that comes after the wait ended, which is why the example removes the button then. A taken click goes through middleware but not to a handler, and must be responded to within 3 seconds like any other. It works for interactions from the gateway and [over HTTP](./http.md). The wait also ends, with `context.Canceled`, as soon as the bot begins to close, early enough for the command to still edit its message, as the example does; it does not survive a restart. The click's own handler is held open until `ctx` ends, so a command that waits for several clicks in a loop gives each wait a context of its own.
 
 ## Handler IDs
 

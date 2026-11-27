@@ -59,7 +59,7 @@ bot.AddCommand(&minidis.Command{
 })
 ```
 
-The cooldown key is `minidis.PerUser`, `minidis.PerGuild`, `minidis.PerChannel`, or your own `func(*minidis.Context) string`. Each command has its own cooldown, shared by its subcommands; components and modals are not limited. `RequirePermissions` answers in DMs that the command only works in a server. Unlike `DefaultMemberPermissions`, which server admins can change, it cannot be turned off from Discord.
+The cooldown key is `minidis.PerUser`, `minidis.PerGuild`, `minidis.PerChannel`, or your own `func(*minidis.Context) string`. Each command has its own cooldown, shared by its subcommands; components and modals are not limited. A use counts once it reaches `Cooldown`, so put checks such as `RequirePermissions` in front of it, earlier in `Use` or outside it around `Execute`, so that refused uses do not count. `RequirePermissions` answers in DMs that the command only works in a server. Unlike `DefaultMemberPermissions`, which server admins can change, it cannot be turned off from Discord.
 
 Middleware sees the `Context` of every kind of interaction. Check `c.Interaction.Type` to tell a command (`discord.InteractionApplicationCommand`) from a component (`discord.InteractionMessageComponent`) or a modal (`discord.InteractionModalSubmit`) before reading its data: `c.Interaction.ApplicationCommandData()` and the others panic on another type.
 

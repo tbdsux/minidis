@@ -90,7 +90,7 @@ bot.AddTextCommand(&minidis.TextCommand{
 })
 ```
 
-It returns `ctx`'s error once `ctx` ends, and `context.Canceled` when the bot closes. Unlike a click, the message also reaches `OnMessage` and text commands. It needs the same intents as `OnMessage`, which the bot asks for when it connects only if some handler of messages was added before: a bot whose only use of messages is `WaitForMessage` calls `bot.AddIntents(discord.IntentsGuildMessages | discord.IntentsDirectMessages | discord.IntentsMessageContent)` before it runs.
+It returns `ctx`'s error once `ctx` ends, and `context.Canceled` as soon as the bot begins to close, early enough for the handler to still reply. Unlike a click, the message also reaches `OnMessage` and text commands. It needs the same intents as `OnMessage`, which the bot asks for when it connects only if some handler of messages was added before: a bot whose only use of messages is `WaitForMessage` calls `bot.AddIntents(discord.IntentsGuildMessages | discord.IntentsDirectMessages | discord.IntentsMessageContent)` before it runs.
 
 ## Text commands
 

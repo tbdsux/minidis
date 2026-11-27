@@ -138,3 +138,32 @@ func TestWaitForMessageConcurrently(t *testing.T) {
 		t.Errorf("waiters = %d", n)
 	}
 }
+
+func TestShutdownEndsAHandlerWaitingForAMessage(t *testing.T) {
+	bot, d := newTestBot(t)
+
+	type result struct{ err, ctxErr error }
+	woke := make(chan result, 1)
+	bot.OnMessage(func(c *MessageContext) error {
+		if c.Content != "ask" {
+			return nil
+		}
+		_, err := c.Bot.WaitForMessage(c, nil)
+		woke <- result{err, c.Err()}
+		return nil
+	})
+	if err := bot.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	d.send("MESSAGE_CREATE", message("ask"))
+	untilWaiting(t, bot, 1)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if err := bot.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown waited for the handler to time out: %v", err)
+	}
+	if r := recv(t, woke, "the waiting handler"); !errors.Is(r.err, context.Canceled) || r.ctxErr != nil {
+		t.Errorf("err = %v, handler context err = %v; want Canceled with the context still open", r.err, r.ctxErr)
+	}
+}

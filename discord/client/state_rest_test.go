@@ -3,10 +3,9 @@ package client
 import (
 	"bytes"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"maps"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -65,11 +64,12 @@ func TestStatePanicInKeepMemberIsRecovered(t *testing.T) {
 		return true
 	}})
 	var logged bytes.Buffer
-	log.SetOutput(&logged)
-	defer log.SetOutput(os.Stderr)
-
-	apply(t, st, "GUILD_CREATE", guildCreate())
-	if !strings.Contains(logged.String(), "panic while applying event event=GUILD_CREATE panic=boom") {
+	data, err := json.Marshal(guildCreate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.apply(slog.New(slog.NewTextHandler(&logged, nil)), "GUILD_CREATE", data)
+	if !strings.Contains(logged.String(), "event=GUILD_CREATE panic=boom") {
 		t.Errorf("logged %q", logged.String())
 	}
 

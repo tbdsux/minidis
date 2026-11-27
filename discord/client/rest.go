@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tbdsux/minidis/discord"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tbdsux/minidis/discord"
 )
 
 const (
