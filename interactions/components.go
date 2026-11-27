@@ -64,7 +64,10 @@ func (m *Minidis) HandleComponentFallback(h func(c *ComponentContext) error) {
 // several components at once, after middleware.
 //
 // It returns ctx's error if ctx ends first, and context.Canceled once the bot
-// closes. The Context it returns is canceled when ctx ends, which the caller
+// closes. If filter panics, the panic goes to the error handler of the
+// component it ran for, and WaitForComponent returns an error.
+//
+// The Context it returns is canceled when ctx ends, which the caller
 // should therefore end when it is done; its response must still come within
 // 3 seconds of the click.
 func (m *Minidis) WaitForComponent(ctx context.Context, filter func(c *ComponentContext) bool) (*ComponentContext, error) {

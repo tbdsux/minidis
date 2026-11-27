@@ -121,7 +121,9 @@ func (b *Bot) OnMessage(h func(c *MessageContext) error) {
 // runs; otherwise Discord does not send the messages, which the bot logs.
 //
 // It returns ctx's error if ctx ends first, and context.Canceled once the bot
-// closes. The MessageContext it returns is canceled when ctx ends.
+// closes. If filter panics, the panic goes to the handler of HandleEventError,
+// and WaitForMessage returns an error. The MessageContext it returns is
+// canceled when ctx ends.
 func (b *Bot) WaitForMessage(ctx context.Context, filter func(c *MessageContext) bool) (*MessageContext, error) {
 	b.need(messageIntents | discord.IntentsMessageContent)
 	b.waitingMessages.Do(func() { client.Handle(b.Session, b.offerMessage) })
@@ -135,7 +137,12 @@ func (b *Bot) offerMessage(s *client.Session, e *discord.MessageCreate) {
 	}
 
 	c, done := b.newEvent(s, messageCreate)
-	if waiting, ok := b.messageWaiters.Offer(newMessageContext(c, e.Message)); ok {
+	var waiting context.Context
+	b.runEvent(c, func() error {
+		waiting, _ = b.messageWaiters.Offer(newMessageContext(c, e.Message))
+		return nil
+	})
+	if waiting != nil {
 		context.AfterFunc(waiting, done)
 		return
 	}
