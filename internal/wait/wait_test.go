@@ -3,6 +3,7 @@ package wait
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 )
 
@@ -15,12 +16,14 @@ func TestAPanickingFilterIsDropped(t *testing.T) {
 		bad <- err
 	}()
 	for s.Len() != 1 {
+		runtime.Gosched()
 	}
 	go func() {
 		v, _ := s.Wait(t.Context(), nil, nil)
 		good <- v
 	}()
 	for s.Len() != 2 {
+		runtime.Gosched()
 	}
 
 	func() {
