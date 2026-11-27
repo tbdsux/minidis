@@ -30,12 +30,14 @@ type inflater struct {
 // if Discord split the payload and more of it is to come. After an error the
 // stream cannot be continued, so the connection must be dropped.
 func (z *inflater) inflate(msg []byte) ([]byte, error) {
-	z.pending = append(z.pending, msg...)
-	if !bytes.HasSuffix(z.pending, zlibSuffix) {
-		return nil, nil
+	data := msg // most payloads come whole, and need no copy
+	if len(z.pending) > 0 || !bytes.HasSuffix(msg, zlibSuffix) {
+		z.pending = append(z.pending, msg...)
+		if !bytes.HasSuffix(z.pending, zlibSuffix) {
+			return nil, nil
+		}
+		data, z.pending = z.pending, nil
 	}
-	data := z.pending
-	z.pending = nil
 
 	if !z.started {
 		// CMF and FLG: deflate with a 32 KiB window, and a valid check.
@@ -63,9 +65,15 @@ func (z *inflater) inflate(msg []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	z.window = append(z.window, out...)
-	if extra := len(z.window) - deflateWindow; extra > 0 {
-		z.window = append(z.window[:0], z.window[extra:]...)
+	// Only the tail of a large payload is kept, so that the window's array
+	// never grows past twice its size.
+	if len(out) >= deflateWindow {
+		z.window = append(z.window[:0], out[len(out)-deflateWindow:]...)
+	} else {
+		z.window = append(z.window, out...)
+		if extra := len(z.window) - deflateWindow; extra > 0 {
+			z.window = append(z.window[:0], z.window[extra:]...)
+		}
 	}
 	return out, nil
 }

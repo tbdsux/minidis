@@ -49,8 +49,8 @@ func TestInflaterFollowsTheStreamAcrossMessages(t *testing.T) {
 			t.Fatalf("message %d: got %d bytes, want %d", i, len(got), len(want))
 		}
 	}
-	if len(z.window) != deflateWindow {
-		t.Errorf("window = %d bytes, want %d", len(z.window), deflateWindow)
+	if len(z.window) != deflateWindow || cap(z.window) > 2*deflateWindow {
+		t.Errorf("window = %d bytes in %d, want %d in at most twice that", len(z.window), cap(z.window), deflateWindow)
 	}
 }
 
