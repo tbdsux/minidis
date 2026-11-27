@@ -176,3 +176,15 @@ func drain[T any](t *testing.T, seq iter.Seq2[T, error]) int {
 	}
 	return n
 }
+
+func TestPaginateStopsWhenTheCursorDoesNotAdvance(t *testing.T) {
+	for _, cursor := range []string{"same", ""} {
+		calls := 0
+		page := func(string) ([]string, error) { calls++; return []string{"a", "b"}, nil }
+		for range paginate(2, page, func(string) string { return cursor }) {
+		}
+		if want := map[string]int{"same": 2, "": 1}[cursor]; calls != want {
+			t.Errorf("cursor %q: %d pages fetched, want %d", cursor, calls, want)
+		}
+	}
+}

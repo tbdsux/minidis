@@ -9,7 +9,8 @@ import (
 
 // paginate yields every item of a list endpoint, fetching size items a page,
 // each page from the cursor of the last item before it, until a page comes
-// back short. A page that fails is yielded as an error, which ends it.
+// back short, or the cursor stops advancing. A page that fails is yielded as
+// an error, which ends it.
 func paginate[T any](size int, page func(cursor string) ([]T, error), cursor func(T) string) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		next := ""
@@ -28,7 +29,12 @@ func paginate[T any](size int, page func(cursor string) ([]T, error), cursor fun
 			if len(items) < size {
 				return
 			}
-			next = cursor(items[len(items)-1])
+			// A cursor that does not advance would fetch the same page forever.
+			c := cursor(items[len(items)-1])
+			if c == "" || c == next {
+				return
+			}
+			next = c
 		}
 	}
 }
@@ -56,7 +62,7 @@ func (s *Session) ChannelMessagesAll(ctx context.Context, channelID string) iter
 func (s *Session) GuildMembersAll(ctx context.Context, guildID string) iter.Seq2[*discord.Member, error] {
 	return paginate(1000, func(after string) ([]*discord.Member, error) {
 		return s.GuildMembers(ctx, guildID, 1000, after)
-	}, func(m *discord.Member) string { return m.User.ID })
+	}, func(m *discord.Member) string { return userID(m.User) })
 }
 
 // GuildBansAll iterates over a guild's bans by user ID, fetching pages of
@@ -64,7 +70,7 @@ func (s *Session) GuildMembersAll(ctx context.Context, guildID string) iter.Seq2
 func (s *Session) GuildBansAll(ctx context.Context, guildID string) iter.Seq2[*discord.GuildBan, error] {
 	return paginate(1000, func(after string) ([]*discord.GuildBan, error) {
 		return s.GuildBans(ctx, guildID, 1000, after)
-	}, func(b *discord.GuildBan) string { return b.User.ID })
+	}, func(b *discord.GuildBan) string { return userID(b.User) })
 }
 
 // MessageReactionsAll iterates over the users who reacted to a message with
@@ -74,4 +80,12 @@ func (s *Session) MessageReactionsAll(ctx context.Context, channelID, messageID,
 	return paginate(100, func(after string) ([]*discord.User, error) {
 		return s.MessageReactions(ctx, channelID, messageID, emoji, 100, after)
 	}, func(u *discord.User) string { return u.ID })
+}
+
+// userID returns the ID of u, or "" if it is missing, which ends the paging.
+func userID(u *discord.User) string {
+	if u == nil {
+		return ""
+	}
+	return u.ID
 }
