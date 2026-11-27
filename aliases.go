@@ -39,6 +39,13 @@ var (
 // Choice is interactions.Choice: an autocomplete suggestion.
 var Choice = interactions.Choice
 
-// RequirePermissions is interactions.RequirePermissions: middleware that lets
-// only members with the given permissions run a handler.
-var RequirePermissions = interactions.RequirePermissions
+// The middleware of the interactions package: Cooldown limits how often a
+// command runs for each key, and RequirePermissions lets only members with
+// the given permissions run a handler.
+var (
+	Cooldown           = interactions.Cooldown
+	PerUser            = interactions.PerUser
+	PerGuild           = interactions.PerGuild
+	PerChannel         = interactions.PerChannel
+	RequirePermissions = interactions.RequirePermissions
+)

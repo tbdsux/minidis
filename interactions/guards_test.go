@@ -3,6 +3,7 @@ package interactions
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tbdsux/minidis/discord"
 )
@@ -28,6 +29,70 @@ func lastEphemeral(t *testing.T, requests func() []recordedRequest) string {
 	}
 	content, _ := data["content"].(string)
 	return content
+}
+
+func TestCooldownLimitsEachCommandAndKey(t *testing.T) {
+	bot, requests := newTestBot(t)
+	bot.HandleError(func(_ *Context, err error) { t.Error(err) })
+
+	ran := map[string]int{}
+	handler := func(c *Context) error {
+		ran[c.Interaction.ApplicationCommandData().Name+" "+c.Author.ID]++
+		return nil
+	}
+	limit := Cooldown(time.Hour, PerUser)
+	bot.AddCommand(&Command{Name: "a", Execute: limit(handler)})
+	bot.AddCommand(&Command{Name: "b", Execute: limit(handler)})
+
+	run := func(name, user string) {
+		bot.handleInteraction(bot.Session, interaction(t, memberSlash(name, user, "0")))
+	}
+
+	run("a", "u1")
+	run("a", "u1")
+	if ran["a u1"] != 1 {
+		t.Fatalf("a ran %d times for u1 within the cooldown, want 1", ran["a u1"])
+	}
+	if got := lastEphemeral(t, requests); !strings.Contains(got, "again <t:") {
+		t.Errorf("cooldown reply = %q", got)
+	}
+
+	run("a", "u2") // another user
+	run("b", "u1") // another command
+	if ran["a u2"] != 1 || ran["b u1"] != 1 {
+		t.Errorf("ran = %v; another user or command was limited", ran)
+	}
+}
+
+func TestCooldownEnds(t *testing.T) {
+	bot, _ := newTestBot(t)
+
+	ran := 0
+	bot.Use(Cooldown(20*time.Millisecond, PerGuild))
+	bot.AddCommand(&Command{Name: "a", Execute: func(*Context) error { ran++; return nil }})
+
+	bot.handleInteraction(bot.Session, interaction(t, memberSlash("a", "u1", "0")))
+	time.Sleep(40 * time.Millisecond)
+	bot.handleInteraction(bot.Session, interaction(t, memberSlash("a", "u2", "0")))
+
+	if ran != 2 {
+		t.Errorf("ran %d times, want 2 once the cooldown ended", ran)
+	}
+}
+
+func TestCooldownLeavesComponentsAlone(t *testing.T) {
+	bot, _ := newTestBot(t)
+
+	ran := 0
+	bot.Use(Cooldown(time.Hour, PerUser))
+	bot.HandleComponent("b", func(*ComponentContext) error { ran++; return nil })
+
+	bot.handleInteraction(bot.Session, interaction(t, componentPayload("b")))
+	bot.handleInteraction(bot.Session, interaction(t, componentPayload("b")))
+
+	if ran != 2 {
+		t.Errorf("component ran %d times, want 2", ran)
+	}
 }
 
 func TestRequirePermissions(t *testing.T) {
