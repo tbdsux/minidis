@@ -18,7 +18,9 @@ import (
 //
 //	Execute: interactions.Cooldown(time.Hour, interactions.PerUser)(daily),
 //
-// A d of zero or less limits nothing.
+// A use counts once it gets past the middleware before Cooldown, so put
+// checks such as RequirePermissions before it: a use they refuse then does
+// not count. A d of zero or less limits nothing.
 func Cooldown(d time.Duration, key func(*Context) string) Middleware {
 	if d <= 0 {
 		return func(next HandlerFunc) HandlerFunc { return next }
