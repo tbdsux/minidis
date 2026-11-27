@@ -220,3 +220,31 @@ func TestWaitForComponentOverHTTP(t *testing.T) {
 		t.Errorf("status = %d: %s", rec.Code, rec.Body)
 	}
 }
+
+func TestShutdownEndsAHandlerWaitingForAComponent(t *testing.T) {
+	bot, h, key := memoryHTTPBot(t)
+
+	type result struct{ err, ctxErr error }
+	woke := make(chan result, 1)
+	bot.AddCommand(&Command{Name: "ask", Execute: func(c *Context) error {
+		if err := c.DeferReply(false); err != nil {
+			return err
+		}
+		_, err := bot.WaitForComponent(c, nil)
+		woke <- result{err, c.Err()}
+		return nil
+	}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, signedRequest(t, key, memberSlash("ask", "u1", "0")))
+	untilWaiting(t, bot, 1)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if err := bot.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown waited for the handler to time out: %v", err)
+	}
+	if r := <-woke; !errors.Is(r.err, context.Canceled) || r.ctxErr != nil {
+		t.Errorf("err = %v, handler context err = %v; want Canceled with the context still open", r.err, r.ctxErr)
+	}
+}

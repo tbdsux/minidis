@@ -64,6 +64,11 @@ type runState struct {
 	ctx    context.Context // the parent of handler contexts
 	cancel context.CancelFunc
 
+	// stopping ends, before ctx, once a Shutdown begins, so that handlers
+	// waiting for what can no longer arrive return within its drain.
+	stopping context.Context
+	stop     context.CancelFunc
+
 	// Guarded by Minidis.runMu. accepting is whether HTTPHandler takes new
 	// interactions; shutdown is set once Shutdown has begun.
 	accepting bool
@@ -77,7 +82,8 @@ type runState struct {
 
 func newRunState(accepting bool) *runState {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &runState{ctx: ctx, cancel: cancel, accepting: accepting}
+	stopping, stop := context.WithCancel(ctx)
+	return &runState{ctx: ctx, cancel: cancel, stopping: stopping, stop: stop, accepting: accepting}
 }
 
 // New creates a bot that authenticates with the given bot token.
@@ -179,6 +185,7 @@ func (m *Minidis) Shutdown(ctx context.Context) error {
 	run := m.run
 	run.accepting = false
 	run.shutdown = true
+	run.stop()
 	m.shutdowns++
 	if m.opening != nil {
 		m.opening()
@@ -241,6 +248,15 @@ func (m *Minidis) Run(ctx context.Context) error {
 // the bot is opened again. Use it for work that should stop with the bot.
 func (m *Minidis) Context() context.Context {
 	return m.current().ctx
+}
+
+// Stopping returns a channel that is closed once the bot begins to shut down,
+// while its handlers still have until the end of Shutdown to finish, unlike
+// Context, which ends only then. WaitForComponent stops waiting with it, as
+// no more interactions can arrive. Like Context, it is replaced when the bot
+// is opened again.
+func (m *Minidis) Stopping() <-chan struct{} {
+	return m.current().stopping.Done()
 }
 
 // current returns the run that handlers starting now belong to.
