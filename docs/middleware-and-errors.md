@@ -45,6 +45,22 @@ func adminsOnly(next minidis.HandlerFunc) minidis.HandlerFunc {
 }
 ```
 
+### Cooldowns and permissions
+
+Two kinds of middleware are built in. `minidis.Cooldown` lets a command run once per period for each user, guild or channel, and answers the uses in between with an ephemeral message saying when it can be used again. `minidis.RequirePermissions` runs a handler only for members with the given permissions in the channel:
+
+```go
+bot.Use(minidis.Cooldown(3*time.Second, minidis.PerUser)) // every command
+
+bot.AddCommand(&minidis.Command{
+	Name:        "ban",
+	Description: "Bans a member.",
+	Execute:     minidis.RequirePermissions(discord.PermissionBanMembers)(ban), // this command alone
+})
+```
+
+The cooldown key is `minidis.PerUser`, `minidis.PerGuild`, `minidis.PerChannel`, or your own `func(*minidis.Context) string`. Each command has its own cooldown, shared by its subcommands; components and modals are not limited. `RequirePermissions` answers in DMs that the command only works in a server. Unlike `DefaultMemberPermissions`, which server admins can change, it cannot be turned off from Discord.
+
 Middleware sees the `Context` of every kind of interaction. Check `c.Interaction.Type` to tell a command (`discord.InteractionApplicationCommand`) from a component (`discord.InteractionMessageComponent`) or a modal (`discord.InteractionModalSubmit`) before reading its data: `c.Interaction.ApplicationCommandData()` and the others panic on another type.
 
 ## Interaction errors
