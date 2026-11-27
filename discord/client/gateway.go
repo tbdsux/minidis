@@ -670,7 +670,7 @@ func (s *Session) prepareIdentify(ctx context.Context, run *gatewayRun, sh *shar
 	return s.waitIdentify(ctx, sh)
 }
 
-func gatewayEndpoint(base string) (string, error) {
+func gatewayEndpoint(base string, compress bool) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil {
 		return "", fmt.Errorf("discord: invalid gateway url: %w", err)
@@ -679,6 +679,9 @@ func gatewayEndpoint(base string) (string, error) {
 	q := u.Query()
 	q.Set("v", strconv.Itoa(APIVersion))
 	q.Set("encoding", "json")
+	if compress {
+		q.Set("compress", "zlib-stream")
+	}
 	u.RawQuery = q.Encode()
 
 	return u.String(), nil
@@ -853,7 +856,7 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 		target = sh.gatewayURL
 	}
 
-	endpoint, err := gatewayEndpoint(target)
+	endpoint, err := gatewayEndpoint(target, !s.DisableCompression)
 	if err != nil {
 		return reconnectFresh, err
 	}
@@ -887,10 +890,20 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 		ws.Close()
 	}()
 
+	// With compression, Discord sends binary messages; otherwise, text.
+	var z inflater
 	for {
-		_, data, err := ws.ReadMessage()
+		kind, data, err := ws.ReadMessage()
 		if err != nil {
 			return classifyDisconnect(err)
+		}
+		if kind == websocket.BinaryMessage {
+			if data, err = z.inflate(data); err != nil {
+				return reconnect, fmt.Errorf("discord: %s: inflate: %w", sh.name(), err)
+			}
+			if data == nil {
+				continue
+			}
 		}
 
 		var p gatewayPayload

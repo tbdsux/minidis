@@ -1,10 +1,11 @@
 package client
 
 import (
+	"bytes"
+	"compress/zlib"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tbdsux/minidis/discord"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tbdsux/minidis/discord"
 )
 
 // fakeGateway serves /gateway/bot, and runs script[n] for the nth websocket connection.
@@ -25,6 +27,8 @@ type fakeGateway struct {
 	remain atomic.Int32
 	shards atomic.Int32 // the number recommended
 
+	compressed atomic.Int32 // connections that asked for zlib-stream
+
 	maxConcurrency atomic.Int32
 }
 
@@ -33,6 +37,11 @@ type fakeConn struct {
 	ws   *websocket.Conn
 	path string
 	host string
+
+	// With compression, what send writes goes through z into buf, one zlib
+	// stream for the connection as Discord does.
+	z   *zlib.Writer
+	buf *bytes.Buffer
 }
 
 func (c *fakeConn) send(op int, d any, seq int, event string) {
@@ -41,7 +50,24 @@ func (c *fakeConn) send(op int, d any, seq int, event string) {
 	if event != "" {
 		payload["s"], payload["t"] = seq, event
 	}
-	if err := c.ws.WriteJSON(payload); err != nil {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	c.write(data)
+}
+
+// write sends a payload, compressed if the client asked for it.
+func (c *fakeConn) write(data []byte) {
+	c.t.Helper()
+	kind := websocket.TextMessage
+	if c.z != nil {
+		c.buf.Reset()
+		c.z.Write(data)
+		c.z.Flush() // a sync flush, which ends the message with zlibSuffix
+		data, kind = c.buf.Bytes(), websocket.BinaryMessage
+	}
+	if err := c.ws.WriteMessage(kind, data); err != nil {
 		c.t.Errorf("fake gateway write: %v", err)
 	}
 }
@@ -130,7 +156,17 @@ func newFakeGateway(t *testing.T, script ...func(c *fakeConn)) (*Session, *fakeG
 			(&fakeConn{t: t, ws: ws}).waitClosed()
 			return
 		}
-		g.script[n](&fakeConn{t: t, ws: ws, path: r.URL.Path, host: r.Host})
+		c := &fakeConn{t: t, ws: ws, path: r.URL.Path, host: r.Host}
+		switch compress := r.URL.Query().Get("compress"); compress {
+		case "zlib-stream":
+			g.compressed.Add(1)
+			c.buf = &bytes.Buffer{}
+			c.z = zlib.NewWriter(c.buf)
+		case "":
+		default:
+			t.Errorf("gateway compress = %q", compress)
+		}
+		g.script[n](c)
 	}
 	mux.HandleFunc("/gw", serveWS)
 	mux.HandleFunc("/resume", serveWS)
