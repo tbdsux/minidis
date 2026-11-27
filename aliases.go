@@ -38,3 +38,7 @@ var (
 
 // Choice is interactions.Choice: an autocomplete suggestion.
 var Choice = interactions.Choice
+
+// RequirePermissions is interactions.RequirePermissions: middleware that lets
+// only members with the given permissions run a handler.
+var RequirePermissions = interactions.RequirePermissions

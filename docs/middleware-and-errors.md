@@ -45,6 +45,20 @@ func adminsOnly(next minidis.HandlerFunc) minidis.HandlerFunc {
 }
 ```
 
+### Permissions
+
+`minidis.RequirePermissions` is built-in middleware that runs a handler only for members with the given permissions in the channel, and answers others with an ephemeral message:
+
+```go
+bot.AddCommand(&minidis.Command{
+	Name:        "ban",
+	Description: "Bans a member.",
+	Execute:     minidis.RequirePermissions(discord.PermissionBanMembers)(ban), // this command alone
+})
+```
+
+With `bot.Use` it covers every interaction. It answers in DMs that the command only works in a server. Unlike `DefaultMemberPermissions`, which server admins can change, it cannot be turned off from Discord.
+
 Middleware sees the `Context` of every kind of interaction. Check `c.Interaction.Type` to tell a command (`discord.InteractionApplicationCommand`) from a component (`discord.InteractionMessageComponent`) or a modal (`discord.InteractionModalSubmit`) before reading its data: `c.Interaction.ApplicationCommandData()` and the others panic on another type.
 
 ## Interaction errors
