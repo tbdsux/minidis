@@ -17,7 +17,13 @@ import (
 // With Use it covers every command. To limit one, wrap its Execute:
 //
 //	Execute: interactions.Cooldown(time.Hour, interactions.PerUser)(daily),
+//
+// A d of zero or less limits nothing.
 func Cooldown(d time.Duration, key func(*Context) string) Middleware {
+	if d <= 0 {
+		return func(next HandlerFunc) HandlerFunc { return next }
+	}
+
 	var (
 		mu    sync.Mutex
 		until = map[string]time.Time{}
@@ -28,7 +34,9 @@ func Cooldown(d time.Duration, key func(*Context) string) Middleware {
 			if c.Interaction.Type != discord.InteractionApplicationCommand {
 				return next(c)
 			}
-			k := c.Interaction.ApplicationCommandData().Name + "\x00" + key(c)
+			// A slash command and a context menu command may share a name.
+			data := c.Interaction.ApplicationCommandData()
+			k := fmt.Sprint(data.CommandType, "\x00", data.Name, "\x00", key(c))
 
 			mu.Lock()
 			end, ok := until[k]
@@ -48,8 +56,9 @@ func Cooldown(d time.Duration, key func(*Context) string) Middleware {
 			mu.Unlock()
 
 			if limited {
+				// Rounded up, so that the time shown is never in the past.
 				return c.ReplyWith(Message{
-					Content:   fmt.Sprintf("You can use this command again <t:%d:R>.", end.Unix()),
+					Content:   fmt.Sprintf("You can use this command again <t:%d:R>.", end.Add(time.Second-1).Unix()),
 					Ephemeral: true,
 				})
 			}
