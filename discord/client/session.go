@@ -87,6 +87,10 @@ type Session struct {
 	// session identifies with its intents as well as Intents.
 	State *State
 
+	// DisableCompression turns off the zlib-stream compression of what the
+	// gateway sends, which otherwise cuts its traffic several times over.
+	DisableCompression bool
+
 	BaseURL    string
 	UserAgent  string
 	HTTPClient *http.Client

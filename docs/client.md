@@ -117,6 +117,8 @@ Some events need an intent in `Session.Intents`, and `client.EventIntents("GUILD
 
 Between `Open` and `Close`, the session reconnects by itself, and resumes when Discord allows it, so no events are lost. `s.User()` is the bot's user once it is ready.
 
+What the gateway sends is compressed with Discord's zlib-stream, which cuts its traffic several times over for little CPU. Set `s.DisableCompression = true` before `Open` to turn it off.
+
 ### Members, voice and presence
 
 `RequestGuildMembers` asks for the members of a guild, answered in `OnGuildMembersChunk`. Discord limits how often all members can be requested, and reports a refused request in `OnRateLimited`.
