@@ -22,6 +22,9 @@ import (
 // checks such as RequirePermissions before it: a use they refuse then does
 // not count. A d of zero or less limits nothing.
 func Cooldown(d time.Duration, key func(*Context) string) Middleware {
+	if key == nil {
+		panic("interactions: Cooldown needs a key, such as PerUser")
+	}
 	if d <= 0 {
 		return func(next HandlerFunc) HandlerFunc { return next }
 	}

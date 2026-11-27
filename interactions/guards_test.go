@@ -185,3 +185,12 @@ func TestCooldownTimeIsNeverInThePast(t *testing.T) {
 		t.Errorf("shown %v, before the cooldown ends at %v or later", shown, earliest)
 	}
 }
+
+func TestCooldownNeedsAKey(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("Cooldown with a nil key did not panic")
+		}
+	}()
+	Cooldown(time.Second, nil)
+}
