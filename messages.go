@@ -126,8 +126,10 @@ func (b *Bot) OnMessage(h func(c *MessageContext) error) {
 // and WaitForMessage returns an error. The MessageContext it returns is
 // canceled when ctx ends.
 func (b *Bot) WaitForMessage(ctx context.Context, filter func(c *MessageContext) bool) (*MessageContext, error) {
-	b.need(messageIntents | discord.IntentsMessageContent)
-	b.waitingMessages.Do(func() { client.Handle(b.Session, b.offerMessage) })
+	b.waitingMessages.Do(func() {
+		b.need(messageIntents | discord.IntentsMessageContent)
+		client.Handle(b.Session, b.offerMessage)
+	})
 
 	return b.messageWaiters.Wait(ctx, b.Stopping(), filter)
 }
