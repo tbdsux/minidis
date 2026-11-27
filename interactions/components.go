@@ -69,8 +69,9 @@ func (m *Minidis) HandleComponentFallback(h func(c *ComponentContext) error) {
 // of the component it ran for, and WaitForComponent returns an error.
 //
 // The Context it returns is canceled when ctx ends, which the caller should
-// therefore end when it is done. Its response must still come within 3
-// seconds of the click.
+// therefore end when it is done: until then, the click's handler is kept
+// running. In a loop that waits for several clicks, give each wait a context
+// of its own. Its response must still come within 3 seconds of the click.
 func (m *Minidis) WaitForComponent(ctx context.Context, filter func(c *ComponentContext) bool) (*ComponentContext, error) {
 	return m.componentWaiters.Wait(ctx, m.Stopping(), filter)
 }
