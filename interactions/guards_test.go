@@ -1,6 +1,7 @@
 package interactions
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -130,5 +131,57 @@ func TestRequirePermissions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCooldownKeepsCommandTypesApart(t *testing.T) {
+	bot, _ := newTestBot(t)
+
+	ran := map[string]int{}
+	bot.Use(Cooldown(time.Hour, PerUser))
+	bot.AddCommand(&Command{Name: "info", Execute: func(*Context) error { ran["slash"]++; return nil }})
+	bot.AddUserCommand(&UserCommand{Name: "info", Execute: func(*UserCommandContext) error { ran["user"]++; return nil }})
+
+	bot.handleInteraction(bot.Session, interaction(t, memberSlash("info", "u1", "0")))
+	bot.handleInteraction(bot.Session, interaction(t, `{"type":2,`+guildFields+`,"data":{"name":"info","type":2,"target_id":"t","resolved":{"users":{"t":{"id":"t","username":"ann"}}}}}`))
+
+	if ran["slash"] != 1 || ran["user"] != 1 {
+		t.Errorf("ran = %v; a context menu command shared the cooldown of a slash command of its name", ran)
+	}
+}
+
+func TestCooldownOfZeroOrLessLimitsNothing(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		bot, _ := newTestBot(t)
+		ran := 0
+		bot.Use(Cooldown(d, PerUser))
+		bot.AddCommand(&Command{Name: "a", Execute: func(*Context) error { ran++; return nil }})
+
+		bot.handleInteraction(bot.Session, interaction(t, memberSlash("a", "u1", "0")))
+		bot.handleInteraction(bot.Session, interaction(t, memberSlash("a", "u1", "0")))
+		if ran != 2 {
+			t.Errorf("d = %v: ran %d times, want 2", d, ran)
+		}
+	}
+}
+
+func TestCooldownTimeIsNeverInThePast(t *testing.T) {
+	bot, requests := newTestBot(t)
+	const d = 1500 * time.Millisecond
+	bot.Use(Cooldown(d, PerUser))
+	bot.AddCommand(&Command{Name: "a", Execute: func(*Context) error { return nil }})
+
+	earliest := time.Now().Add(d) // the cooldown ends no sooner
+	bot.handleInteraction(bot.Session, interaction(t, memberSlash("a", "u1", "0")))
+	bot.handleInteraction(bot.Session, interaction(t, memberSlash("a", "u1", "0")))
+
+	reply := lastEphemeral(t, requests)
+	_, rest, _ := strings.Cut(reply, "<t:")
+	secs, err := strconv.ParseInt(strings.TrimSuffix(rest, ":R>."), 10, 64)
+	if err != nil {
+		t.Fatalf("reply = %q", reply)
+	}
+	if shown := time.Unix(secs, 0); shown.Before(earliest) {
+		t.Errorf("shown %v, before the cooldown ends at %v or later", shown, earliest)
 	}
 }
