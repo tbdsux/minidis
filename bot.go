@@ -27,10 +27,10 @@ import (
 //
 // Add everything before the bot runs. Its methods are safe for concurrent
 // use, and commands, components and modals can still be added while it runs,
-// but the settings (SetIntents, AddIntents, SetGuilds, DisableSync and
-// SetPrefix) cannot be changed then, and neither can a handler be added that
-// needs a gateway intent the bot did not connect with: Discord would not send
-// its events, which the bot logs.
+// but the settings (SetIntents, AddIntents, SetGuilds, DisableSync, SetPrefix
+// and SetPrefixFunc) cannot be changed then, and neither can a handler be
+// added that needs a gateway intent the bot did not connect with: Discord
+// would not send its events, which the bot logs.
 //
 // Set intents with SetIntents or AddIntents rather than on Session, though
 // the bot connects with those of Session.Intents as well.
@@ -53,8 +53,8 @@ type Bot struct {
 	guilds []string
 	noSync bool
 
-	prefix          string
-	textCommands    map[string]*TextCommand // by name and by alias, in lower case
+	prefix          func(*discord.Message) string // nil for none
+	textCommands    map[string]*TextCommand       // by name and by alias, in lower case
 	textCommandList []*TextCommand
 	listening       bool // the handler of text commands is registered
 

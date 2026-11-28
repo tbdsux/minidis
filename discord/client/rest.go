@@ -229,8 +229,14 @@ func (s *Session) send(ctx context.Context, method, path, contentType string, pa
 	}
 
 	rateLimited, serverErrors := 0, 0
-	for {
-		status, header, data, err := s.attempt(ctx, limited, !tokenRoute, route, major, method, path, contentType, payload)
+	waitFrom := time.Now()
+	for attempt := 1; ; attempt++ {
+		status, header, data, sent, err := s.attempt(ctx, limited, !tokenRoute, route, major, method, path, contentType, payload)
+		if s.RequestHook != nil {
+			s.reportRequest(method, path, attempt, status, waitFrom, sent, err)
+		}
+		waitFrom = time.Now()
+
 		if err != nil {
 			if ctx.Err() != nil {
 				err = context.Cause(ctx)
@@ -294,19 +300,67 @@ func isWebhookTokenPath(path string) bool {
 	return len(segments) >= 3 && segments[0] == "webhooks"
 }
 
-// attempt sends one request, holding the route's rate limit bucket if limited.
+// attempt sends one request, holding the route's rate limit bucket if limited,
+// and returns when it was sent, which is zero if it never was.
 // A bot request carries the bot token and counts against the global limit.
 // The bucket is released even if the round trip panics.
-func (s *Session) attempt(ctx context.Context, limited, bot bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, err error) {
+func (s *Session) attempt(ctx context.Context, limited, bot bool, route, major, method, path, contentType string, payload []byte) (status int, header http.Header, data []byte, sent time.Time, err error) {
 	if limited {
 		b, err := s.limiter.acquire(ctx, route, bot)
 		if err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, time.Time{}, err
 		}
 		defer func() { s.limiter.release(b, route, major, header) }()
 	}
 
-	return s.roundTrip(ctx, bot, method, path, contentType, payload)
+	sent = time.Now()
+	status, header, data, err = s.roundTrip(ctx, bot, method, path, contentType, payload)
+	return status, header, data, sent, err
+}
+
+// RequestInfo describes one attempt at a REST request, for Session.RequestHook.
+type RequestInfo struct {
+	Method string
+
+	// Route is the path with its IDs, tokens and codes replaced, such as
+	// "/channels/:id/messages/:id", so that it makes a metric label with few
+	// values and carries no secret.
+	Route string
+
+	Status  int           // the HTTP status, 0 if no response came back
+	Latency time.Duration // the HTTP round trip, 0 if the request was never sent
+
+	// Attempt counts from 1; a request retried after a 429 or a server
+	// error is reported once for each attempt.
+	Attempt int
+
+	// RateLimited reports a 429 response. Wait is how long this attempt
+	// waited before it was sent: for its rate limit bucket, for the global
+	// limit, and for a retry, the delay after the attempt before it.
+	RateLimited bool
+	Wait        time.Duration
+
+	// Err is why no response came back, such as a network error or the
+	// context ending. It is nil whenever Discord answered, even with an
+	// error status.
+	Err error
+}
+
+func (s *Session) reportRequest(method, path string, attempt, status int, waitFrom, sent time.Time, err error) {
+	info := RequestInfo{
+		Method:      method,
+		Route:       routeTemplate(path),
+		Status:      status,
+		Attempt:     attempt,
+		RateLimited: status == http.StatusTooManyRequests,
+		Wait:        time.Since(waitFrom),
+		Err:         err,
+	}
+	if !sent.IsZero() {
+		info.Latency = time.Since(sent)
+		info.Wait = sent.Sub(waitFrom)
+	}
+	s.RequestHook(info)
 }
 
 // idempotent reports whether a request with method can be sent again safely.

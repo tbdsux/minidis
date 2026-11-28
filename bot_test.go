@@ -215,6 +215,10 @@ func TestIntentsComeFromHandlers(t *testing.T) {
 			b.SetPrefix("!")
 			b.AddTextCommand(&TextCommand{Name: "ping"})
 		}, messageIntents | discord.IntentsMessageContent},
+		{"so does a prefix func", func(b *Bot) {
+			b.SetPrefixFunc(func(*discord.Message) string { return "" })
+			b.AddTextCommand(&TextCommand{Name: "ping"})
+		}, messageIntents | discord.IntentsMessageContent},
 		{"channel messages", func(b *Bot) {
 			b.HandleChannelMessage("c", nil)
 		}, messageIntents | discord.IntentsMessageContent},
@@ -459,6 +463,48 @@ func TestMessagesAndTextCommands(t *testing.T) {
 		t.Errorf("a command ran for %q", c.Content)
 	case got := <-heard:
 		t.Errorf("a handler heard a bot, a webhook or Discord: %q", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestPrefixFunc(t *testing.T) {
+	bot, d := newTestBot(t)
+	bot.SetPrefix("!") // replaced by the func
+	bot.SetPrefixFunc(func(m *discord.Message) string {
+		return map[string]string{"g1": "?", "g2": ""}[m.GuildID]
+	})
+
+	ran := make(chan string, 4)
+	bot.AddTextCommand(&TextCommand{Name: "ping", Execute: func(c *MessageContext) error {
+		ran <- c.GuildID + " " + c.Content
+		return nil
+	}})
+
+	if err := bot.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	inGuild := func(guild, content string) map[string]any {
+		m := message(content)
+		m["guild_id"] = guild
+		return m
+	}
+	d.send("MESSAGE_CREATE", inGuild("g1", "!ping"))
+	d.send("MESSAGE_CREATE", inGuild("g1", "?ping"))
+	if got := recv(t, ran, "the command in g1"); got != "g1 ?ping" {
+		t.Errorf("ran %q", got)
+	}
+
+	// An empty prefix leaves the mention, which works in every guild.
+	d.send("MESSAGE_CREATE", inGuild("g2", "?ping"))
+	d.send("MESSAGE_CREATE", inGuild("g2", "<@42> ping"))
+	if got := recv(t, ran, "the command by mention"); got != "g2 <@42> ping" {
+		t.Errorf("ran %q", got)
+	}
+
+	select {
+	case got := <-ran:
+		t.Errorf("a command ran for %q", got)
 	case <-time.After(50 * time.Millisecond):
 	}
 }

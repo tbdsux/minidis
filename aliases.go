@@ -25,6 +25,9 @@ type (
 	Modal           = interactions.Modal
 	FollowupMessage = interactions.FollowupMessage
 
+	Page            = interactions.Page
+	PaginateOptions = interactions.PaginateOptions
+
 	HandlerFunc = interactions.HandlerFunc
 	Middleware  = interactions.Middleware
 	PanicError  = interactions.PanicError
@@ -48,4 +51,11 @@ var (
 	PerGuild           = interactions.PerGuild
 	PerChannel         = interactions.PerChannel
 	RequirePermissions = interactions.RequirePermissions
+)
+
+// The catalog keys of the built-in replies; see interactions.KeyCooldown.
+const (
+	KeyCooldown           = interactions.KeyCooldown
+	KeyGuildOnly          = interactions.KeyGuildOnly
+	KeyMissingPermissions = interactions.KeyMissingPermissions
 )

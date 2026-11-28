@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"iter"
+	"time"
 
 	"github.com/tbdsux/minidis/discord"
 )
@@ -80,6 +81,80 @@ func (s *Session) MessageReactionsAll(ctx context.Context, channelID, messageID,
 	return paginate(100, func(after string) ([]*discord.User, error) {
 		return s.MessageReactions(ctx, channelID, messageID, emoji, 100, after)
 	}, func(u *discord.User) string { return u.ID })
+}
+
+// ChannelPinsAll iterates over a channel's pinned messages, most recently
+// pinned first, fetching pages of 50 as the loop reaches them; see
+// ChannelMessagesAll.
+func (s *Session) ChannelPinsAll(ctx context.Context, channelID string) iter.Seq2[*discord.MessagePin, error] {
+	return paginate(50, func(before string) ([]*discord.MessagePin, error) {
+		var t time.Time
+		if before != "" {
+			t, _ = time.Parse(time.RFC3339Nano, before) // formatted by the cursor below
+		}
+		pins, err := s.ChannelPins(ctx, channelID, 50, t)
+		if err != nil {
+			return nil, err
+		}
+		return pins.Items, nil
+	}, func(p *discord.MessagePin) string { return p.PinnedAt.Format(time.RFC3339Nano) })
+}
+
+// PollAnswerVotersAll iterates over the users who voted for an answer of a
+// poll, by user ID, fetching pages of 100 as the loop reaches them; see
+// ChannelMessagesAll.
+func (s *Session) PollAnswerVotersAll(ctx context.Context, channelID, messageID string, answerID int) iter.Seq2[*discord.User, error] {
+	return paginate(100, func(after string) ([]*discord.User, error) {
+		return s.PollAnswerVoters(ctx, channelID, messageID, answerID, 100, after)
+	}, func(u *discord.User) string { return u.ID })
+}
+
+// ThreadMembersAll iterates over the members of a thread by user ID, each
+// with their guild member, fetching pages of 100 as the loop reaches them;
+// see ChannelMessagesAll. Like ThreadMembers, it needs the privileged
+// IntentsGuildMembers intent.
+func (s *Session) ThreadMembersAll(ctx context.Context, threadID string) iter.Seq2[*discord.ThreadMember, error] {
+	return paginate(100, func(after string) ([]*discord.ThreadMember, error) {
+		return s.ThreadMembers(ctx, threadID, true, 100, after) // only paged with members
+	}, func(m *discord.ThreadMember) string { return m.UserID })
+}
+
+// GuildScheduledEventUsersAll iterates over the users interested in a
+// scheduled event by user ID, with their guild members if withMember is set,
+// fetching pages of 100 as the loop reaches them; see ChannelMessagesAll.
+func (s *Session) GuildScheduledEventUsersAll(ctx context.Context, guildID, eventID string, withMember bool) iter.Seq2[*discord.GuildScheduledEventUser, error] {
+	return paginate(100, func(after string) ([]*discord.GuildScheduledEventUser, error) {
+		return s.GuildScheduledEventUsers(ctx, guildID, eventID, 100, withMember, after)
+	}, func(u *discord.GuildScheduledEventUser) string { return userID(u.User) })
+}
+
+// GuildAuditLogAll iterates over the entries of a guild's audit log that
+// match q, newest first, starting before q.Before if it is set, fetching
+// pages of 100 as the loop reaches them; see ChannelMessagesAll. q.After and
+// q.Limit are ignored. The users, webhooks and other objects an audit log
+// page comes with are not kept; use GuildAuditLog for those.
+func (s *Session) GuildAuditLogAll(ctx context.Context, guildID string, q discord.AuditLogQuery) iter.Seq2[*discord.AuditLogEntry, error] {
+	return paginate(100, func(before string) ([]*discord.AuditLogEntry, error) {
+		p := q
+		if before != "" {
+			p.Before = before
+		}
+		p.After, p.Limit = "", 100
+		log, err := s.GuildAuditLog(ctx, guildID, p)
+		if err != nil {
+			return nil, err
+		}
+		return log.Entries, nil
+	}, func(e *discord.AuditLogEntry) string { return e.ID })
+}
+
+// CurrentUserGuildsAll iterates over the guilds the bot is in by ID,
+// fetching pages of 200 as the loop reaches them; see ChannelMessagesAll.
+// The guilds are partial, as with CurrentUserGuilds.
+func (s *Session) CurrentUserGuildsAll(ctx context.Context) iter.Seq2[*discord.Guild, error] {
+	return paginate(200, func(after string) ([]*discord.Guild, error) {
+		return s.CurrentUserGuilds(ctx, 200, after)
+	}, func(g *discord.Guild) string { return g.ID })
 }
 
 // userID returns the ID of u, or "" if it is missing, which ends the paging.

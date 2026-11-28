@@ -9,6 +9,7 @@ import (
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/locale"
 )
 
 // messageIntents deliver the messages of guilds and of DMs.
@@ -206,6 +207,24 @@ func (c *MessageContext) reference() *discord.MessageReference {
 	}
 }
 
+// T returns the message for key from the bot's catalog (see SetCatalog) in
+// the guild's language, when Session.State has the guild, else in the
+// catalog's default, else key itself, formatted with args like fmt.Sprintf.
+// Messages do not say the language of their author.
+func (c *MessageContext) T(key string, args ...any) string {
+	var l discord.Locale
+	if s := c.Session; s != nil && s.State != nil && c.GuildID != "" {
+		if g := s.State.Guild(c.GuildID); g != nil {
+			l = g.PreferredLocale
+		}
+	}
+	var cat *locale.Catalog
+	if c.Bot != nil {
+		cat = c.Bot.Catalog()
+	}
+	return cat.T(l, key, args...)
+}
+
 // Send sends a text message to the channel of the message.
 func (c *MessageContext) Send(content string) (*discord.Message, error) {
 	return c.SendWith(Message{Content: content})
@@ -259,17 +278,42 @@ type TextCommand struct {
 
 // SetPrefix sets what a message starts with to run a text command, such as
 // "!" for "!ping". Without one, text commands are run by mentioning the bot
-// first, as in "@bot ping", which always works as well.
+// first, as in "@bot ping", which always works as well. It replaces a
+// function set with SetPrefixFunc.
 //
 // A prefix asks for the privileged discord.IntentsMessageContent, which must
 // also be enabled for the bot in the developer portal; messages that mention
 // the bot do not need it.
 func (b *Bot) SetPrefix(prefix string) {
+	if prefix == "" {
+		b.SetPrefixFunc(nil)
+		return
+	}
+	b.SetPrefixFunc(func(*discord.Message) string { return prefix })
+}
+
+// SetPrefixFunc sets a function that returns the prefix of text commands for
+// a message, such as one stored for its guild:
+//
+//	bot.SetPrefixFunc(func(m *discord.Message) string {
+//		if p, ok := prefixes.Load(m.GuildID); ok { // GuildID is empty in a DM
+//			return p.(string)
+//		}
+//		return "!"
+//	})
+//
+// It runs for every message people send, so it should be quick, such as a
+// lookup in memory. An empty prefix means the message runs a command only by
+// mentioning the bot, which always works as well. It replaces a prefix set
+// with SetPrefix, and nil removes it.
+//
+// Like SetPrefix, it asks for the privileged discord.IntentsMessageContent.
+func (b *Bot) SetPrefixFunc(f func(m *discord.Message) string) {
 	b.mu.Lock()
-	b.prefix = prefix
+	b.prefix = f
 	b.mu.Unlock()
 
-	if prefix != "" {
+	if f != nil {
 		b.need(discord.IntentsMessageContent)
 	}
 }
@@ -336,8 +380,13 @@ func (b *Bot) handleTextCommand(s *client.Session, e *discord.MessageCreate) {
 	}
 
 	b.mu.RLock()
-	prefix := b.prefix
+	prefixOf := b.prefix
 	b.mu.RUnlock()
+
+	prefix := ""
+	if prefixOf != nil {
+		prefix = prefixOf(e.Message)
+	}
 
 	name, rest, ok := splitCommand(e.Content, prefix, s.User())
 	if !ok {

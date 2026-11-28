@@ -1,0 +1,6 @@
+{
+  "command.greet.name": "saluer",
+  "command.greet.description": "Dit bonjour dans ta langue.",
+  "greet.reply": "Bonjour, %s !",
+  "minidis.cooldown": "Tu pourras réutiliser cette commande %s."
+}

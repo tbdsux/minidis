@@ -252,14 +252,34 @@ func routeKey(method, path string) (route, major string) {
 			kept = append(kept, seg)
 		case isSnowflake(seg):
 			segments[i] = ":id"
-		// Emojis and invite or template codes share their route's limit, and
-		// left literal would add a route for each one.
-		case i > 0 && (segments[i-1] == "reactions" || segments[i-1] == "invites" || segments[i-1] == "templates"):
+		case isCode(segments, i):
 			segments[i] = ":code"
 		}
 	}
 
 	return method + " /" + strings.Join(segments, "/"), strings.Join(kept, "/")
+}
+
+// isCode reports whether segments[i] is an emoji or an invite or template
+// code. They share their route's limit, and left literal would add a route
+// for each one.
+func isCode(segments []string, i int) bool {
+	return i > 0 && (segments[i-1] == "reactions" || segments[i-1] == "invites" || segments[i-1] == "templates")
+}
+
+// routeTemplate is path with every ID, token and code replaced, unlike
+// routeKey, which keeps the IDs that Discord limits per resource.
+func routeTemplate(path string) string {
+	segments := strings.Split(strings.TrimPrefix(redactPath(path), "/"), "/")
+	for i, seg := range segments {
+		switch {
+		case isSnowflake(seg):
+			segments[i] = ":id"
+		case isCode(segments, i):
+			segments[i] = ":code"
+		}
+	}
+	return "/" + strings.Join(segments, "/")
 }
 
 func isSnowflake(s string) bool {

@@ -179,7 +179,7 @@ bot.AddCommand(&minidis.Command{
 })
 ```
 
-The handler and the option getters always use the unlocalized names.
+The handler and the option getters always use the unlocalized names. To keep the translations in one place, with the replies, see [Translations](./locale.md).
 
 ## Activities
 
