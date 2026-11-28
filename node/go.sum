@@ -2,6 +2,10 @@ github.com/disgoorg/godave v0.2.0 h1:BB6cc09UXml8yP9K2TZUADyiUF0Oosg1Pfzw1vfQGAc
 github.com/disgoorg/godave v0.2.0/go.mod h1:OreAC3hpabr39bMVA+jwOVDq1EUPXH5A0XUBiZaDI1Y=
 github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+github.com/tbdsux/minidis v0.4.0 h1:OiUegexcCR17TsbKpO8NyRoDjd78RanxxR1GJ9AfjAE=
+github.com/tbdsux/minidis v0.4.0/go.mod h1:B2fdFYFzSufuagz4pQeiK9jvqlmQ57JReVh1AdinhG0=
+github.com/tbdsux/minidis/voice v0.1.0 h1:FOcJ6jY2JTaEkoGpjPPrjIM6wcSM7QrWKumUBCgITSs=
+github.com/tbdsux/minidis/voice v0.1.0/go.mod h1:5afLg+0VCyucdO+4nYe2jibqwNEY0FcLgZ0UNwt3Fw8=
 github.com/thomas-vilte/dave-go v0.5.1 h1:sc0roOie5Ayn+3eKOUjry9kbBPDvFQCF8t+gy/EOrW4=
 github.com/thomas-vilte/dave-go v0.5.1/go.mod h1:h0UvVsCDECUe6W6dlSHEQTbx3TT13pGmHGngG0GXg1o=
 github.com/thomas-vilte/mls-go v1.6.0 h1:HGxrRe0kRfEAXu7MtTemNzqGmC/758rfGkarhYGPOYg=

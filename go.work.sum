@@ -1,3 +1,5 @@
+github.com/tbdsux/minidis v0.4.0/go.mod h1:B2fdFYFzSufuagz4pQeiK9jvqlmQ57JReVh1AdinhG0=
+github.com/tbdsux/minidis/voice v0.1.0/go.mod h1:5afLg+0VCyucdO+4nYe2jibqwNEY0FcLgZ0UNwt3Fw8=
 golang.org/x/net v0.62.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
 golang.org/x/term v0.48.0/go.mod h1:BRDLHCZr2SUjIeBHHpRyQeC9xzSAVbzY2rvKgafnHf4=
 golang.org/x/text v0.44.0/go.mod h1:S4FR1waQ9LbjQTls97SyRjDaUUVkaM+cXwwuG/G+MwY=
