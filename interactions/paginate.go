@@ -1,7 +1,6 @@
 package interactions
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"strconv"
@@ -20,7 +19,7 @@ type Page struct {
 // PaginateOptions configures Paginate. The zero value shows Prev and Next.
 type PaginateOptions struct {
 	// Timeout is how long the buttons wait for a click before they are
-	// disabled; each click starts it again. Zero means 2 minutes.
+	// disabled; each click starts it again. Zero or less means 2 minutes.
 	Timeout time.Duration
 
 	FirstLast bool // adds buttons to jump to the first and the last page
@@ -74,9 +73,13 @@ func (m *Minidis) Paginate(c *Context, pages []Page, opts PaginateOptions) error
 		return err
 	}
 
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
 	page, last := 0, c // last is the latest interaction, whose token can still edit the message
 	for {
-		ctx, cancel := context.WithTimeout(c, cmp.Or(opts.Timeout, 2*time.Minute))
+		ctx, cancel := context.WithTimeout(c, timeout)
 		click, err := m.WaitForComponent(ctx, func(cc *ComponentContext) bool {
 			return strings.HasPrefix(cc.Data.CustomID, p.prefix)
 		})
@@ -89,15 +92,17 @@ func (m *Minidis) Paginate(c *Context, pages []Page, opts PaginateOptions) error
 		action := strings.TrimPrefix(click.Data.CustomID, p.prefix)
 		switch {
 		case !opts.Anyone && click.Author.ID != c.Author.ID:
-			err = click.ReplyWith(Message{Content: click.translate(KeyPaginateAuthorOnly, "Only <@%s> can turn these pages.", c.Author.ID), Ephemeral: true})
+			// Failing to tell someone else doesn't end the pages for c's user.
+			click.ReplyWith(Message{Content: click.translate(KeyPaginateAuthorOnly, "Only <@%s> can turn these pages.", c.Author.ID), Ephemeral: true})
 		case action == "stop":
 			err = click.UpdateWith(MessageEdit{Components: p.buttons(page, true)})
 			cancel()
 			return err
 		default:
-			page = p.turn(page, action)
-			err = click.UpdateWith(p.edit(page, false))
-			last = click.Context
+			next := p.turn(page, action)
+			if err = click.UpdateWith(p.edit(next, false)); err == nil {
+				page, last = next, click.Context // a failed click's token can't edit the message
+			}
 		}
 		cancel()
 		if err != nil {
