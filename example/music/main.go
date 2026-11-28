@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tbdsux/minidis"
 	"github.com/tbdsux/minidis/discord"
@@ -79,19 +80,22 @@ func main() {
 
 	q := &queues{tracks: map[string][]*lavalink.Track{}}
 	ll.OnEvent(func(e *lavalink.Event) {
+		// Handlers run on the client's reading goroutine: don't let a stalled node hold it.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		switch {
 		case e.Type == lavalink.TrackExceptionEvent:
 			log.Printf("guild %s: %s failed: %v", e.GuildID, e.Track.Info.Title, e.Exception)
 		case e.Type == lavalink.TrackEndEvent && e.Reason == lavalink.EndCleanup:
 			// The node restarted or dropped the session: play the track again.
 			if t := q.current(e.GuildID); t != nil {
-				if err := ll.Play(context.Background(), e.GuildID, t); err != nil {
+				if err := ll.Play(ctx, e.GuildID, t); err != nil {
 					log.Printf("guild %s: play again: %v", e.GuildID, err)
 				}
 			}
 		case e.MayStartNext():
 			if t := q.next(e.GuildID); t != nil {
-				if err := ll.Play(context.Background(), e.GuildID, t); err != nil {
+				if err := ll.Play(ctx, e.GuildID, t); err != nil {
 					log.Printf("guild %s: play next: %v", e.GuildID, err)
 				}
 			}
@@ -164,7 +168,9 @@ func main() {
 		})
 	}
 
-	if err := bot.Start(); err != nil {
+	err := bot.Start()
+	ll.Close() // ends the node's players now, rather than after its resume timeout
+	if err != nil {
 		log.Fatalln("Bot stopped with an error:", err)
 	}
 }
