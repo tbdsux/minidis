@@ -7,6 +7,7 @@ import (
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/locale"
 )
 
 // ChannelMessageContext is passed to HandleChannelMessage handlers.
@@ -17,6 +18,8 @@ import (
 type ChannelMessageContext struct {
 	ctx context.Context
 	api context.Context // for sends, which outlive the handler like responses
+
+	catalog *locale.Catalog // of the bot, for T
 
 	Session   *client.Session
 	Message   *discord.MessageCreate
@@ -68,6 +71,7 @@ func (m *Minidis) handleChannelMessage(s *client.Session, msg *discord.MessageCr
 	m.runChannelHandler(&ChannelMessageContext{
 		ctx:       ctx,
 		api:       run,
+		catalog:   m.Catalog(),
 		Session:   s,
 		Message:   msg,
 		ChannelID: msg.ChannelID,
@@ -119,4 +123,24 @@ func (c *ChannelMessageContext) ReplyWith(msg Message) (*discord.Message, error)
 	send := msg.MessageSend()
 	send.Reference = c.reference()
 	return c.Session.ChannelMessageSendComplex(orBackground(c.api), c.ChannelID, send)
+}
+
+// T returns the message for key from the bot's catalog (see SetCatalog) in
+// the guild's language, when Session.State has the guild, else in the
+// catalog's default, else key itself, formatted with args like fmt.Sprintf.
+// Messages do not say the language of their author.
+func (c *ChannelMessageContext) T(key string, args ...any) string {
+	return c.catalog.T(guildLocale(c.Session, c.Message.GuildID), key, args...)
+}
+
+// guildLocale returns the preferred locale of a guild in the session's
+// state, or "" if it is not there.
+func guildLocale(s *client.Session, guildID string) discord.Locale {
+	if s == nil || s.State == nil || guildID == "" {
+		return ""
+	}
+	if g := s.State.Guild(guildID); g != nil {
+		return g.PreferredLocale
+	}
+	return ""
 }

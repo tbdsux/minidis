@@ -9,6 +9,7 @@ import (
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/locale"
 )
 
 // messageIntents deliver the messages of guilds and of DMs.
@@ -204,6 +205,24 @@ func (c *MessageContext) reference() *discord.MessageReference {
 		GuildID:         c.GuildID,
 		FailIfNotExists: discord.Bool(false),
 	}
+}
+
+// T returns the message for key from the bot's catalog (see SetCatalog) in
+// the guild's language, when Session.State has the guild, else in the
+// catalog's default, else key itself, formatted with args like fmt.Sprintf.
+// Messages do not say the language of their author.
+func (c *MessageContext) T(key string, args ...any) string {
+	var l discord.Locale
+	if s := c.Session; s != nil && s.State != nil && c.GuildID != "" {
+		if g := s.State.Guild(c.GuildID); g != nil {
+			l = g.PreferredLocale
+		}
+	}
+	var cat *locale.Catalog
+	if c.Bot != nil {
+		cat = c.Bot.Catalog()
+	}
+	return cat.T(l, key, args...)
 }
 
 // Send sends a text message to the channel of the message.

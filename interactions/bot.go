@@ -11,6 +11,7 @@ import (
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
 	"github.com/tbdsux/minidis/internal/wait"
+	"github.com/tbdsux/minidis/locale"
 )
 
 // closeTimeout is how long Close gives running handlers to return.
@@ -40,6 +41,7 @@ type Minidis struct {
 	onError           func(*Context, error)
 	onChannelError    func(*ChannelMessageContext, error)
 	entryPoint        *EntryPointCommand
+	catalog           *locale.Catalog
 
 	appIDMu sync.Mutex
 	appID   string // looked up by SyncCommands when the session is not open

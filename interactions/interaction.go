@@ -36,6 +36,7 @@ func (m *Minidis) runInteraction(run context.Context, s *client.Session, i *disc
 		ack = func() {}
 	}
 	c := newContext(ctx, run, s, i, m.botUser(s))
+	c.catalog = m.Catalog()
 	c.reply.ack = ack
 	c.reply.cancel = cancelCause
 

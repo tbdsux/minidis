@@ -11,7 +11,8 @@ import (
 
 // Cooldown is middleware that lets each command run once per d for each key,
 // such as PerUser, and answers the uses in between with an ephemeral message
-// saying when the command can be used again. A command's subcommands share its
+// saying when the command can be used again, translated under KeyCooldown
+// when the bot has a catalog (see SetCatalog). A command's subcommands share its
 // cooldown. Components and modal submits are not limited.
 //
 // With Use it covers every command. To limit one, wrap its Execute:
@@ -62,8 +63,9 @@ func Cooldown(d time.Duration, key func(*Context) string) Middleware {
 
 			if limited {
 				// Rounded up, so that the time shown is never in the past.
+				when := fmt.Sprintf("<t:%d:R>", end.Add(time.Second-1).Unix())
 				return c.ReplyWith(Message{
-					Content:   fmt.Sprintf("You can use this command again <t:%d:R>.", end.Add(time.Second-1).Unix()),
+					Content:   c.translate(KeyCooldown, "You can use this command again %s.", when),
 					Ephemeral: true,
 				})
 			}
@@ -86,7 +88,8 @@ func PerChannel(c *Context) string { return c.ChannelID }
 // have all of perms in the channel, such as discord.PermissionBanMembers, and
 // answers others with an ephemeral message. Administrators have every
 // permission. Outside a guild, where there are no permissions, it answers
-// that the command only works in a server.
+// that the command only works in a server. The replies are translated under
+// KeyMissingPermissions and KeyGuildOnly when the bot has a catalog.
 //
 // Command.DefaultMemberPermissions hides a command from members without the
 // permissions, but server admins can change who sees it; this check holds
@@ -98,11 +101,11 @@ func RequirePermissions(perms int64) Middleware {
 	return func(next HandlerFunc) HandlerFunc {
 		return func(c *Context) error {
 			if c.Member == nil {
-				return c.ReplyWith(Message{Content: "This only works in a server.", Ephemeral: true})
+				return c.ReplyWith(Message{Content: c.translate(KeyGuildOnly, "This only works in a server."), Ephemeral: true})
 			}
 			have := c.Member.Permissions
 			if have&discord.PermissionAdministrator == 0 && have&perms != perms {
-				return c.ReplyWith(Message{Content: "You don't have the permissions to use this.", Ephemeral: true})
+				return c.ReplyWith(Message{Content: c.translate(KeyMissingPermissions, "You don't have the permissions to use this."), Ephemeral: true})
 			}
 			return next(c)
 		}
