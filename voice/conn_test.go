@@ -313,6 +313,45 @@ func TestConnServerClose(t *testing.T) {
 	}
 }
 
+// The gateway closing right after Ready must still close the UDP socket,
+// which would otherwise block IP discovery against a silent server forever.
+func TestConnGatewayClosesDuringHandshake(t *testing.T) {
+	for range 20 {
+		f := newFakeServer(t)
+		silent, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { silent.Close() })
+
+		res := make(chan error, 1)
+		go func() {
+			_, err := Dial(context.Background(), Params{GuildID: "10", ChannelID: "20", UserID: "30",
+				Endpoint: "x", Logger: slog.New(slog.DiscardHandler),
+				Dave: func(_ *slog.Logger, _ godave.UserID, cb godave.Callbacks) godave.Session {
+					f.dave.cb = cb
+					return f.dave
+				}})
+			res <- err
+		}()
+
+		f.ws = <-f.conns
+		f.next(opIdentify)
+		f.send(opReady, 1, map[string]any{"ssrc": 42, "ip": "127.0.0.1",
+			"port": silent.LocalAddr().(*net.UDPAddr).Port, "modes": []string{ModeXChaCha20}})
+		f.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4006, "session no longer valid"))
+
+		select {
+		case err := <-res:
+			if err == nil {
+				t.Fatal("Dial succeeded after the gateway closed")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Dial hung after the gateway closed")
+		}
+	}
+}
+
 func TestConnRealDave(t *testing.T) {
 	t.Run("no E2EE", func(t *testing.T) {
 		f := newFakeServer(t)
