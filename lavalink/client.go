@@ -116,8 +116,10 @@ func (c *Client) Attach(s *client.Session) {
 	s.OnReady(func(_ *client.Session, r *discord.Ready) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := c.Connect(ctx, r.User.ID); err != nil {
-			c.log().Error("lavalink: connect to node", "error", err)
+		if err := c.Connect(ctx, r.User.ID); err != nil && !errors.Is(err, ErrNotConnected) {
+			// As when a node starts with the bot: keep trying, as after a drop.
+			c.log().Error("lavalink: connect to node; retrying", "error", err)
+			go c.reconnect(r.User.ID)
 		}
 	})
 	s.OnVoiceStateUpdate(func(_ *client.Session, e *discord.VoiceStateUpdate) {
@@ -146,6 +148,7 @@ func (c *Client) connect(ctx context.Context, userID string) error {
 	defer c.connectMu.Unlock()
 	c.mu.Lock()
 	connected, closed, old := c.ws != nil, c.closed, c.sessionID
+	c.userID = userID // so the bot's voice states are kept while it dials
 	c.mu.Unlock()
 	if closed {
 		return ErrNotConnected
@@ -179,8 +182,12 @@ func (c *Client) connect(ctx context.Context, userID string) error {
 
 	if old != "" && !resumed {
 		// The node ended the old session, and its players with it; readLoop
-		// tells the handlers their tracks ended. Connect voice again.
+		// tells the handlers their tracks ended.
 		c.log().Warn("lavalink: node session not resumed; tracks that were playing ended", "session", sessionID)
+	}
+	if !resumed {
+		// A new session has no voice connections: send the voice states
+		// known so far, including any that came while dialing.
 		for _, g := range guilds {
 			go c.sendVoice(g)
 		}
@@ -220,12 +227,22 @@ func (c *Client) dial(ctx context.Context, userID, sessionID string) (*websocket
 		Resumed   bool   `json:"resumed"`
 		SessionID string `json:"sessionId"`
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		ws.SetReadDeadline(dl)
+	// ctx ending, by its deadline or a cancel, interrupts the read.
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		ws.SetReadDeadline(time.Now())
+		close(interrupted)
+	})
+	err = ws.ReadJSON(&ready)
+	if !stop() {
+		<-interrupted
 	}
-	if err := ws.ReadJSON(&ready); err != nil || ready.Op != "ready" {
+	if err == nil && (ready.Op != "ready" || ready.SessionID == "") {
+		err = fmt.Errorf("got op %q without a session ID", ready.Op)
+	}
+	if err != nil {
 		ws.Close()
-		return nil, "", false, fmt.Errorf("lavalink: no ready message: %v", err)
+		return nil, "", false, fmt.Errorf("lavalink: no ready message: %w", err)
 	}
 	ws.SetReadDeadline(time.Time{})
 	return ws, ready.SessionID, ready.Resumed, nil
@@ -337,6 +354,7 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	ws, sid := c.ws, c.sessionID
 	c.ws, c.sessionID, c.closed = nil, "", true
+	c.playing = nil // the node ends them; a later session must not report them lost
 	c.mu.Unlock()
 	if sid != "" { // also while reconnecting, when the node keeps the session waiting
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -559,7 +577,7 @@ func (c *Client) patch(ctx context.Context, guildID string, body any, noReplace 
 
 // Play plays track in the guild, replacing what is playing.
 func (c *Client) Play(ctx context.Context, guildID string, track *Track) error {
-	_, err := c.patch(ctx, guildID, &UpdatePlayer{Track: &UpdateTrack{Encoded: track.Encoded}}, false)
+	_, err := c.patch(ctx, guildID, &UpdatePlayer{Track: &UpdateTrack{Encoded: track.Encoded, UserData: track.UserData}}, false)
 	return err
 }
 
@@ -607,10 +625,13 @@ func (c *Client) Destroy(ctx context.Context, guildID string) error {
 	if err != nil {
 		return err
 	}
+	if err := c.do(ctx, http.MethodDelete, path, nil, nil); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	delete(c.playing, guildID) // the node sends no end event for it
 	c.mu.Unlock()
-	return c.do(ctx, http.MethodDelete, path, nil, nil)
+	return nil
 }
 
 // Stats returns the node's stats.

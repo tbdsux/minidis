@@ -10,7 +10,7 @@ There are three parts:
 | `minidis/node` | its own module | The audio node: a subset of the Lavalink v4 REST and WebSocket API. It decodes audio with ffmpeg. |
 | `minidis/voice` | its own module | The Discord voice connection the node uses: voice gateway v8, UDP and RTP, `aead_aes256_gcm_rtpsize` / `aead_xchacha20_poly1305_rtpsize` encryption, and DAVE end-to-end encryption. |
 
-The node and voice modules are separate so that the core module keeps its one dependency.
+The node and voice modules are separate so that the core module keeps its one dependency. They need Go 1.26 or newer; the core module needs Go 1.25. The repository's `go.work` asks for Go 1.26 too, so on Go 1.25 build the core module with `GOWORK=off`.
 
 ## Running the node
 

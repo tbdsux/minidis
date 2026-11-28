@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"runtime"
 	"slices"
@@ -72,13 +73,13 @@ func New(cfg Config) *Server {
 			return c, nil
 		}
 	}
-	if cfg.StuckThreshold == 0 {
+	if cfg.StuckThreshold <= 0 {
 		cfg.StuckThreshold = 10 * time.Second
 	}
-	if cfg.PlayerUpdateInterval == 0 {
+	if cfg.PlayerUpdateInterval <= 0 {
 		cfg.PlayerUpdateInterval = 5 * time.Second
 	}
-	if cfg.StatsInterval == 0 {
+	if cfg.StatsInterval <= 0 {
 		cfg.StatsInterval = 60 * time.Second
 	}
 	if cfg.Logger == nil {
@@ -267,8 +268,8 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	if u.Timeout != nil && *u.Timeout <= 0 {
-		writeError(w, r, http.StatusBadRequest, "timeout must be positive")
+	if u.Timeout != nil && (*u.Timeout <= 0 || *u.Timeout > int64(math.MaxInt64/time.Second)) {
+		writeError(w, r, http.StatusBadRequest, "timeout must be positive and fit in a duration")
 		return
 	}
 	sess.mu.Lock()
@@ -278,8 +279,22 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	if u.Timeout != nil {
 		sess.timeout = time.Duration(*u.Timeout) * time.Second
 	}
-	res := map[string]any{"resuming": sess.resuming, "timeout": int64(sess.timeout / time.Second)}
+	resuming := sess.resuming
+	res := map[string]any{"resuming": resuming, "timeout": int64(sess.timeout / time.Second)}
 	sess.mu.Unlock()
+	if !resuming {
+		// Waiting to be resumed is what resuming off ends: end it now, as
+		// the client asks when it closes while reconnecting.
+		sess.wsMu.Lock()
+		waiting := sess.ws == nil && !sess.ended
+		if waiting {
+			sess.ended = true
+		}
+		sess.wsMu.Unlock()
+		if waiting {
+			s.end(sess)
+		}
+	}
 	writeJSON(w, res)
 }
 
@@ -316,6 +331,10 @@ func (s *Server) handleUpdatePlayer(w http.ResponseWriter, r *http.Request) {
 	var u UpdatePlayer
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&u); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if u.Position != nil && *u.Position < 0 {
+		writeError(w, r, http.StatusBadRequest, "position must not be negative")
 		return
 	}
 	if u.Voice != nil && (u.Voice.Token == "" || u.Voice.Endpoint == "" || u.Voice.SessionID == "" || u.Voice.ChannelID == "") {
@@ -470,6 +489,8 @@ func (s *Server) detach(sess *session, ws *websocket.Conn) {
 				s.end(sess)
 			}
 		})
+	} else {
+		sess.ended = true // so no resume slips in before end
 	}
 	sess.wsMu.Unlock()
 	if resuming {
@@ -533,11 +554,12 @@ func (s *session) attach(ws *websocket.Conn, resumed bool) bool {
 		s.expiry.Stop()
 		s.expiry = nil
 	}
-	s.writeLocked(map[string]any{"op": "ready", "resumed": resumed, "sessionId": s.id})
-	for _, v := range s.queue {
-		s.writeLocked(v)
-	}
+	queue := s.queue
 	s.queue = nil
+	s.writeLocked(map[string]any{"op": "ready", "resumed": resumed, "sessionId": s.id})
+	for _, v := range queue {
+		s.writeLocked(v) // a failed write queues it again
+	}
 	s.wsMu.Unlock()
 	if old != nil {
 		old.Close() // a client resuming before the node saw its old WebSocket drop
@@ -554,15 +576,24 @@ func (s *session) send(v any) {
 		s.writeLocked(v)
 		return
 	}
+	s.queueLocked(v)
+}
+
+func (s *session) queueLocked(v any) {
 	if m, ok := v.(map[string]any); ok && m["op"] == "event" && !s.ended && len(s.queue) < maxQueued {
 		s.queue = append(s.queue, v)
 	}
 }
 
+// writeLocked writes v to the WebSocket. When that fails, it closes the
+// WebSocket, so the reader detaches it and later writes fail at once rather
+// than wait out the deadline, and keeps an event for a resume.
 func (s *session) writeLocked(v any) {
 	s.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := s.ws.WriteJSON(v); err != nil {
 		s.node.log.Debug("node: websocket write", "session", s.id, "error", err)
+		s.ws.Close()
+		s.queueLocked(v)
 	}
 }
 

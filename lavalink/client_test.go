@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -330,4 +331,34 @@ func TestVoiceForwarding(t *testing.T) {
 	c.voiceStateUpdate("1", "555", "vs", "") // left
 	c.voiceServerUpdate("1", "tok2", "ep2")
 	f.none()
+}
+
+// Voice states that came before the node's WebSocket opened reach the node
+// once it does, as when the node starts after the bot.
+func TestVoiceBeforeConnect(t *testing.T) {
+	f, c := newFakeNode(t)
+	c.Logger = slog.New(slog.DiscardHandler)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.Connect(ctx, "555"); err == nil {
+		t.Fatal("connected with a canceled context")
+	}
+	c.voiceStateUpdate("1", "555", "vs", "50")
+	c.voiceServerUpdate("1", "tok", "ep:443")
+	if err := c.Connect(context.Background(), "555"); err != nil {
+		t.Fatal(err)
+	}
+	<-f.resumes
+	got := map[string]bool{}
+	for range 2 { // the voice state and turning resuming on, in either order
+		select {
+		case r := <-f.reqs:
+			got[r.method+" "+r.path+" "+r.body] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("requests = %v", got)
+		}
+	}
+	if !got[`PATCH /v4/sessions/S/players/1 {"voice":{"token":"tok","endpoint":"ep:443","sessionId":"vs","channelId":"50"}}`] {
+		t.Fatalf("voice state not sent on connect: %v", got)
+	}
 }

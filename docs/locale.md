@@ -60,15 +60,16 @@ msg := bot.Catalog().T(guild.PreferredLocale, "welcome", member.User.Username)
 
 ## Built-in replies
 
-`Cooldown` and `RequirePermissions` answer users themselves. With a catalog, their replies are looked up like any other message, under these keys:
+`Cooldown`, `RequirePermissions` and `Paginate` answer users themselves. With a catalog, their replies are looked up like any other message, under these keys:
 
-| Key                           | English reply                                     |
-| ----------------------------- | ------------------------------------------------- |
-| `minidis.cooldown`            | `You can use this command again %s.`              |
-| `minidis.guild_only`          | `This only works in a server.`                    |
-| `minidis.missing_permissions` | `You don't have the permissions to use this.`     |
+| Key                            | English reply                                 |
+| ------------------------------ | --------------------------------------------- |
+| `minidis.cooldown`             | `You can use this command again %s.`          |
+| `minidis.guild_only`           | `This only works in a server.`                |
+| `minidis.missing_permissions`  | `You don't have the permissions to use this.` |
+| `minidis.paginate_author_only` | `Only <@%s> can turn these pages.`            |
 
-The `%s` of `minidis.cooldown` is a Discord timestamp that shows as "in 5 minutes" in the user's language. Without a catalog, or in a language it lacks, the replies stay in English. The keys are also constants: `minidis.KeyCooldown`, `minidis.KeyGuildOnly` and `minidis.KeyMissingPermissions`.
+The `%s` of `minidis.cooldown` is a Discord timestamp that shows as "in 5 minutes" in the user's language, and that of `minidis.paginate_author_only` the ID of the user the pages belong to, shown as a mention. Without a catalog, or in a language it lacks, the replies stay in English. The keys are also constants: `minidis.KeyCooldown`, `minidis.KeyGuildOnly`, `minidis.KeyMissingPermissions` and `minidis.KeyPaginateAuthorOnly`.
 
 ## Command names and descriptions
 

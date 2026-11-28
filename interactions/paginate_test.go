@@ -2,8 +2,11 @@ package interactions
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -186,5 +189,45 @@ func TestPaginateOnePage(t *testing.T) {
 	reqs := requests()
 	if len(reqs) != 1 || reqs[0].Body["data"].(map[string]any)["components"] != nil {
 		t.Errorf("requests = %+v", reqs)
+	}
+}
+
+// A reply that fails to reach another user leaves the pages working, and a
+// click that fails to turn the page leaves its token unused for the cleanup.
+func TestPaginateFailedClicks(t *testing.T) {
+	bot, _ := newTestBot(t)
+	done := startPaginate(t, bot, testPages, PaginateOptions{})
+	untilWaiting(t, bot, 1)
+
+	var mu sync.Mutex
+	var paths []string
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"message":"nope","code":0}`)
+	}))
+	t.Cleanup(failing.Close)
+	bot.Session.BaseURL = failing.URL
+	clickAs := func(userID, token, action string) {
+		payload := strings.NewReplacer(`"id":"u1"`, `"id":"`+userID+`"`, `"token":"tok"`, `"token":"`+token+`"`).
+			Replace(componentPayload("minidis:page:i1:" + action))
+		bot.handleInteraction(bot.Session, interaction(t, payload))
+	}
+
+	clickAs("u2", "tok2", "next")
+	untilWaiting(t, bot, 1) // still waiting for the author
+
+	clickAs("u1", "tok3", "next")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("paginator kept going after its update failed")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if last := paths[len(paths)-1]; last != "PATCH /webhooks/app/tok/messages/@original" {
+		t.Fatalf("cleanup = %s, want the edit with the slash command's token; all: %v", last, paths)
 	}
 }
