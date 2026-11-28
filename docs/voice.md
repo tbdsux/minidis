@@ -92,13 +92,23 @@ The node keeps no queue. That is the bot's job, as with Lavalink. `OnEvent` rece
 
 Play the next track when `e.MayStartNext()` is true: the track finished or failed to load, not stopped or replaced. [`example/music`](../example/music/main.go) is a bot with a queue and `/play`, `/pause`, `/resume`, `/skip` and `/leave`.
 
+## Reconnecting
+
+Connections drop, and both of them recover on their own. That includes connections that go silent without failing, as after a network change: the voice connection counts as dead when Discord stops acknowledging its heartbeats, and the client and the node ping each other.
+
+- **The node's voice connection to Discord.** When it drops, or Discord closes it with 4015 (voice server crashed), the node reconnects and resumes the voice session, up to 5 times in a row. Audio keeps going meanwhile. Other close codes end the connection with a `WebSocketClosedEvent`, such as 4014 when the bot is removed from the channel, or 4006 when the session is no longer valid.
+- **The bot's WebSocket to the node.** When it drops, the client reconnects, waiting longer after each failure, up to 30 seconds. The client turns on resuming when it connects, so the node keeps the session's players playing for 60 seconds, queues their events, and sends them once the client is back. Player methods keep working while the client reconnects.
+
+If the node restarted, or the client took longer than 60 seconds, the node starts a new session. The client then sends the node the bot's voice state for each guild again, so the players reconnect to voice, but the tracks that were playing ended without a `TrackEndEvent`. A bot that keeps a queue should play its current track again.
+
+`Close` turns resuming off and stops reconnecting, so the node ends the players at once.
+
 ## End-to-end encryption
 
 Discord has required DAVE, its end-to-end encryption for voice, since March 2026. The node does DAVE with [dave-go](https://github.com/thomas-vilte/dave-go), a pure Go implementation, so it needs no cgo or system libraries. dave-go hasn't had a third-party security audit. `voice.Params.Dave` takes any `godave.SessionCreateFunc`, so another implementation can replace it.
 
 ## Not supported yet
 
-- **Resuming.** Players end when the bot's WebSocket to the node drops, and the client does not reconnect.
 - **Sources and filters:** searches other than `ytsearch:` (such as `ytmsearch:` and `scsearch:`), YouTube playlists (a playlist link is refused, but a video link with `&list=` plays its video), other sites yt-dlp supports, audio filters, and `endTime`.
 - **Receiving audio** from Discord.
 - **Track decoding.** Encoded tracks from the minidis node are base64 JSON rather than Lavalink's binary format. Lavalink clients that decode tracks themselves can't read them; clients that treat them as opaque strings work.
