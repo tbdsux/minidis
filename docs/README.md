@@ -16,6 +16,7 @@ Guides for building Discord bots with minidis. The API reference is on [pkg.go.d
 10. [State cache](./state.md): keeping guilds, channels, members and messages in memory.
 11. [Translations](./locale.md): replies, built-in messages and command names in the user's language.
 12. [Testing handlers](./testing.md): running handlers in unit tests, without connecting to Discord.
+13. [Voice and music](./voice.md): playing audio through an audio node, like Lavalink.
 
 ## Packages
 
@@ -29,6 +30,7 @@ minidis is made of layers, and each works without the ones above it:
 | `minidis/discord/client` | The REST and Gateway client.                                                                                                                                       |
 | `minidis/discord`        | The Discord API types.                                                                                                                                             |
 | `minidis/minidistest`    | Fakes Discord for unit tests of handlers.                                                                                                                          |
+| `minidis/lavalink`       | A client for audio nodes (the minidis `node` module, or Lavalink) that play music in voice channels. See [Voice and music](./voice.md).                            |
 
 The `minidis.Bot` embeds the bot of `interactions`, and has its types under the same names (`minidis.Command` is `interactions.Command`), so everything in these guides about interactions works with either. The examples use `minidis`; a bot that only handles interactions can swap in `interactions`, as described in [Getting started](./getting-started.md#interactions-only-bots).
 
@@ -49,5 +51,6 @@ The `minidis.Bot` embeds the bot of `interactions`, and has its types under the 
 | [`http`](../example/http/main.go)                     | Interactions over HTTP                                        |
 | [`client`](../example/client/main.go)                 | The client on its own                                         |
 | [`locale`](../example/locale/main.go)                 | Translations loaded from embedded JSON files                  |
+| [`music`](../example/music/main.go)                   | A music bot with a queue, playing through an audio node       |
 
 Run one with `TOKEN=<bot token> GUILD=<test server ID> go run ./example/bot`.

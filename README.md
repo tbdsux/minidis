@@ -51,6 +51,7 @@ minidis init mybot
 - [State cache](./docs/state.md)
 - [Translations](./docs/locale.md)
 - [Testing handlers](./docs/testing.md)
+- [Voice and music](./docs/voice.md)
 
 The API reference is on [pkg.go.dev](https://pkg.go.dev/github.com/tbdsux/minidis), and runnable programs are in [`example/`](./example/).
 
@@ -66,6 +67,7 @@ Each layer works without the ones above it:
 | `minidis/discord/client` | The REST and Gateway client.                                                                                                                                       |
 | `minidis/discord`        | The Discord API types.                                                                                                                                             |
 | `minidis/minidistest`    | Fakes Discord for unit tests of handlers.                                                                                                                          |
+| `minidis/lavalink`       | A client for audio nodes (the minidis `node` module, or Lavalink) that play music in voice channels. See [Voice and music](./docs/voice.md).                       |
 
 ##
 
