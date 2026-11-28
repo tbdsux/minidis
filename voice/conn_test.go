@@ -313,6 +313,80 @@ func TestConnServerClose(t *testing.T) {
 	}
 }
 
+// After a resumable drop the connection redials the gateway and resumes,
+// and audio keeps going; a close code that ends the session ends it.
+func TestConnResume(t *testing.T) {
+	f := newFakeServer(t)
+	c := f.dial()
+	f.send(opClientsConnect, 5, map[string]any{"user_ids": []string{"7"}})
+	f.wantCall("add 7")
+
+	resume := func(drop func()) {
+		t.Helper()
+		drop()
+		select {
+		case f.ws = <-f.conns:
+		case <-time.After(5 * time.Second):
+			t.Fatal("gateway not redialed")
+		}
+		_, r, _ := f.next(opResume)
+		if r["server_id"] != "10" || r["session_id"] != "sess" || r["token"] != "tok" || r["seq_ack"] != 5.0 {
+			t.Fatalf("resume = %v", r)
+		}
+		f.send(opHello, 0, map[string]any{"heartbeat_interval": 20.0})
+		f.send(opResumed, 6, nil)
+		if err := c.Speaking(true); err != nil {
+			t.Fatal(err)
+		}
+		f.next(opSpeaking)
+		if err := c.WriteOpus([]byte("opus")); err != nil {
+			t.Fatal(err)
+		}
+		<-f.pkts
+	}
+	resume(func() { // the voice server crashed
+		f.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4015, "voice server crashed"))
+	})
+	f.send(opClientsConnect, 5, nil) // seq_ack back to 5 for the next resume
+	resume(func() { f.ws.Close() })  // the connection dropped without a close frame
+
+	select {
+	case <-c.Done():
+		t.Fatalf("closed after resuming: %v", c.Err())
+	default:
+	}
+
+	f.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4006, "session no longer valid"))
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("not closed")
+	}
+	if ce, ok := errors.AsType[*CloseError](c.Err()); !ok || ce.Code != 4006 {
+		t.Fatalf("err = %v, want the 4006 close", c.Err())
+	}
+}
+
+// A gateway that stops answering heartbeats, without the connection failing,
+// is redialed and resumed.
+func TestConnResumeAfterMissedAcks(t *testing.T) {
+	old := minZombie.Swap(int64(100 * time.Millisecond))
+	t.Cleanup(func() { minZombie.Store(old) })
+	f := newFakeServer(t)
+	c := f.dial() // the fake server never sends ACKs
+	select {
+	case f.ws = <-f.conns:
+	case <-time.After(5 * time.Second):
+		t.Fatal("dead gateway not redialed")
+	}
+	f.next(opResume)
+	select {
+	case <-c.Done():
+		t.Fatalf("closed instead of resuming: %v", c.Err())
+	default:
+	}
+}
+
 // The gateway closing right after Ready must still close the UDP socket,
 // which would otherwise block IP discovery against a silent server forever.
 func TestConnGatewayClosesDuringHandshake(t *testing.T) {
