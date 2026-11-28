@@ -116,8 +116,10 @@ func (c *Client) Attach(s *client.Session) {
 	s.OnReady(func(_ *client.Session, r *discord.Ready) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := c.Connect(ctx, r.User.ID); err != nil {
-			c.log().Error("lavalink: connect to node", "error", err)
+		if err := c.Connect(ctx, r.User.ID); err != nil && !errors.Is(err, ErrNotConnected) {
+			// As when a node starts with the bot: keep trying, as after a drop.
+			c.log().Error("lavalink: connect to node; retrying", "error", err)
+			go c.reconnect(r.User.ID)
 		}
 	})
 	s.OnVoiceStateUpdate(func(_ *client.Session, e *discord.VoiceStateUpdate) {
@@ -146,6 +148,7 @@ func (c *Client) connect(ctx context.Context, userID string) error {
 	defer c.connectMu.Unlock()
 	c.mu.Lock()
 	connected, closed, old := c.ws != nil, c.closed, c.sessionID
+	c.userID = userID // so the bot's voice states are kept while it dials
 	c.mu.Unlock()
 	if closed {
 		return ErrNotConnected
@@ -179,8 +182,12 @@ func (c *Client) connect(ctx context.Context, userID string) error {
 
 	if old != "" && !resumed {
 		// The node ended the old session, and its players with it; readLoop
-		// tells the handlers their tracks ended. Connect voice again.
+		// tells the handlers their tracks ended.
 		c.log().Warn("lavalink: node session not resumed; tracks that were playing ended", "session", sessionID)
+	}
+	if !resumed {
+		// A new session has no voice connections: send the voice states
+		// known so far, including any that came while dialing.
 		for _, g := range guilds {
 			go c.sendVoice(g)
 		}
