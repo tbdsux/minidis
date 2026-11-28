@@ -141,7 +141,7 @@ What the gateway sends is compressed with Discord's zlib-stream, which cuts its 
 
 `RequestGuildMembers` asks for the members of a guild, answered in `OnGuildMembersChunk`. Discord limits how often all members can be requested, and reports a refused request in `OnRateLimited`.
 
-`UpdateVoiceState` joins and leaves voice channels, but sending and receiving audio is not part of this library: `OnVoiceStateUpdate` and `OnVoiceServerUpdate` give a voice library what it needs to connect.
+`UpdateVoiceState` joins and leaves voice channels. The bot itself sends no audio: `OnVoiceStateUpdate` and `OnVoiceServerUpdate` give a voice library or an audio node what it needs to connect. The `lavalink` package does that to play music through an audio node; see [Voice and music](voice.md).
 
 ## Sharding
 
