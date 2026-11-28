@@ -227,12 +227,22 @@ func (c *Client) dial(ctx context.Context, userID, sessionID string) (*websocket
 		Resumed   bool   `json:"resumed"`
 		SessionID string `json:"sessionId"`
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		ws.SetReadDeadline(dl)
+	// ctx ending, by its deadline or a cancel, interrupts the read.
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		ws.SetReadDeadline(time.Now())
+		close(interrupted)
+	})
+	err = ws.ReadJSON(&ready)
+	if !stop() {
+		<-interrupted
 	}
-	if err := ws.ReadJSON(&ready); err != nil || ready.Op != "ready" {
+	if err == nil && (ready.Op != "ready" || ready.SessionID == "") {
+		err = fmt.Errorf("got op %q without a session ID", ready.Op)
+	}
+	if err != nil {
 		ws.Close()
-		return nil, "", false, fmt.Errorf("lavalink: no ready message: %v", err)
+		return nil, "", false, fmt.Errorf("lavalink: no ready message: %w", err)
 	}
 	ws.SetReadDeadline(time.Time{})
 	return ws, ready.SessionID, ready.Resumed, nil
