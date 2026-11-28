@@ -105,6 +105,29 @@ bot.AddCommand(&minidis.Command{
 
 The filter picks the clicks to take; the others go to their handlers as usual, and so does a click that comes after the wait ended, which is why the example removes the button then. A taken click goes through middleware but not to a handler, and must be responded to within 3 seconds like any other. It works for interactions from the gateway and [over HTTP](./http.md). The wait also ends, with `context.Canceled`, as soon as the bot begins to close, early enough for the command to still edit its message, as the example does; it does not survive a restart. The click's own handler is held open until `ctx` ends, so a command that waits for several clicks in a loop gives each wait a context of its own.
 
+## Pages
+
+`bot.Paginate` shows a list of pages, each text, embeds or both, with buttons to turn them. It replies with the first page, or edits the response if the command already deferred, then switches pages as the buttons are clicked:
+
+```go
+bot.AddCommand(&minidis.Command{
+	Name:        "planets",
+	Description: "Browse the planets.",
+	Execute: func(c *minidis.Context) error {
+		pages := []minidis.Page{
+			{Embeds: []*discord.MessageEmbed{{Title: "Mercury"}}},
+			{Embeds: []*discord.MessageEmbed{{Title: "Venus"}}},
+			{Content: "And six more..."},
+		}
+		return bot.Paginate(c, pages, minidis.PaginateOptions{Counter: true})
+	},
+})
+```
+
+Prev and Next are always there; `FirstLast` adds buttons to jump to either end, `Counter` shows the page number, such as `2/3`, and `Stop` adds a button that ends it at once. Only the user who ran the command can turn the pages, and others are told so in an ephemeral message, unless `Anyone` is set. A single page is sent without buttons.
+
+`Paginate` is built on `WaitForComponent`, so it blocks in the command's handler and needs no `HandleComponent`. It ends, disabling the buttons, after `Timeout` (2 minutes unless set) without a click, when Stop is clicked, when the bot begins to close, or at the latest 15 minutes after the command, when Discord stops accepting its responses.
+
 ## Handler IDs
 
 A handler ID can capture `:`-separated segments with `{name}`, which end up in `c.Params`:

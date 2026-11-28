@@ -470,3 +470,69 @@ func TestMultipartChecksFiles(t *testing.T) {
 		t.Errorf("Content-Type = %q", got)
 	}
 }
+
+func TestRequestHookReportsEachAttempt(t *testing.T) {
+	var calls atomic.Int32
+	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("X-RateLimit-Scope", "user")
+			w.WriteHeader(http.StatusTooManyRequests)
+			io.WriteString(w, `{"message":"You are being rate limited.","retry_after":0.05,"global":false}`)
+			return
+		}
+		io.WriteString(w, `{}`)
+	})
+
+	var infos []RequestInfo
+	s.RequestHook = func(info RequestInfo) { infos = append(infos, info) }
+
+	if _, err := s.ChannelMessage(context.Background(), "123456789012345678", "223456789012345678"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(infos) != 2 {
+		t.Fatalf("infos = %+v", infos)
+	}
+	first, second := infos[0], infos[1]
+	if first.Method != "GET" || first.Route != "/channels/:id/messages/:id" || first.Status != 429 ||
+		!first.RateLimited || first.Attempt != 1 || first.Err != nil || first.Latency <= 0 {
+		t.Errorf("first = %+v", first)
+	}
+	if second.Route != first.Route || second.Status != 200 || second.RateLimited || second.Attempt != 2 || second.Err != nil {
+		t.Errorf("second = %+v", second)
+	}
+	if second.Wait < 40*time.Millisecond {
+		t.Errorf("second.Wait = %v, want the retry delay", second.Wait)
+	}
+}
+
+func TestRequestHookHidesTokensAndReportsErrors(t *testing.T) {
+	i := &discord.Interaction{ID: "123456789012345678", AppID: "223456789012345678", Token: "SECRETTOKEN"}
+	s := New("Bot token")
+	s.BaseURL = "http://127.0.0.1:1"
+
+	var got RequestInfo
+	s.RequestHook = func(info RequestInfo) { got = info }
+
+	if err := s.InteractionResponseDelete(context.Background(), i); err == nil {
+		t.Fatal("no error")
+	}
+	if got.Route != "/webhooks/:id/:token/messages/@original" || got.Status != 0 || got.Err == nil ||
+		strings.Contains(got.Err.Error(), "SECRETTOKEN") {
+		t.Errorf("info = %+v", got)
+	}
+}
+
+func TestRouteTemplate(t *testing.T) {
+	for path, want := range map[string]string{
+		"/channels/123456789012345678/messages?limit=5":            "/channels/:id/messages",
+		"/channels/123456789012345678/messages/1/reactions/%F0%9F": "/channels/:id/messages/1/reactions/:code",
+		"/interactions/123456789012345678/tok/callback":            "/interactions/:id/:token/callback",
+		"/invites/abc": "/invites/:code",
+		"/users/@me":   "/users/@me",
+	} {
+		if got := routeTemplate(path); got != want {
+			t.Errorf("routeTemplate(%q) = %q, want %q", path, got, want)
+		}
+	}
+}

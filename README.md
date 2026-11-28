@@ -50,6 +50,7 @@ minidis init mybot
 - [The Discord client](./docs/client.md)
 - [State cache](./docs/state.md)
 - [Translations](./docs/locale.md)
+- [Testing handlers](./docs/testing.md)
 
 The API reference is on [pkg.go.dev](https://pkg.go.dev/github.com/tbdsux/minidis), and runnable programs are in [`example/`](./example/).
 
@@ -64,6 +65,7 @@ Each layer works without the ones above it:
 | `minidis/locale`         | Translations of replies and command names, by Discord locale.                                                                                                      |
 | `minidis/discord/client` | The REST and Gateway client.                                                                                                                                       |
 | `minidis/discord`        | The Discord API types.                                                                                                                                             |
+| `minidis/minidistest`    | Fakes Discord for unit tests of handlers.                                                                                                                          |
 
 ##
 

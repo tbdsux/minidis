@@ -15,6 +15,7 @@ Guides for building Discord bots with minidis. The API reference is on [pkg.go.d
 9. [The Discord client](./client.md): REST, the gateway, sharding and errors, with or without the framework.
 10. [State cache](./state.md): keeping guilds, channels, members and messages in memory.
 11. [Translations](./locale.md): replies, built-in messages and command names in the user's language.
+12. [Testing handlers](./testing.md): running handlers in unit tests, without connecting to Discord.
 
 ## Packages
 
@@ -27,6 +28,7 @@ minidis is made of layers, and each works without the ones above it:
 | `minidis/locale`         | Translations of replies and command names, by Discord locale.                                                                                                      |
 | `minidis/discord/client` | The REST and Gateway client.                                                                                                                                       |
 | `minidis/discord`        | The Discord API types.                                                                                                                                             |
+| `minidis/minidistest`    | Fakes Discord for unit tests of handlers.                                                                                                                          |
 
 The `minidis.Bot` embeds the bot of `interactions`, and has its types under the same names (`minidis.Command` is `interactions.Command`), so everything in these guides about interactions works with either. The examples use `minidis`; a bot that only handles interactions can swap in `interactions`, as described in [Getting started](./getting-started.md#interactions-only-bots).
 
@@ -40,6 +42,7 @@ The `minidis.Bot` embeds the bot of `interactions`, and has its types under the 
 | [`subcommands`](../example/subcommands/main.go)       | Subcommands and groups                                        |
 | [`autocomplete`](../example/autocomplete/main.go)     | Autocomplete                                                  |
 | [`components`](../example/components/main.go)         | Buttons and select menus                                      |
+| [`paginator`](../example/paginator/main.go)           | Pages of embeds turned with buttons                           |
 | [`modals`](../example/modals/main.go)                 | A modal with text inputs, radio groups and checkboxes         |
 | [`context_menus`](../example/context_menus/main.go)   | Message and user commands                                     |
 | [`channel_messages`](../example/channel_messages/main.go) | Messages of one channel                                   |

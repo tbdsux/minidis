@@ -51,7 +51,7 @@ s.GuildBanCreate(client.WithAuditLogReason(ctx, "spam"), guildID, userID, 0)
 
 ### Every page
 
-`ChannelMessagesAll`, `GuildMembersAll`, `GuildBansAll` and `MessageReactionsAll` go through a whole list, fetching the next page as the loop reaches it. Breaking out of the loop stops the fetching, and a page that fails ends it with the error:
+`ChannelMessagesAll`, `ChannelPinsAll`, `GuildMembersAll`, `GuildBansAll`, `GuildAuditLogAll`, `GuildScheduledEventUsersAll`, `CurrentUserGuildsAll`, `ThreadMembersAll`, `MessageReactionsAll` and `PollAnswerVotersAll` go through a whole list, fetching the next page as the loop reaches it. Breaking out of the loop stops the fetching, and a page that fails ends it with the error:
 
 ```go
 for m, err := range s.GuildMembersAll(ctx, guildID) {
@@ -82,6 +82,24 @@ The path is relative to the versioned base URL, and the body and result are JSON
 The client keeps to Discord's rate limits by itself: requests wait for their bucket, and stay under the global limit of 50 a second. A 429 response is waited out and retried, and so is a 502, 503 or 504 for requests that are safe to repeat. A canceled context stops the waiting.
 
 It also counts the 401, 403 and 429 responses that get an IP banned by Discord for a while, and logs a warning as they add up.
+
+### Metrics
+
+`Session.RequestHook`, if set, is called after every attempt at a request, retries included, with a `client.RequestInfo`: the method, the `Route` with its IDs and tokens replaced (such as `/channels/:id/messages`), the status (0 if no response came back), the latency, the attempt number, whether it got a 429, how long it waited for its rate limit before it was sent, and the error if no response came back. The library depends on no metrics package, so this is where one plugs in, such as Prometheus:
+
+```go
+requests := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Name: "discord_rest_request_seconds",
+}, []string{"method", "route", "status"})
+prometheus.MustRegister(requests)
+
+s.RequestHook = func(info client.RequestInfo) {
+	requests.WithLabelValues(info.Method, info.Route, strconv.Itoa(info.Status)).
+		Observe(info.Latency.Seconds())
+}
+```
+
+The hook runs inline, before the request returns or is retried, so it must be quick: a slow hook slows every request. It may be called from several goroutines at once. Set it before making requests.
 
 ### Errors
 
