@@ -102,9 +102,10 @@ func (p *player) update(u *UpdatePlayer, track *Track, stop, noReplace bool) {
 	if u.Paused != nil {
 		p.paused = *u.Paused
 	}
-	volumeChanged := u.Volume != nil && *u.Volume != p.volume
+	volumeChanged := false
 	if u.Volume != nil {
-		p.volume = min(max(*u.Volume, 0), 1000)
+		v := min(max(*u.Volume, 0), 1000)
+		volumeChanged, p.volume = v != p.volume, v
 	}
 	playing := p.track != nil
 	p.mu.Unlock()
@@ -294,8 +295,7 @@ func (p *player) run(ctx context.Context, st *stream, t *Track, volume int, anno
 			}
 		}
 		if !speaking {
-			conn.Speaking(true)
-			speaking = true
+			speaking = conn.Speaking(true) == nil // retried next frame, as while the gateway resumes
 		}
 		if err := conn.WriteOpus(pending); errors.Is(err, voice.ErrNotReady) {
 			continue

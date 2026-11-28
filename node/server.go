@@ -72,13 +72,13 @@ func New(cfg Config) *Server {
 			return c, nil
 		}
 	}
-	if cfg.StuckThreshold == 0 {
+	if cfg.StuckThreshold <= 0 {
 		cfg.StuckThreshold = 10 * time.Second
 	}
-	if cfg.PlayerUpdateInterval == 0 {
+	if cfg.PlayerUpdateInterval <= 0 {
 		cfg.PlayerUpdateInterval = 5 * time.Second
 	}
-	if cfg.StatsInterval == 0 {
+	if cfg.StatsInterval <= 0 {
 		cfg.StatsInterval = 60 * time.Second
 	}
 	if cfg.Logger == nil {
@@ -316,6 +316,10 @@ func (s *Server) handleUpdatePlayer(w http.ResponseWriter, r *http.Request) {
 	var u UpdatePlayer
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&u); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if u.Position != nil && *u.Position < 0 {
+		writeError(w, r, http.StatusBadRequest, "position must not be negative")
 		return
 	}
 	if u.Voice != nil && (u.Voice.Token == "" || u.Voice.Endpoint == "" || u.Voice.SessionID == "" || u.Voice.ChannelID == "") {
