@@ -209,10 +209,16 @@ func Dial(ctx context.Context, p Params) (*Conn, error) {
 		c.udp = udp
 		c.udpMu.Unlock()
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		c.udp.SetReadDeadline(dl)
-	}
+	// ctx ending, by its deadline or a cancel, interrupts the discovery read.
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		c.udp.SetReadDeadline(time.Now())
+		close(interrupted)
+	})
 	ip, port, err := discoverIP(c.udp, c.ssrc)
+	if !stop() {
+		<-interrupted
+	}
 	if err != nil {
 		return fail(fmt.Errorf("voice: ip discovery: %w", err))
 	}
@@ -303,7 +309,14 @@ func (c *Conn) Ping() int64 { return c.ping.Load() }
 func (c *Conn) Done() <-chan struct{} { return c.done }
 
 // Err is the reason the connection ended, valid once Done is closed.
-func (c *Conn) Err() error { return c.err }
+func (c *Conn) Err() error {
+	select {
+	case <-c.done:
+		return c.err
+	default:
+		return nil
+	}
+}
 
 // Close ends the connection.
 func (c *Conn) Close() error {
@@ -475,7 +488,12 @@ func (c *Conn) handleJSON(ws *websocket.Conn, m wsMessage) {
 	json.Unmarshal(m.D, &d)
 	switch m.Op {
 	case opHello:
-		go c.heartbeat(ws, time.Duration(d.HeartbeatInterval*float64(time.Millisecond)))
+		interval := time.Duration(d.HeartbeatInterval * float64(time.Millisecond))
+		if interval <= 0 { // time.NewTicker panics on it
+			c.log.Warn("voice: hello without a heartbeat interval", "heartbeat_interval", d.HeartbeatInterval)
+			return
+		}
+		go c.heartbeat(ws, interval)
 	case opHeartbeatACK:
 		now := time.Now().UnixMilli()
 		c.lastAck.Store(now)
