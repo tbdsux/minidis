@@ -58,4 +58,5 @@ const (
 	KeyCooldown           = interactions.KeyCooldown
 	KeyGuildOnly          = interactions.KeyGuildOnly
 	KeyMissingPermissions = interactions.KeyMissingPermissions
+	KeyPaginateAuthorOnly = interactions.KeyPaginateAuthorOnly
 )

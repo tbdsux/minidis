@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +89,7 @@ func (m *Minidis) Paginate(c *Context, pages []Page, opts PaginateOptions) error
 		action := strings.TrimPrefix(click.Data.CustomID, p.prefix)
 		switch {
 		case !opts.Anyone && click.Author.ID != c.Author.ID:
-			err = click.ReplyWith(Message{Content: fmt.Sprintf("Only <@%s> can turn these pages.", c.Author.ID), Ephemeral: true})
+			err = click.ReplyWith(Message{Content: click.translate(KeyPaginateAuthorOnly, "Only <@%s> can turn these pages.", c.Author.ID), Ephemeral: true})
 		case action == "stop":
 			err = click.UpdateWith(MessageEdit{Components: p.buttons(page, true)})
 			cancel()

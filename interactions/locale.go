@@ -19,6 +19,9 @@ const (
 	// KeyMissingPermissions is the reply of RequirePermissions to a member
 	// without the permissions: "You don't have the permissions to use this."
 	KeyMissingPermissions = "minidis.missing_permissions"
+	// KeyPaginateAuthorOnly is the reply of Paginate to someone else clicking
+	// its buttons: "Only <@%s> can turn these pages.", where %s is the user ID.
+	KeyPaginateAuthorOnly = "minidis.paginate_author_only"
 )
 
 // SetCatalog sets the translations that c.T and the built-in replies, such
