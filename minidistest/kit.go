@@ -218,7 +218,7 @@ func defaultAnswer(r *Request, id string) answer {
 	// An object is echoed with an ID, such as a message that was sent; an
 	// array, such as commands being overwritten, as it is.
 	var fields map[string]any
-	if json.Unmarshal(r.Body, &fields) != nil {
+	if json.Unmarshal(r.Body, &fields) != nil || fields == nil { // nil for a JSON null
 		if bytes.HasPrefix(bytes.TrimSpace(r.Body), []byte("[")) {
 			return answer{http.StatusOK, r.Body}
 		}
