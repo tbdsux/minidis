@@ -581,3 +581,31 @@ func TestVoiceClosedAndDestroy(t *testing.T) {
 		t.Fatalf("player after delete = %d", code)
 	}
 }
+
+// Turning resuming off ends a session waiting to be resumed at once, as a
+// client closing while it reconnects asks.
+func TestResumingOffEndsWaitingSession(t *testing.T) {
+	h := newHarness(t)
+	sid := h.sid
+	if code, _ := h.do("PATCH", "/v4/sessions/"+sid, map[string]any{"timeout": int64(1) << 62}); code != 400 {
+		t.Fatalf("overflowing timeout = %d", code)
+	}
+	if code, _ := h.do("PATCH", "/v4/sessions/"+sid+"/players/42", map[string]any{"position": -1}); code != 400 {
+		t.Fatalf("negative position = %d", code)
+	}
+	h.do("PATCH", "/v4/sessions/"+sid, map[string]any{"resuming": true, "timeout": 60})
+	c := h.join()
+	h.ws.Close()
+	h.waitDetached(sid)
+	if code, res := h.do("PATCH", "/v4/sessions/"+sid, map[string]any{"resuming": false}); code != 200 || res["resuming"] != false {
+		t.Fatalf("resuming off = %d %v", code, res)
+	}
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("player kept after resuming was turned off")
+	}
+	if code, _ := h.do("GET", "/v4/sessions/"+sid+"/players", nil); code != 404 {
+		t.Fatalf("session after resuming off = %d", code)
+	}
+}

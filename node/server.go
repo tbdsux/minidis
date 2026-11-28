@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"runtime"
 	"slices"
@@ -267,8 +268,8 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	if u.Timeout != nil && *u.Timeout <= 0 {
-		writeError(w, r, http.StatusBadRequest, "timeout must be positive")
+	if u.Timeout != nil && (*u.Timeout <= 0 || *u.Timeout > int64(math.MaxInt64/time.Second)) {
+		writeError(w, r, http.StatusBadRequest, "timeout must be positive and fit in a duration")
 		return
 	}
 	sess.mu.Lock()
@@ -278,8 +279,22 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	if u.Timeout != nil {
 		sess.timeout = time.Duration(*u.Timeout) * time.Second
 	}
-	res := map[string]any{"resuming": sess.resuming, "timeout": int64(sess.timeout / time.Second)}
+	resuming := sess.resuming
+	res := map[string]any{"resuming": resuming, "timeout": int64(sess.timeout / time.Second)}
 	sess.mu.Unlock()
+	if !resuming {
+		// Waiting to be resumed is what resuming off ends: end it now, as
+		// the client asks when it closes while reconnecting.
+		sess.wsMu.Lock()
+		waiting := sess.ws == nil && !sess.ended
+		if waiting {
+			sess.ended = true
+		}
+		sess.wsMu.Unlock()
+		if waiting {
+			s.end(sess)
+		}
+	}
 	writeJSON(w, res)
 }
 
@@ -474,6 +489,8 @@ func (s *Server) detach(sess *session, ws *websocket.Conn) {
 				s.end(sess)
 			}
 		})
+	} else {
+		sess.ended = true // so no resume slips in before end
 	}
 	sess.wsMu.Unlock()
 	if resuming {
