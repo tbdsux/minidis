@@ -3,8 +3,9 @@
 // existing Lavalink clients) control per-guild players over HTTP while the
 // node does the voice connection, DAVE encryption and ffmpeg decoding.
 //
-// Implemented: /version, /v4/info, /v4/stats, /v4/loadtracks (http(s) URLs
-// and files under Config.Source's local directory), /v4/decodetrack(s),
+// Implemented: /version, /v4/info, /v4/stats, /v4/loadtracks (http(s) URLs,
+// YouTube links through yt-dlp, and files under Config.Source's local
+// directory), /v4/decodetrack(s),
 // players (GET/PATCH/DELETE: track, position, volume, paused, voice),
 // PATCH /v4/sessions/{id} (accepted, but resuming is not supported), and the
 // WebSocket ops ready, playerUpdate, stats and event.
@@ -121,7 +122,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"git":            map[string]any{"branch": "", "commit": "", "commitTime": 0},
 		"jvm":            runtime.Version(),
 		"lavaplayer":     "none (ffmpeg)",
-		"sourceManagers": []string{"http", "local"},
+		"sourceManagers": []string{"http", "youtube", "local"},
 		"filters":        []string{},
 		"plugins":        []any{},
 	})

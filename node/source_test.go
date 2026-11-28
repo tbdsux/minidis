@@ -117,3 +117,92 @@ func TestFFmpegIntegration(t *testing.T) {
 		t.Error("missing HTTP file loaded")
 	}
 }
+
+func TestYouTubeInput(t *testing.T) {
+	f := &FFmpeg{}
+	for id, want := range map[string]string{
+		"https://www.youtube.com/watch?v=abc": "youtube",
+		"https://youtu.be/abc":                "youtube",
+		"https://music.youtube.com/watch?v=x": "youtube",
+		"https://youtube.com.example/v":       "http",
+		"https://example.com/youtube.com":     "http",
+	} {
+		if _, got, err := f.input(id); err != nil || got != want {
+			t.Errorf("input(%q) source = %q, %v; want %q", id, got, err, want)
+		}
+	}
+	args := strings.Join(ffmpegArgs("pipe:0", "youtube", 0, 100), " ")
+	if !strings.Contains(args, "-protocol_whitelist pipe -i pipe:0") {
+		t.Errorf("youtube ffmpeg args = %s", args)
+	}
+	if got := ytdlpArgs("-x", "-J"); got[len(got)-2] != "--" || got[len(got)-1] != "-x" {
+		t.Errorf("yt-dlp args = %v, want the URL after --", got)
+	}
+}
+
+// TestYouTubePipeline runs real ffmpeg behind a fake yt-dlp that prints
+// metadata for -J and streams a tone file for -o -.
+func TestYouTubePipeline(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	tone := filepath.Join(dir, "tone.webm")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libopus", tone).CombinedOutput(); err != nil {
+		t.Fatalf("make tone: %v %s", err, out)
+	}
+	script := filepath.Join(dir, "yt-dlp")
+	os.WriteFile(script, []byte(`#!/bin/sh
+for a; do url=$a; done
+case "$url" in *gone*) echo "ERROR: Video unavailable" >&2; exit 1;; esac
+case " $* " in
+*" --dump-single-json "*)
+  case "$url" in *list=*) echo '{"_type":"playlist","entries":[]}';;
+  *) echo '{"title":"Tone","channel":"Test Channel","duration":1.0,"webpage_url":"https://www.youtube.com/watch?v=abc","thumbnail":"https://i.ytimg.com/a.jpg"}';; esac;;
+*" -o - "*) cat "`+tone+`";;
+esac
+`), 0o755)
+	f := &FFmpeg{YTDLP: script}
+	ctx := context.Background()
+
+	info, err := f.Load(ctx, "https://youtu.be/abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Title != "Tone" || info.Author != "Test Channel" || info.Length != 1000 || !info.IsSeekable ||
+		info.SourceName != "youtube" || *info.URI != "https://www.youtube.com/watch?v=abc" || *info.ArtworkURL != "https://i.ytimg.com/a.jpg" {
+		t.Fatalf("info = %+v", info)
+	}
+	fr, err := f.Open(ctx, info, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for {
+		if _, err := fr.ReadFrame(); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	fr.Close()
+	if n < 48 || n > 52 {
+		t.Fatalf("%d frames, want about 50", n)
+	}
+
+	if _, err := f.Load(ctx, "https://www.youtube.com/playlist?list=PL1"); err == nil || !strings.Contains(err.Error(), "playlists") {
+		t.Errorf("playlist = %v", err)
+	}
+	if _, err := f.Load(ctx, "https://youtu.be/gone"); err == nil || !strings.Contains(err.Error(), "Video unavailable") {
+		t.Errorf("unavailable load = %v", err)
+	}
+	fr, err = f.Open(ctx, TrackInfo{Identifier: "https://youtu.be/gone"}, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fr.Close()
+	if _, err := fr.ReadFrame(); err == nil || !strings.Contains(err.Error(), "yt-dlp") || !strings.Contains(err.Error(), "Video unavailable") {
+		t.Errorf("unavailable play = %v, want yt-dlp's error", err)
+	}
+}
