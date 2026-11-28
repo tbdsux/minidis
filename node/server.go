@@ -554,11 +554,12 @@ func (s *session) attach(ws *websocket.Conn, resumed bool) bool {
 		s.expiry.Stop()
 		s.expiry = nil
 	}
-	s.writeLocked(map[string]any{"op": "ready", "resumed": resumed, "sessionId": s.id})
-	for _, v := range s.queue {
-		s.writeLocked(v)
-	}
+	queue := s.queue
 	s.queue = nil
+	s.writeLocked(map[string]any{"op": "ready", "resumed": resumed, "sessionId": s.id})
+	for _, v := range queue {
+		s.writeLocked(v) // a failed write queues it again
+	}
 	s.wsMu.Unlock()
 	if old != nil {
 		old.Close() // a client resuming before the node saw its old WebSocket drop
@@ -575,15 +576,24 @@ func (s *session) send(v any) {
 		s.writeLocked(v)
 		return
 	}
+	s.queueLocked(v)
+}
+
+func (s *session) queueLocked(v any) {
 	if m, ok := v.(map[string]any); ok && m["op"] == "event" && !s.ended && len(s.queue) < maxQueued {
 		s.queue = append(s.queue, v)
 	}
 }
 
+// writeLocked writes v to the WebSocket. When that fails, it closes the
+// WebSocket, so the reader detaches it and later writes fail at once rather
+// than wait out the deadline, and keeps an event for a resume.
 func (s *session) writeLocked(v any) {
 	s.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := s.ws.WriteJSON(v); err != nil {
 		s.node.log.Debug("node: websocket write", "session", s.id, "error", err)
+		s.ws.Close()
+		s.queueLocked(v)
 	}
 }
 
