@@ -7,8 +7,10 @@
 // YouTube links and "ytsearch:" searches through yt-dlp, and files under
 // Config.Source's local directory), /v4/decodetrack(s),
 // players (GET/PATCH/DELETE: track, position, volume, paused, voice),
-// PATCH /v4/sessions/{id} (accepted, but resuming is not supported), and the
-// WebSocket ops ready, playerUpdate, stats and event.
+// PATCH /v4/sessions/{id} (resuming and its timeout), and the WebSocket ops
+// ready, playerUpdate, stats and event. A session with resuming on keeps its
+// players playing for the timeout after its WebSocket drops, queues their
+// events, and is taken back by a WebSocket that sends its Session-Id header.
 package node
 
 import (
@@ -52,6 +54,10 @@ type Server struct {
 	mux     *http.ServeMux
 	started time.Time
 
+	// pingPeriod and pongWait are how often the node pings clients and how
+	// long it waits for an answer; tests shorten them.
+	pingPeriod, pongWait time.Duration
+
 	mu       sync.Mutex
 	sessions map[string]*session
 }
@@ -78,7 +84,8 @@ func New(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	s := &Server{cfg: cfg, log: cfg.Logger, mux: http.NewServeMux(), started: time.Now(), sessions: map[string]*session{}}
+	s := &Server{cfg: cfg, log: cfg.Logger, mux: http.NewServeMux(), started: time.Now(), sessions: map[string]*session{},
+		pingPeriod: 15 * time.Second, pongWait: 45 * time.Second}
 
 	s.mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(Version)) })
 	s.mux.HandleFunc("GET /v4/info", s.handleInfo)
@@ -248,11 +255,32 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *session {
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
-	if s.session(w, r) == nil {
+	sess := s.session(w, r)
+	if sess == nil {
 		return
 	}
-	// shortcut: resuming is accepted but not implemented; players die with the WebSocket.
-	writeJSON(w, map[string]any{"resuming": false, "timeout": 60})
+	var u struct {
+		Resuming *bool  `json:"resuming"`
+		Timeout  *int64 `json:"timeout"` // seconds
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&u); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if u.Timeout != nil && *u.Timeout <= 0 {
+		writeError(w, r, http.StatusBadRequest, "timeout must be positive")
+		return
+	}
+	sess.mu.Lock()
+	if u.Resuming != nil {
+		sess.resuming = *u.Resuming
+	}
+	if u.Timeout != nil {
+		sess.timeout = time.Duration(*u.Timeout) * time.Second
+	}
+	res := map[string]any{"resuming": sess.resuming, "timeout": int64(sess.timeout / time.Second)}
+	sess.mu.Unlock()
+	writeJSON(w, res)
 }
 
 func (s *Server) handlePlayers(w http.ResponseWriter, r *http.Request) {
@@ -352,20 +380,107 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	sess := newSession(s, ws, userID)
-	s.mu.Lock()
-	s.sessions[sess.id] = sess
-	s.mu.Unlock()
-	s.log.Info("node: session opened", "session", sess.id, "client", r.Header.Get("Client-Name"))
-
-	sess.send(map[string]any{"op": "ready", "resumed": false, "sessionId": sess.id})
-	go sess.tick()
+	sess := s.resume(r.Header.Get("Session-Id"), userID, ws)
+	if sess != nil {
+		s.log.Info("node: session resumed", "session", sess.id)
+	} else {
+		sess = newSession(s, userID)
+		s.mu.Lock()
+		s.sessions[sess.id] = sess
+		s.mu.Unlock()
+		sess.attach(ws, false)
+		s.log.Info("node: session opened", "session", sess.id, "client", r.Header.Get("Client-Name"))
+		go sess.tick()
+	}
+	// The node pings, and drops a client that stops answering, so a WebSocket
+	// that died without failing, as after a network change, still ends. Set
+	// before reading starts: the pong handler runs inside ReadMessage.
+	ws.SetReadDeadline(time.Now().Add(s.pongWait))
+	ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(s.pongWait)) })
+	stop := make(chan struct{})
+	go keepalive(ws, s.pingPeriod, stop)
 	for {
 		if _, _, err := ws.ReadMessage(); err != nil {
 			break
 		}
 	}
+	close(stop)
+	s.detach(sess, ws)
+}
 
+// keepalive pings ws every period until stop is closed.
+func keepalive(ws *websocket.Conn, period time.Duration, stop chan struct{}) {
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// resume gives ws the session id when it is the user's and resuming is on,
+// or returns nil.
+func (s *Server) resume(id, userID string, ws *websocket.Conn) *session {
+	if id == "" {
+		return nil
+	}
+	s.mu.Lock()
+	sess := s.sessions[id]
+	s.mu.Unlock()
+	if sess == nil || sess.userID != userID {
+		return nil
+	}
+	sess.mu.Lock()
+	resuming := sess.resuming
+	sess.mu.Unlock()
+	if !resuming || !sess.attach(ws, true) {
+		return nil
+	}
+	return sess
+}
+
+// detach handles ws dropping: the session ends, or with resuming on waits
+// for its timeout to be resumed.
+func (s *Server) detach(sess *session, ws *websocket.Conn) {
+	ws.Close()
+	sess.wsMu.Lock()
+	if sess.ws != ws { // resumed on a new WebSocket, or ended
+		sess.wsMu.Unlock()
+		return
+	}
+	sess.ws = nil
+	sess.mu.Lock()
+	resuming, timeout := sess.resuming, sess.timeout
+	sess.mu.Unlock()
+	if resuming {
+		sess.expiry = time.AfterFunc(timeout, func() {
+			sess.wsMu.Lock()
+			expired := sess.ws == nil && !sess.ended
+			if expired {
+				sess.ended = true // so no resume slips in before end
+			}
+			sess.wsMu.Unlock()
+			if expired {
+				s.end(sess)
+			}
+		})
+	}
+	sess.wsMu.Unlock()
+	if resuming {
+		s.log.Info("node: session waiting to be resumed", "session", sess.id, "timeout", timeout)
+		return
+	}
+	s.end(sess)
+}
+
+// end removes the session and destroys its players.
+func (s *Server) end(sess *session) {
 	s.mu.Lock()
 	delete(s.sessions, sess.id)
 	s.mu.Unlock()
@@ -373,7 +488,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("node: session closed", "session", sess.id)
 }
 
-// session is one client WebSocket and the players it owns.
+// maxQueued is how many events a session waiting to be resumed keeps.
+const maxQueued = 1000
+
+// session is one client and the players it owns. Its WebSocket is nil while
+// it waits to be resumed.
 type session struct {
 	node   *Server
 	id     string
@@ -381,22 +500,66 @@ type session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	wsMu sync.Mutex
-	ws   *websocket.Conn
+	wsMu   sync.Mutex
+	ws     *websocket.Conn
+	queue  []any       // events sent while ws is nil
+	expiry *time.Timer // ends the session unless it is resumed first
+	ended  bool
 
-	mu      sync.Mutex
-	players map[string]*player
+	mu       sync.Mutex
+	players  map[string]*player
+	resuming bool
+	timeout  time.Duration
 }
 
-func newSession(n *Server, ws *websocket.Conn, userID string) *session {
+func newSession(n *Server, userID string) *session {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &session{node: n, id: rand.Text()[:16], userID: userID, ctx: ctx, cancel: cancel,
-		ws: ws, players: map[string]*player{}}
+		players: map[string]*player{}, timeout: 60 * time.Second}
 }
 
+// attach makes ws the session's WebSocket, sends it the ready message and
+// the queued events, and closes a WebSocket it replaces. It fails once the
+// session ended.
+func (s *session) attach(ws *websocket.Conn, resumed bool) bool {
+	s.wsMu.Lock()
+	if s.ended {
+		s.wsMu.Unlock()
+		return false
+	}
+	old := s.ws
+	s.ws = ws
+	if s.expiry != nil {
+		s.expiry.Stop()
+		s.expiry = nil
+	}
+	s.writeLocked(map[string]any{"op": "ready", "resumed": resumed, "sessionId": s.id})
+	for _, v := range s.queue {
+		s.writeLocked(v)
+	}
+	s.queue = nil
+	s.wsMu.Unlock()
+	if old != nil {
+		old.Close() // a client resuming before the node saw its old WebSocket drop
+	}
+	return true
+}
+
+// send writes v to the WebSocket, or queues it if it is an event and the
+// session waits to be resumed. playerUpdate and stats are not queued.
 func (s *session) send(v any) {
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()
+	if s.ws != nil {
+		s.writeLocked(v)
+		return
+	}
+	if m, ok := v.(map[string]any); ok && m["op"] == "event" && !s.ended && len(s.queue) < maxQueued {
+		s.queue = append(s.queue, v)
+	}
+}
+
+func (s *session) writeLocked(v any) {
 	s.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := s.ws.WriteJSON(v); err != nil {
 		s.node.log.Debug("node: websocket write", "session", s.id, "error", err)
@@ -465,7 +628,16 @@ func (s *session) sendStats() {
 
 func (s *session) close() {
 	s.cancel()
-	s.ws.Close()
+	s.wsMu.Lock()
+	s.ended = true
+	if s.ws != nil {
+		s.ws.Close()
+	}
+	if s.expiry != nil {
+		s.expiry.Stop()
+	}
+	s.queue = nil
+	s.wsMu.Unlock()
 	for _, p := range s.playerList() {
 		p.destroy()
 	}
