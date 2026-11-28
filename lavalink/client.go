@@ -458,6 +458,17 @@ func (c *Client) playerPath(guildID string) (string, error) {
 // LoadTrack resolves an identifier (a URL, a file on the node, or a search
 // such as "ytsearch:..." on nodes that support it) to its first track.
 func (c *Client) LoadTrack(ctx context.Context, identifier string) (*Track, error) {
+	tracks, err := c.LoadTracks(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+	return tracks[0], nil
+}
+
+// LoadTracks resolves an identifier like LoadTrack, but returns every track:
+// all the results of a search, or all the tracks of a playlist, such as to
+// let someone pick one. It returns ErrNoMatches rather than no tracks.
+func (c *Client) LoadTracks(ctx context.Context, identifier string) ([]*Track, error) {
 	var res struct {
 		LoadType string          `json:"loadType"`
 		Data     json.RawMessage `json:"data"`
@@ -472,7 +483,7 @@ func (c *Client) LoadTrack(ctx context.Context, identifier string) (*Track, erro
 		if err := json.Unmarshal(res.Data, &t); err != nil {
 			return nil, err
 		}
-		return &t, nil
+		tracks = []*Track{&t}
 	case "search":
 		if err := json.Unmarshal(res.Data, &tracks); err != nil {
 			return nil, err
@@ -493,7 +504,7 @@ func (c *Client) LoadTrack(ctx context.Context, identifier string) (*Track, erro
 	if len(tracks) == 0 {
 		return nil, ErrNoMatches
 	}
-	return tracks[0], nil
+	return tracks, nil
 }
 
 // UpdatePlayer changes the guild's player, creating it if needed. With

@@ -236,6 +236,15 @@ func TestLoadTrack(t *testing.T) {
 	if _, err := c.LoadTrack(ctx, "none"); !errors.Is(err, ErrNoMatches) {
 		t.Errorf("empty = %v", err)
 	}
+	if tr, err := c.LoadTracks(ctx, "search"); err != nil || len(tr) != 2 || tr[1].Encoded != "E3" {
+		t.Errorf("LoadTracks(search) = %v, %v; want E2 and E3", tr, err)
+	}
+	if tr, err := c.LoadTracks(ctx, "one"); err != nil || len(tr) != 1 || tr[0].Encoded != "E1" {
+		t.Errorf("LoadTracks(one) = %v, %v", tr, err)
+	}
+	if _, err := c.LoadTracks(ctx, "none"); !errors.Is(err, ErrNoMatches) {
+		t.Errorf("LoadTracks(none) = %v", err)
+	}
 	if _, err := c.LoadTrack(ctx, "broken"); err == nil || err.(*Exception).Message != "boom" {
 		t.Errorf("error = %v", err)
 	}

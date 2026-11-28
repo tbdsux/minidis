@@ -72,6 +72,7 @@ The player methods all take the guild ID:
 | Method | Does |
 | --- | --- |
 | `LoadTrack(ctx, identifier)` | Resolves a URL, YouTube link, `ytsearch:` search (to its first result) or file name to a `*Track`. Returns `ErrNoMatches` when nothing is found, and an `*Exception` when loading fails. |
+| `LoadTracks(ctx, identifier)` | Like `LoadTrack`, but returns every track: all the results of a search, such as to let someone pick one, or all the tracks of a playlist on nodes that have them. |
 | `Play(ctx, guild, track)` | Plays the track, replacing the current one. |
 | `Stop`, `Pause(…, bool)`, `Seek(…, time.Duration)`, `SetVolume(…, percent)` | Control the player. |
 | `Player(ctx, guild)` | Returns the player's track, position, volume and connection state. |
