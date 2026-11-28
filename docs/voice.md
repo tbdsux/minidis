@@ -86,7 +86,7 @@ The node keeps no queue. That is the bot's job, as with Lavalink. `OnEvent` rece
 | Type | When |
 | --- | --- |
 | `TrackStartEvent` | A track starts playing. |
-| `TrackEndEvent` | A track ends. `Reason` is one of `finished`, `loadFailed`, `stopped` or `replaced`. |
+| `TrackEndEvent` | A track ends. `Reason` is one of `finished`, `loadFailed`, `stopped`, `replaced`, or `cleanup` when the node lost the session it played on. |
 | `TrackExceptionEvent` | A track failed. `Exception` says why. |
 | `TrackStuckEvent` | No audio for `ThresholdMs` (10 seconds). |
 | `WebSocketClosedEvent` | The node's Discord voice connection closed. `Code` is Discord's voice close code. |
@@ -100,7 +100,7 @@ Connections drop, and both of them recover on their own. That includes connectio
 - **The node's voice connection to Discord.** When it drops, or Discord closes it with 4015 (voice server crashed), the node reconnects and resumes the voice session, up to 5 times in a row. Audio keeps going meanwhile. Other close codes end the connection with a `WebSocketClosedEvent`, such as 4014 when the bot is removed from the channel, or 4006 when the session is no longer valid.
 - **The bot's WebSocket to the node.** When it drops, the client reconnects, waiting longer after each failure, up to 30 seconds. The client turns on resuming when it connects, so the node keeps the session's players playing for 60 seconds, queues their events, and sends them once the client is back. Player methods keep working while the client reconnects.
 
-If the node restarted, or the client took longer than 60 seconds, the node starts a new session. The client then sends the node the bot's voice state for each guild again, so the players reconnect to voice, but the tracks that were playing ended without a `TrackEndEvent`. A bot that keeps a queue should play its current track again.
+If the node restarted, or the client took longer than 60 seconds, the node starts a new session. The client then sends the node the bot's voice state for each guild again, so the players reconnect to voice, and sends `OnEvent` a `TrackEndEvent` with the reason `EndCleanup` for each track that was playing. `MayStartNext` is false for it: a bot that keeps a queue should play its current track again, as [`example/music`](../example/music/main.go) does.
 
 `Close` turns resuming off and stops reconnecting, so the node ends the players at once.
 

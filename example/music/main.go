@@ -52,6 +52,16 @@ func (q *queues) next(guildID string) *lavalink.Track {
 	return q.tracks[guildID][0]
 }
 
+// current returns the playing track, or nil.
+func (q *queues) current(guildID string) *lavalink.Track {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.tracks[guildID]) == 0 {
+		return nil
+	}
+	return q.tracks[guildID][0]
+}
+
 func (q *queues) clear(guildID string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -72,6 +82,13 @@ func main() {
 		switch {
 		case e.Type == lavalink.TrackExceptionEvent:
 			log.Printf("guild %s: %s failed: %v", e.GuildID, e.Track.Info.Title, e.Exception)
+		case e.Type == lavalink.TrackEndEvent && e.Reason == lavalink.EndCleanup:
+			// The node restarted or dropped the session: play the track again.
+			if t := q.current(e.GuildID); t != nil {
+				if err := ll.Play(context.Background(), e.GuildID, t); err != nil {
+					log.Printf("guild %s: play again: %v", e.GuildID, err)
+				}
+			}
 		case e.MayStartNext():
 			if t := q.next(e.GuildID); t != nil {
 				if err := ll.Play(context.Background(), e.GuildID, t); err != nil {
