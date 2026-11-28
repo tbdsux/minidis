@@ -19,6 +19,10 @@ jobs:
     defaults:
       run:
         working-directory: ${{ matrix.module }}
+    env:
+      # voice and node build against this checkout through go.work. The root
+      # module needs none of it, and its job runs the root's own Go version.
+      GOWORK: ${{ matrix.module == '.' && 'off' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

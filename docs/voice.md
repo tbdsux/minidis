@@ -16,12 +16,14 @@ The node and voice modules are separate so that the core module keeps its one de
 
 The node needs `ffmpeg` and `ffprobe` on its `PATH`, built with libopus. Most builds have it. For YouTube links it also needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). Keep yt-dlp up to date (`yt-dlp -U`, or your package manager), because YouTube changes often and old versions stop working.
 
-`node` is its own Go module, so run it from its folder in a checkout of the repository:
+Install it with Go and run it:
 
 ```sh
-cd node
-MINIDIS_NODE_PASSWORD=secret go run ./cmd/minidis-node -addr :2333 -local-dir ~/Music
+go install github.com/tbdsux/minidis/node/cmd/minidis-node@latest
+MINIDIS_NODE_PASSWORD=secret minidis-node -addr :2333 -local-dir ~/Music
 ```
+
+In a checkout of the repository, `cd node && go run ./cmd/minidis-node` runs it from source instead. The repository's `go.work` builds it against the `voice` module and the core module in the checkout.
 
 - Every request must send the password as its `Authorization` header.
 - The node plays `http(s)` URLs, YouTube links, YouTube searches such as `ytsearch:never gonna give you up`, and files inside `-local-dir`. Without `-local-dir`, local files are disabled. Paths that lead outside the directory are refused, including through symlinks.
@@ -72,6 +74,7 @@ The player methods all take the guild ID:
 | Method | Does |
 | --- | --- |
 | `LoadTrack(ctx, identifier)` | Resolves a URL, YouTube link, `ytsearch:` search (to its first result) or file name to a `*Track`. Returns `ErrNoMatches` when nothing is found, and an `*Exception` when loading fails. |
+| `LoadTracks(ctx, identifier)` | Like `LoadTrack`, but returns every track: all the results of a search, such as to let someone pick one, or all the tracks of a playlist on nodes that have them. |
 | `Play(ctx, guild, track)` | Plays the track, replacing the current one. |
 | `Stop`, `Pause(…, bool)`, `Seek(…, time.Duration)`, `SetVolume(…, percent)` | Control the player. |
 | `Player(ctx, guild)` | Returns the player's track, position, volume and connection state. |
@@ -85,7 +88,7 @@ The node keeps no queue. That is the bot's job, as with Lavalink. `OnEvent` rece
 | Type | When |
 | --- | --- |
 | `TrackStartEvent` | A track starts playing. |
-| `TrackEndEvent` | A track ends. `Reason` is one of `finished`, `loadFailed`, `stopped` or `replaced`. |
+| `TrackEndEvent` | A track ends. `Reason` is one of `finished`, `loadFailed`, `stopped`, `replaced`, or `cleanup` when the node lost the session it played on. |
 | `TrackExceptionEvent` | A track failed. `Exception` says why. |
 | `TrackStuckEvent` | No audio for `ThresholdMs` (10 seconds). |
 | `WebSocketClosedEvent` | The node's Discord voice connection closed. `Code` is Discord's voice close code. |
@@ -99,7 +102,7 @@ Connections drop, and both of them recover on their own. That includes connectio
 - **The node's voice connection to Discord.** When it drops, or Discord closes it with 4015 (voice server crashed), the node reconnects and resumes the voice session, up to 5 times in a row. Audio keeps going meanwhile. Other close codes end the connection with a `WebSocketClosedEvent`, such as 4014 when the bot is removed from the channel, or 4006 when the session is no longer valid.
 - **The bot's WebSocket to the node.** When it drops, the client reconnects, waiting longer after each failure, up to 30 seconds. The client turns on resuming when it connects, so the node keeps the session's players playing for 60 seconds, queues their events, and sends them once the client is back. Player methods keep working while the client reconnects.
 
-If the node restarted, or the client took longer than 60 seconds, the node starts a new session. The client then sends the node the bot's voice state for each guild again, so the players reconnect to voice, but the tracks that were playing ended without a `TrackEndEvent`. A bot that keeps a queue should play its current track again.
+If the node restarted, or the client took longer than 60 seconds, the node starts a new session. The client then sends the node the bot's voice state for each guild again, so the players reconnect to voice, and sends `OnEvent` a `TrackEndEvent` with the reason `EndCleanup` for each track that was playing. `MayStartNext` is false for it: a bot that keeps a queue should play its current track again, as [`example/music`](../example/music/main.go) does.
 
 `Close` turns resuming off and stops reconnecting, so the node ends the players at once.
 

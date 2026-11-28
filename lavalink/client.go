@@ -86,6 +86,7 @@ type Client struct {
 	ws        *websocket.Conn
 	closed    bool                   // by Close, which stops reconnecting
 	voice     map[string]*VoiceState // by guild, as Discord sent it so far
+	playing   map[string]*Track      // by guild, from TrackStartEvent until its TrackEndEvent
 	handlers  []func(*Event)
 }
 
@@ -164,16 +165,21 @@ func (c *Client) connect(ctx context.Context, userID string) error {
 	}
 	c.ws, c.userID, c.sessionID = ws, userID, sessionID
 	guilds := slices.Collect(maps.Keys(c.voice))
+	var lost map[string]*Track
+	if old != "" && !resumed {
+		lost, c.playing = c.playing, nil
+	}
 	wait := cmp.Or(c.pongWait, pongWait)
 	c.mu.Unlock()
 	// Set before reading starts: the pong handler runs inside ReadMessage.
 	ws.SetReadDeadline(time.Now().Add(wait))
 	ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(wait)) })
-	go c.readLoop(ws, wait)
+	go c.readLoop(ws, wait, lost)
 	go c.keepalive(ws)
 
 	if old != "" && !resumed {
-		// The node ended the old session, and its players with it: connect voice again.
+		// The node ended the old session, and its players with it; readLoop
+		// tells the handlers their tracks ended. Connect voice again.
 		c.log().Warn("lavalink: node session not resumed; tracks that were playing ended", "session", sessionID)
 		for _, g := range guilds {
 			go c.sendVoice(g)
@@ -257,7 +263,21 @@ func (c *Client) keepalive(ws *websocket.Conn) {
 	}
 }
 
-func (c *Client) readLoop(ws *websocket.Conn, wait time.Duration) {
+// readLoop dispatches ws's events. It first sends a TrackEndEvent with
+// EndCleanup for each track of lost, which played on a session the node
+// ended, so handlers see every event on this one goroutine.
+func (c *Client) readLoop(ws *websocket.Conn, wait time.Duration, lost map[string]*Track) {
+	if len(lost) > 0 {
+		c.mu.Lock()
+		handlers := c.handlers
+		c.mu.Unlock()
+		for g, t := range lost {
+			e := &Event{Type: TrackEndEvent, GuildID: g, Track: t, Reason: EndCleanup}
+			for _, h := range handlers {
+				h(e)
+			}
+		}
+	}
 	for {
 		_, data, err := ws.ReadMessage()
 		if err == nil {
@@ -286,6 +306,15 @@ func (c *Client) readLoop(ws *websocket.Conn, wait time.Duration) {
 			continue // playerUpdate and stats
 		}
 		c.mu.Lock()
+		switch e.Type {
+		case TrackStartEvent:
+			if c.playing == nil {
+				c.playing = map[string]*Track{}
+			}
+			c.playing[e.GuildID] = e.Track
+		case TrackEndEvent:
+			delete(c.playing, e.GuildID)
+		}
 		handlers := c.handlers
 		c.mu.Unlock()
 		for _, h := range handlers {
@@ -458,6 +487,17 @@ func (c *Client) playerPath(guildID string) (string, error) {
 // LoadTrack resolves an identifier (a URL, a file on the node, or a search
 // such as "ytsearch:..." on nodes that support it) to its first track.
 func (c *Client) LoadTrack(ctx context.Context, identifier string) (*Track, error) {
+	tracks, err := c.LoadTracks(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+	return tracks[0], nil
+}
+
+// LoadTracks resolves an identifier like LoadTrack, but returns every track:
+// all the results of a search, or all the tracks of a playlist, such as to
+// let someone pick one. It returns ErrNoMatches rather than no tracks.
+func (c *Client) LoadTracks(ctx context.Context, identifier string) ([]*Track, error) {
 	var res struct {
 		LoadType string          `json:"loadType"`
 		Data     json.RawMessage `json:"data"`
@@ -472,7 +512,7 @@ func (c *Client) LoadTrack(ctx context.Context, identifier string) (*Track, erro
 		if err := json.Unmarshal(res.Data, &t); err != nil {
 			return nil, err
 		}
-		return &t, nil
+		tracks = []*Track{&t}
 	case "search":
 		if err := json.Unmarshal(res.Data, &tracks); err != nil {
 			return nil, err
@@ -493,7 +533,7 @@ func (c *Client) LoadTrack(ctx context.Context, identifier string) (*Track, erro
 	if len(tracks) == 0 {
 		return nil, ErrNoMatches
 	}
-	return tracks[0], nil
+	return tracks, nil
 }
 
 // UpdatePlayer changes the guild's player, creating it if needed. With
@@ -567,6 +607,9 @@ func (c *Client) Destroy(ctx context.Context, guildID string) error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	delete(c.playing, guildID) // the node sends no end event for it
+	c.mu.Unlock()
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 

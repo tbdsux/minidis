@@ -171,11 +171,35 @@ func TestReconnect(t *testing.T) {
 	f.want("PATCH", "/v4/sessions/S", `{"resuming":true,"timeout":60}`)
 	f.none() // the players are still connected
 
-	// When the node no longer has the session, voice is connected again on the new one.
+	// When the node no longer has the session, the tracks still playing end
+	// with EndCleanup, and voice is connected again on the new one.
+	events := make(chan *Event, 10)
+	c.OnEvent(func(e *Event) { events <- e })
+	for _, ev := range []map[string]any{
+		{"op": "event", "type": TrackStartEvent, "guildId": "1", "track": map[string]any{"encoded": "E1"}},
+		{"op": "event", "type": TrackStartEvent, "guildId": "2", "track": map[string]any{"encoded": "E2"}},
+		{"op": "event", "type": TrackEndEvent, "guildId": "2", "track": map[string]any{"encoded": "E2"}, "reason": EndFinished},
+	} {
+		ws.WriteJSON(ev)
+		<-events
+	}
 	f.resuming.Store(false)
 	ws.Close()
 	ws = redialed()
 	<-f.resumes
+	select {
+	case e := <-events:
+		if e.Type != TrackEndEvent || e.Reason != EndCleanup || e.GuildID != "1" || e.Track.Encoded != "E1" || e.MayStartNext() {
+			t.Fatalf("cleanup = %+v", e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no cleanup event for the lost track")
+	}
+	select {
+	case e := <-events:
+		t.Fatalf("extra event %+v; guild 2's track had ended", e)
+	case <-time.After(50 * time.Millisecond):
+	}
 	got := map[string]bool{}
 	for range 2 {
 		select {
@@ -235,6 +259,15 @@ func TestLoadTrack(t *testing.T) {
 	}
 	if _, err := c.LoadTrack(ctx, "none"); !errors.Is(err, ErrNoMatches) {
 		t.Errorf("empty = %v", err)
+	}
+	if tr, err := c.LoadTracks(ctx, "search"); err != nil || len(tr) != 2 || tr[1].Encoded != "E3" {
+		t.Errorf("LoadTracks(search) = %v, %v; want E2 and E3", tr, err)
+	}
+	if tr, err := c.LoadTracks(ctx, "one"); err != nil || len(tr) != 1 || tr[0].Encoded != "E1" {
+		t.Errorf("LoadTracks(one) = %v, %v", tr, err)
+	}
+	if _, err := c.LoadTracks(ctx, "none"); !errors.Is(err, ErrNoMatches) {
+		t.Errorf("LoadTracks(none) = %v", err)
 	}
 	if _, err := c.LoadTrack(ctx, "broken"); err == nil || err.(*Exception).Message != "boom" {
 		t.Errorf("error = %v", err)

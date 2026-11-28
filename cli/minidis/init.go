@@ -337,6 +337,7 @@ func readGoMod(file string) (goMod, error) {
 
 	var stderr bytes.Buffer
 	cmd := exec.Command("go", "mod", "edit", "-json", file)
+	cmd.Dir = filepath.Dir(file) // else a go.work around the working directory picks the toolchain
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
@@ -859,6 +860,7 @@ func goWork(dir string) string {
 func workspaceModules(work string) ([]string, error) {
 	var stderr bytes.Buffer
 	cmd := exec.Command("go", "work", "edit", "-json", work)
+	cmd.Dir = filepath.Dir(work) // else a go.work around the working directory picks the toolchain
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
