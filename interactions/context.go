@@ -13,6 +13,7 @@ import (
 
 	"github.com/tbdsux/minidis/discord"
 	"github.com/tbdsux/minidis/discord/client"
+	"github.com/tbdsux/minidis/locale"
 )
 
 // ErrNoResponse is the cause of a handler context canceled because the
@@ -47,6 +48,8 @@ func (noResponse) Is(target error) bool { return target == context.Canceled }
 type Context struct {
 	ctx   context.Context
 	reply *replyState // shared by the copies WithContext makes
+
+	catalog *locale.Catalog // of the bot, for T
 
 	Interaction *discord.Interaction
 	Session     *client.Session

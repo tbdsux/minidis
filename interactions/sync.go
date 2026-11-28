@@ -236,6 +236,8 @@ func (m *Minidis) buildCommands(global bool) []*discord.ApplicationCommand {
 		all = append(all, m.entryPoint.build())
 	}
 
+	localize(m.catalog, all)
+
 	return all
 }
 

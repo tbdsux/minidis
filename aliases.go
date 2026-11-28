@@ -49,3 +49,10 @@ var (
 	PerChannel         = interactions.PerChannel
 	RequirePermissions = interactions.RequirePermissions
 )
+
+// The catalog keys of the built-in replies; see interactions.KeyCooldown.
+const (
+	KeyCooldown           = interactions.KeyCooldown
+	KeyGuildOnly          = interactions.KeyGuildOnly
+	KeyMissingPermissions = interactions.KeyMissingPermissions
+)
