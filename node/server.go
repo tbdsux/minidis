@@ -4,8 +4,8 @@
 // node does the voice connection, DAVE encryption and ffmpeg decoding.
 //
 // Implemented: /version, /v4/info, /v4/stats, /v4/loadtracks (http(s) URLs,
-// YouTube links through yt-dlp, and files under Config.Source's local
-// directory), /v4/decodetrack(s),
+// YouTube links and "ytsearch:" searches through yt-dlp, and files under
+// Config.Source's local directory), /v4/decodetrack(s),
 // players (GET/PATCH/DELETE: track, position, volume, paused, voice),
 // PATCH /v4/sessions/{id} (accepted, but resuming is not supported), and the
 // WebSocket ops ready, playerUpdate, stats and event.
@@ -160,6 +160,22 @@ func (s *Server) handleLoadTracks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "missing identifier")
 		return
 	}
+	if infos, err := s.search(r.Context(), id); !errors.Is(err, ErrUnsupported) {
+		switch {
+		case err != nil:
+			writeJSON(w, map[string]any{"loadType": "error",
+				"data": Exception{Message: err.Error(), Severity: "common", Cause: err.Error()}})
+		case len(infos) == 0:
+			writeJSON(w, map[string]any{"loadType": "empty", "data": map[string]any{}})
+		default:
+			tracks := make([]*Track, len(infos))
+			for i, info := range infos {
+				tracks[i] = newTrack(info)
+			}
+			writeJSON(w, map[string]any{"loadType": "search", "data": tracks})
+		}
+		return
+	}
 	info, err := s.cfg.Source.Load(r.Context(), id)
 	switch {
 	case errors.Is(err, ErrUnsupported):
@@ -170,6 +186,28 @@ func (s *Server) handleLoadTracks(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, map[string]any{"loadType": "track", "data": newTrack(info)})
 	}
+}
+
+// search runs id as a search if the source has them, or returns ErrUnsupported.
+func (s *Server) search(ctx context.Context, id string) ([]TrackInfo, error) {
+	if sr, ok := s.cfg.Source.(Searcher); ok {
+		return sr.Search(ctx, id)
+	}
+	return nil, ErrUnsupported
+}
+
+// loadOne resolves id to one track: the first result of a search.
+func (s *Server) loadOne(ctx context.Context, id string) (TrackInfo, error) {
+	infos, err := s.search(ctx, id)
+	switch {
+	case errors.Is(err, ErrUnsupported):
+		return s.cfg.Source.Load(ctx, id)
+	case err != nil:
+		return TrackInfo{}, err
+	case len(infos) == 0:
+		return TrackInfo{}, errors.New("no matches")
+	}
+	return infos[0], nil
 }
 
 func (s *Server) handleDecodeTrack(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +313,7 @@ func (s *Server) handleUpdatePlayer(w http.ResponseWriter, r *http.Request) {
 		}
 		track = t
 	case identifier != nil:
-		info, err := s.cfg.Source.Load(r.Context(), *identifier)
+		info, err := s.loadOne(r.Context(), *identifier)
 		if err != nil {
 			writeError(w, r, http.StatusBadRequest, "load track: "+err.Error())
 			return

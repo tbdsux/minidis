@@ -33,6 +33,20 @@ func (f *fakeSource) Load(_ context.Context, id string) (TrackInfo, error) {
 	return TrackInfo{Identifier: id, Title: id, Length: 60000, IsSeekable: true, SourceName: "fake"}, nil
 }
 
+// Search answers "find:q" with q-1 and q-2, and "find:none" with nothing.
+func (f *fakeSource) Search(_ context.Context, id string) ([]TrackInfo, error) {
+	q, ok := strings.CutPrefix(id, "find:")
+	switch {
+	case !ok:
+		return nil, ErrUnsupported
+	case q == "none":
+		return nil, nil
+	case q == "broken":
+		return nil, errors.New("search failed")
+	}
+	return []TrackInfo{{Identifier: q + "-1", Title: q + "-1"}, {Identifier: q + "-2", Title: q + "-2"}}, nil
+}
+
 func (f *fakeSource) Open(ctx context.Context, info TrackInfo, pos time.Duration, volume int) (FrameReader, error) {
 	f.opens <- fmt.Sprintf("%s@%d v%d", info.Identifier, pos.Milliseconds(), volume)
 	switch info.Identifier {
@@ -387,6 +401,28 @@ func TestLoadFailedAndStuck(t *testing.T) {
 
 	if code, _ := h.do("PATCH", "/v4/sessions/"+h.sid+"/players/42", map[string]any{"track": map[string]any{"identifier": "bad"}}); code != 400 {
 		t.Fatalf("bad identifier = %d", code)
+	}
+}
+
+func TestSearch(t *testing.T) {
+	h := newHarness(t)
+	_, res := h.do("GET", "/v4/loadtracks?identifier=find:song", nil)
+	tracks, _ := res["data"].([]any)
+	if res["loadType"] != "search" || len(tracks) != 2 || tracks[1].(map[string]any)["info"].(map[string]any)["title"] != "song-2" {
+		t.Fatalf("search = %v", res)
+	}
+	if _, res := h.do("GET", "/v4/loadtracks?identifier=find:none", nil); res["loadType"] != "empty" {
+		t.Fatalf("no results = %v", res)
+	}
+	if _, res := h.do("GET", "/v4/loadtracks?identifier=find:broken", nil); res["loadType"] != "error" {
+		t.Fatalf("failed search = %v", res)
+	}
+
+	// A search given to a player plays its first result.
+	h.patch(map[string]any{"track": map[string]any{"identifier": "find:song"}})
+	h.wantOpen("song-1@0 v100")
+	if code, _ := h.do("PATCH", "/v4/sessions/"+h.sid+"/players/42", map[string]any{"track": map[string]any{"identifier": "find:none"}}); code != 400 {
+		t.Fatalf("search without results = %d", code)
 	}
 }
 

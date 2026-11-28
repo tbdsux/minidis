@@ -5,8 +5,9 @@
 //	cd node && MINIDIS_NODE_PASSWORD=secret go run ./cmd/minidis-node -local-dir ~/Music
 //	TOKEN=... GUILD=... NODE_URL=http://localhost:2333 NODE_PASSWORD=secret go run ./example/music
 //
-// Then, in a voice channel, /play https://youtu.be/..., /play https://example.com/song.mp3
-// or /play song.mp3 (a file in the node's -local-dir).
+// Then, in a voice channel, /play never gonna give you up (a YouTube search),
+// /play https://youtu.be/..., /play https://example.com/song.mp3 or /play song.mp3
+// (a file in the node's -local-dir).
 package main
 
 import (
@@ -14,6 +15,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/tbdsux/minidis"
@@ -80,9 +83,9 @@ func main() {
 
 	bot.AddCommand(&minidis.Command{
 		Name:        "play",
-		Description: "Plays a URL or a file on the node, or queues it.",
+		Description: "Plays a YouTube search, a URL or a file on the node, or queues it.",
 		Options: []*discord.ApplicationCommandOption{{
-			Type: discord.ApplicationCommandOptionString, Name: "track", Description: "A YouTube link, URL or file name", Required: true,
+			Type: discord.ApplicationCommandOptionString, Name: "track", Description: "Words to search YouTube for, a link or a file name", Required: true,
 		}},
 		Execute: func(c *minidis.Context) error {
 			vs := c.Session.State.VoiceState(c.GuildID, c.Author.ID)
@@ -93,7 +96,11 @@ func main() {
 			if err := c.DeferReply(false); err != nil {
 				return err
 			}
-			track, err := ll.LoadTrack(c, c.String("track"))
+			query := c.String("track")
+			if !strings.Contains(query, "://") && filepath.Ext(query) == "" {
+				query = "ytsearch:" + query // words, not a link or a file name
+			}
+			track, err := ll.LoadTrack(c, query)
 			if err != nil {
 				return c.Edit("Can't play that: " + err.Error())
 			}

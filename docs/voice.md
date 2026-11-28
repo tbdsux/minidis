@@ -24,7 +24,7 @@ MINIDIS_NODE_PASSWORD=secret go run ./cmd/minidis-node -addr :2333 -local-dir ~/
 ```
 
 - Every request must send the password as its `Authorization` header.
-- The node plays `http(s)` URLs, YouTube links, and files inside `-local-dir`. Without `-local-dir`, local files are disabled. Paths that lead outside the directory are refused, including through symlinks.
+- The node plays `http(s)` URLs, YouTube links, YouTube searches such as `ytsearch:never gonna give you up`, and files inside `-local-dir`. Without `-local-dir`, local files are disabled. Paths that lead outside the directory are refused, including through symlinks.
 - The node fetches any URL a bot gives it, so anyone with the password can make it request addresses on its network. Keep the port and the password private.
 
 ## Using it from a bot
@@ -71,7 +71,7 @@ The player methods all take the guild ID:
 
 | Method | Does |
 | --- | --- |
-| `LoadTrack(ctx, identifier)` | Resolves a URL, YouTube link or file name to a `*Track`. Returns `ErrNoMatches` when nothing is found, and an `*Exception` when loading fails. |
+| `LoadTrack(ctx, identifier)` | Resolves a URL, YouTube link, `ytsearch:` search (to its first result) or file name to a `*Track`. Returns `ErrNoMatches` when nothing is found, and an `*Exception` when loading fails. |
 | `Play(ctx, guild, track)` | Plays the track, replacing the current one. |
 | `Stop`, `Pause(…, bool)`, `Seek(…, time.Duration)`, `SetVolume(…, percent)` | Control the player. |
 | `Player(ctx, guild)` | Returns the player's track, position, volume and connection state. |
@@ -99,7 +99,7 @@ Discord has required DAVE, its end-to-end encryption for voice, since March 2026
 ## Not supported yet
 
 - **Resuming.** Players end when the bot's WebSocket to the node drops, and the client does not reconnect.
-- **Sources and filters:** searches (such as `ytsearch:`), YouTube playlists (a playlist link is refused, but a video link with `&list=` plays its video), other sites yt-dlp supports, audio filters, and `endTime`.
+- **Sources and filters:** searches other than `ytsearch:` (such as `ytmsearch:` and `scsearch:`), YouTube playlists (a playlist link is refused, but a video link with `&list=` plays its video), other sites yt-dlp supports, audio filters, and `endTime`.
 - **Receiving audio** from Discord.
 - **Track decoding.** Encoded tracks from the minidis node are base64 JSON rather than Lavalink's binary format. Lavalink clients that decode tracks themselves can't read them; clients that treat them as opaque strings work.
 - **CPU load** in the node's stats is always 0.
