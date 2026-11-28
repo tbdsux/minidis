@@ -86,7 +86,9 @@ type Conn struct {
 	ws   *websocket.Conn
 	wsMu sync.Mutex
 	udp  net.Conn
-	dave godave.Session
+	// udpMu orders setting udp in Dial against closing it in shutdown.
+	udpMu sync.Mutex
+	dave  godave.Session
 
 	ssrc    uint32
 	seq     uint16
@@ -186,8 +188,20 @@ func Dial(ctx context.Context, p Params) (*Conn, error) {
 	c.ssrc = rd.SSRC
 
 	var d net.Dialer
-	if c.udp, err = d.DialContext(ctx, "udp", net.JoinHostPort(rd.IP, strconv.Itoa(rd.Port))); err != nil {
+	udp, err := d.DialContext(ctx, "udp", net.JoinHostPort(rd.IP, strconv.Itoa(rd.Port)))
+	if err != nil {
 		return fail(fmt.Errorf("voice: dial udp: %w", err))
+	}
+	// The gateway may have closed meanwhile; shutdown then could not close udp.
+	c.udpMu.Lock()
+	select {
+	case <-c.done:
+		c.udpMu.Unlock()
+		udp.Close()
+		return nil, c.err
+	default:
+		c.udp = udp
+		c.udpMu.Unlock()
 	}
 	if dl, ok := ctx.Deadline(); ok {
 		c.udp.SetReadDeadline(dl)
@@ -299,9 +313,11 @@ func (c *Conn) shutdown(err error) {
 		c.err = err
 		close(c.done)
 		c.ws.Close()
+		c.udpMu.Lock()
 		if c.udp != nil {
 			c.udp.Close()
 		}
+		c.udpMu.Unlock()
 		if cl, ok := c.dave.(interface{ Close() error }); ok {
 			cl.Close()
 		}
