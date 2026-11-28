@@ -259,17 +259,42 @@ type TextCommand struct {
 
 // SetPrefix sets what a message starts with to run a text command, such as
 // "!" for "!ping". Without one, text commands are run by mentioning the bot
-// first, as in "@bot ping", which always works as well.
+// first, as in "@bot ping", which always works as well. It replaces a
+// function set with SetPrefixFunc.
 //
 // A prefix asks for the privileged discord.IntentsMessageContent, which must
 // also be enabled for the bot in the developer portal; messages that mention
 // the bot do not need it.
 func (b *Bot) SetPrefix(prefix string) {
+	if prefix == "" {
+		b.SetPrefixFunc(nil)
+		return
+	}
+	b.SetPrefixFunc(func(*discord.Message) string { return prefix })
+}
+
+// SetPrefixFunc sets a function that returns the prefix of text commands for
+// a message, such as one stored for its guild:
+//
+//	bot.SetPrefixFunc(func(m *discord.Message) string {
+//		if p, ok := prefixes.Load(m.GuildID); ok { // GuildID is empty in a DM
+//			return p.(string)
+//		}
+//		return "!"
+//	})
+//
+// It runs for every message people send, so it should be quick, such as a
+// lookup in memory. An empty prefix means the message runs a command only by
+// mentioning the bot, which always works as well. It replaces a prefix set
+// with SetPrefix, and nil removes it.
+//
+// Like SetPrefix, it asks for the privileged discord.IntentsMessageContent.
+func (b *Bot) SetPrefixFunc(f func(m *discord.Message) string) {
 	b.mu.Lock()
-	b.prefix = prefix
+	b.prefix = f
 	b.mu.Unlock()
 
-	if prefix != "" {
+	if f != nil {
 		b.need(discord.IntentsMessageContent)
 	}
 }
@@ -336,8 +361,13 @@ func (b *Bot) handleTextCommand(s *client.Session, e *discord.MessageCreate) {
 	}
 
 	b.mu.RLock()
-	prefix := b.prefix
+	prefixOf := b.prefix
 	b.mu.RUnlock()
+
+	prefix := ""
+	if prefixOf != nil {
+		prefix = prefixOf(e.Message)
+	}
 
 	name, rest, ok := splitCommand(e.Content, prefix, s.User())
 	if !ok {
