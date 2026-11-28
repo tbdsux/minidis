@@ -99,6 +99,13 @@ type Session struct {
 	// events and panics in handlers. With nil, it uses slog.Default().
 	Logger *slog.Logger
 
+	// RequestHook, if set, is called after every attempt at a REST request,
+	// retries included, for example to record metrics. It runs inline,
+	// before the request returns or is retried, and with the rate limit
+	// bucket already released, so it must be quick: a slow hook slows every
+	// request. It may be called from several goroutines at once.
+	RequestHook func(RequestInfo)
+
 	limiter  *rateLimiter
 	rejected atomic.Pointer[rejection] // set once Discord rejects the token
 	invalid  invalidRequests
