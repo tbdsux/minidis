@@ -998,7 +998,7 @@ func (s *Session) runConnection(ctx context.Context, run *gatewayRun, sh *shard,
 				}
 			}
 
-			s.dispatch(p.T, p.D)
+			s.dispatch(p.T, p.D, nil)
 		}
 	}
 }
@@ -1022,9 +1022,37 @@ func classifyDisconnect(err error) (connOutcome, error) {
 	}
 }
 
+// Dispatch runs the handlers of a gateway event as if the gateway had sent
+// it, and returns once they have returned. It is for tests, which feed a bot
+// events without connecting it; package minidistest builds on it. Like the
+// gateway, a READY or USER_UPDATE sets User, and READY ApplicationID.
+func (s *Session) Dispatch(event string, data json.RawMessage) {
+	switch event {
+	case "READY":
+		var ready discord.Ready
+		if json.Unmarshal(data, &ready) == nil {
+			s.user.Store(ready.User)
+			if ready.Application != nil {
+				id := ready.Application.ID
+				s.appID.Store(&id)
+			}
+		}
+	case "USER_UPDATE":
+		var u discord.User
+		if json.Unmarshal(data, &u) == nil && u.ID != "" {
+			s.user.Store(&u)
+		}
+	}
+
+	var done sync.WaitGroup
+	s.dispatch(event, data, &done)
+	done.Wait()
+}
+
 // dispatch updates the state with an event, then decodes it and starts its
-// handlers, so that they see the state with the event applied.
-func (s *Session) dispatch(event string, data json.RawMessage) {
+// handlers, so that they see the state with the event applied. done, if not
+// nil, also tracks the handlers.
+func (s *Session) dispatch(event string, data json.RawMessage, done *sync.WaitGroup) {
 	if s.State != nil {
 		s.State.apply(s.logger(), event, data)
 	}
@@ -1033,7 +1061,7 @@ func (s *Session) dispatch(event string, data json.RawMessage) {
 	defer s.handlersMu.RUnlock()
 
 	for _, h := range s.onRawEvents {
-		s.spawn(event, func() { h(s, event, data) })
+		s.spawn(event, done, func() { h(s, event, data) })
 	}
 
 	e := s.events[event]
@@ -1048,15 +1076,21 @@ func (s *Session) dispatch(event string, data json.RawMessage) {
 		return
 	}
 	for _, h := range e.handlers {
-		s.spawn(event, func() { h(s, v) })
+		s.spawn(event, done, func() { h(s, v) })
 	}
 }
 
 // spawn runs a handler in its own goroutine, tracked for Shutdown. A panic stops
 // only that handler. This is the single place handler goroutines start, so it
 // covers handlers registered directly on the Session as well as the framework's.
-func (s *Session) spawn(event string, h func()) {
+func (s *Session) spawn(event string, done *sync.WaitGroup, h func()) {
+	if done != nil {
+		done.Add(1)
+	}
 	s.running.Go(func() {
+		if done != nil {
+			defer done.Done()
+		}
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger().Error("discord: panic in handler", "event", event, "panic", r, "stack", string(debug.Stack()))
