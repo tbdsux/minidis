@@ -25,6 +25,9 @@ type (
 	Modal           = interactions.Modal
 	FollowupMessage = interactions.FollowupMessage
 
+	Page            = interactions.Page
+	PaginateOptions = interactions.PaginateOptions
+
 	HandlerFunc = interactions.HandlerFunc
 	Middleware  = interactions.Middleware
 	PanicError  = interactions.PanicError
