@@ -16,12 +16,14 @@ The node and voice modules are separate so that the core module keeps its one de
 
 The node needs `ffmpeg` and `ffprobe` on its `PATH`, built with libopus. Most builds have it. For YouTube links it also needs [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). Keep yt-dlp up to date (`yt-dlp -U`, or your package manager), because YouTube changes often and old versions stop working.
 
-`node` is its own Go module, so run it from its folder in a checkout of the repository:
+Install it with Go and run it:
 
 ```sh
-cd node
-MINIDIS_NODE_PASSWORD=secret go run ./cmd/minidis-node -addr :2333 -local-dir ~/Music
+go install github.com/tbdsux/minidis/node/cmd/minidis-node@latest
+MINIDIS_NODE_PASSWORD=secret minidis-node -addr :2333 -local-dir ~/Music
 ```
+
+In a checkout of the repository, `cd node && go run ./cmd/minidis-node` runs it from source instead. The repository's `go.work` builds it against the `voice` module and the core module in the checkout.
 
 - Every request must send the password as its `Authorization` header.
 - The node plays `http(s)` URLs, YouTube links, YouTube searches such as `ytsearch:never gonna give you up`, and files inside `-local-dir`. Without `-local-dir`, local files are disabled. Paths that lead outside the directory are refused, including through symlinks.
