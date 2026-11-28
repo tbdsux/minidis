@@ -83,6 +83,24 @@ The client keeps to Discord's rate limits by itself: requests wait for their buc
 
 It also counts the 401, 403 and 429 responses that get an IP banned by Discord for a while, and logs a warning as they add up.
 
+### Metrics
+
+`Session.RequestHook`, if set, is called after every attempt at a request, retries included, with a `client.RequestInfo`: the method, the `Route` with its IDs and tokens replaced (such as `/channels/:id/messages`), the status (0 if no response came back), the latency, the attempt number, whether it got a 429, how long it waited for its rate limit before it was sent, and the error if no response came back. The library depends on no metrics package, so this is where one plugs in, such as Prometheus:
+
+```go
+requests := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Name: "discord_rest_request_seconds",
+}, []string{"method", "route", "status"})
+prometheus.MustRegister(requests)
+
+s.RequestHook = func(info client.RequestInfo) {
+	requests.WithLabelValues(info.Method, info.Route, strconv.Itoa(info.Status)).
+		Observe(info.Latency.Seconds())
+}
+```
+
+The hook runs inline, before the request returns or is retried, so it must be quick: a slow hook slows every request. It may be called from several goroutines at once. Set it before making requests.
+
 ### Errors
 
 A response Discord refused is a `*client.RESTError`, with the `StatusCode`, Discord's error `Code` and `Message`, and the per-field `Errors`:
