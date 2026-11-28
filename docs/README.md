@@ -38,6 +38,7 @@ The `minidis.Bot` embeds the bot of `interactions`, and has its types under the 
 | [`subcommands`](../example/subcommands/main.go)       | Subcommands and groups                                        |
 | [`autocomplete`](../example/autocomplete/main.go)     | Autocomplete                                                  |
 | [`components`](../example/components/main.go)         | Buttons and select menus                                      |
+| [`paginator`](../example/paginator/main.go)           | Pages of embeds turned with buttons                           |
 | [`modals`](../example/modals/main.go)                 | A modal with text inputs, radio groups and checkboxes         |
 | [`context_menus`](../example/context_menus/main.go)   | Message and user commands                                     |
 | [`channel_messages`](../example/channel_messages/main.go) | Messages of one channel                                   |
