@@ -114,6 +114,16 @@ bot.AddTextCommand(&minidis.TextCommand{
 
 - Names and aliases are matched regardless of case. A command added later replaces one of the same name, and takes over its aliases.
 - Mentioning the bot always works, as in `@bot say hi`, and needs no privileged intent. Without a prefix, it is the only way. A prefix needs the Message Content intent.
+- For a prefix per guild, `bot.SetPrefixFunc` takes a function that returns the prefix for each message, in place of `SetPrefix`. It runs for every message, so keep it to a lookup in memory. An empty result leaves only the mention, and `GuildID` is empty in a DM:
+
+  ```go
+  bot.SetPrefixFunc(func(m *discord.Message) string {
+  	if p, ok := prefixes.Load(m.GuildID); ok { // a sync.Map your bot keeps
+  		return p.(string)
+  	}
+  	return "!"
+  })
+  ```
 - `bot.TextCommands()` lists the commands sorted by name, with their `Description`, for a help command of your own.
 - Text commands run for messages from people only. `OnMessage` handlers see those messages too.
 
