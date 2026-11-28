@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -248,5 +249,14 @@ esac
 	defer fr.Close()
 	if _, err := fr.ReadFrame(); err == nil || !strings.Contains(err.Error(), "yt-dlp") || !strings.Contains(err.Error(), "Video unavailable") {
 		t.Errorf("unavailable play = %v, want yt-dlp's error", err)
+	}
+}
+
+func TestTailKeepsTheEnd(t *testing.T) {
+	var tl tail
+	tl.Write(bytes.Repeat([]byte("x"), tailSize))
+	tl.Write([]byte("the error"))
+	if len(tl.b) != tailSize || !bytes.HasSuffix(tl.b, []byte("the error")) {
+		t.Fatalf("tail = %d bytes ending %q", len(tl.b), tl.b[len(tl.b)-9:])
 	}
 }

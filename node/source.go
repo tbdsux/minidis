@@ -329,10 +329,28 @@ type ffStream struct {
 	cmd      *exec.Cmd
 	dl       *exec.Cmd
 	ogg      *oggReader
-	stderr   bytes.Buffer
-	dlStderr bytes.Buffer
-	once     sync.Once
-	waitErr  error
+	stderr   tail
+	dlStderr tail
+	// readMu is held while reading, so Close reaps ffmpeg only after the
+	// read it interrupts returned, as Cmd.Wait closes the pipe being read.
+	readMu  sync.Mutex
+	once    sync.Once
+	waitErr error
+}
+
+// tailSize is how much of a process's stderr is kept for its error.
+const tailSize = 4 << 10
+
+// tail keeps the last tailSize bytes written to it: the error a process
+// ends with, without growing on a stream that keeps logging errors.
+type tail struct{ b []byte }
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.b = append(t.b, p...)
+	if len(t.b) > tailSize {
+		t.b = append(t.b[:0], t.b[len(t.b)-tailSize:]...)
+	}
+	return len(p), nil
 }
 
 // wait reaps both processes. yt-dlp's error comes first: when the download
@@ -344,19 +362,21 @@ func (s *ffStream) wait() error {
 			ffErr = s.cmd.Wait()
 		}
 		if s.dl != nil {
-			if err := s.dl.Wait(); err != nil && s.dlStderr.Len() > 0 {
-				s.waitErr = fmt.Errorf("yt-dlp: %v: %s", err, bytes.TrimSpace(s.dlStderr.Bytes()))
+			if err := s.dl.Wait(); err != nil && len(s.dlStderr.b) > 0 {
+				s.waitErr = fmt.Errorf("yt-dlp: %v: %s", err, bytes.TrimSpace(s.dlStderr.b))
 				return
 			}
 		}
 		if ffErr != nil {
-			s.waitErr = fmt.Errorf("ffmpeg: %v: %s", ffErr, bytes.TrimSpace(s.stderr.Bytes()))
+			s.waitErr = fmt.Errorf("ffmpeg: %v: %s", ffErr, bytes.TrimSpace(s.stderr.b))
 		}
 	})
 	return s.waitErr
 }
 
 func (s *ffStream) ReadFrame() ([]byte, error) {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
 	pkt, err := s.ogg.Packet()
 	if err == nil {
 		return pkt, nil
@@ -376,6 +396,8 @@ func (s *ffStream) Close() error {
 			c.Process.Kill()
 		}
 	}
+	s.readMu.Lock() // the kill ends a blocked read with EOF
+	defer s.readMu.Unlock()
 	s.wait()
 	return nil
 }
