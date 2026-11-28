@@ -1,0 +1,9 @@
+// The workspace builds the root, voice and node modules from this checkout,
+// so a change to one is tested with the others before any of them is tagged.
+go 1.26.0
+
+use (
+	.
+	./node
+	./voice
+)
