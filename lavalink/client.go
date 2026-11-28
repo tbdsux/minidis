@@ -354,6 +354,7 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	ws, sid := c.ws, c.sessionID
 	c.ws, c.sessionID, c.closed = nil, "", true
+	c.playing = nil // the node ends them; a later session must not report them lost
 	c.mu.Unlock()
 	if sid != "" { // also while reconnecting, when the node keeps the session waiting
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -576,7 +577,7 @@ func (c *Client) patch(ctx context.Context, guildID string, body any, noReplace 
 
 // Play plays track in the guild, replacing what is playing.
 func (c *Client) Play(ctx context.Context, guildID string, track *Track) error {
-	_, err := c.patch(ctx, guildID, &UpdatePlayer{Track: &UpdateTrack{Encoded: track.Encoded}}, false)
+	_, err := c.patch(ctx, guildID, &UpdatePlayer{Track: &UpdateTrack{Encoded: track.Encoded, UserData: track.UserData}}, false)
 	return err
 }
 
@@ -624,10 +625,13 @@ func (c *Client) Destroy(ctx context.Context, guildID string) error {
 	if err != nil {
 		return err
 	}
+	if err := c.do(ctx, http.MethodDelete, path, nil, nil); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	delete(c.playing, guildID) // the node sends no end event for it
 	c.mu.Unlock()
-	return c.do(ctx, http.MethodDelete, path, nil, nil)
+	return nil
 }
 
 // Stats returns the node's stats.
