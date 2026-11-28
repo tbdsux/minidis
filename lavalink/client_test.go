@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,14 +16,17 @@ import (
 
 type request struct{ method, path, body string }
 
+// fakeNode's sessions are "S", and "S2" for a resume it refuses.
 type fakeNode struct {
-	t    *testing.T
-	reqs chan request
-	ws   chan *websocket.Conn
+	t        *testing.T
+	reqs     chan request
+	ws       chan *websocket.Conn
+	resumes  chan string // the Session-Id header of each WebSocket
+	resuming atomic.Bool // resumes of "S" succeed
 }
 
 func newFakeNode(t *testing.T) (*fakeNode, *Client) {
-	f := &fakeNode{t: t, reqs: make(chan request, 20), ws: make(chan *websocket.Conn, 1)}
+	f := &fakeNode{t: t, reqs: make(chan request, 20), ws: make(chan *websocket.Conn, 1), resumes: make(chan string, 5)}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
 	c := New(srv.URL+"/", "pw")
@@ -52,7 +56,14 @@ func (f *fakeNode) serve(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		ws.WriteJSON(map[string]any{"op": "ready", "resumed": false, "sessionId": "S"})
+		id := r.Header.Get("Session-Id")
+		f.resumes <- id
+		resumed := id == "S" && f.resuming.Load()
+		sid := "S"
+		if id != "" && !resumed {
+			sid = "S2"
+		}
+		ws.WriteJSON(map[string]any{"op": "ready", "resumed": resumed, "sessionId": sid})
 		f.ws <- ws
 	case r.URL.Path == "/v4/loadtracks":
 		io.WriteString(w, loadResults[r.URL.Query().Get("identifier")])
@@ -103,7 +114,94 @@ func connect(t *testing.T, f *fakeNode, c *Client) *websocket.Conn {
 	if c.SessionID() != "S" {
 		t.Fatalf("session = %q", c.SessionID())
 	}
+	<-f.resumes
+	f.want("PATCH", "/v4/sessions/S", `{"resuming":true,"timeout":60}`)
 	return <-f.ws
+}
+
+// connected reports whether the client has a WebSocket now.
+func (c *Client) connected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ws != nil
+}
+
+// A node that stops answering, with the WebSocket still open, is reconnected to.
+func TestReconnectSilentNode(t *testing.T) {
+	f, c := newFakeNode(t)
+	f.resuming.Store(true)
+	c.pingPeriod, c.pongWait = 20*time.Millisecond, 200*time.Millisecond
+	connect(t, f, c) // the fake node never reads, so it answers no pings
+	select {
+	case <-f.ws:
+	case <-time.After(5 * time.Second):
+		t.Fatal("silent node not reconnected to")
+	}
+	if id := <-f.resumes; id != "S" {
+		t.Fatalf("resumed %q, want S", id)
+	}
+}
+
+func TestReconnect(t *testing.T) {
+	f, c := newFakeNode(t)
+	f.resuming.Store(true)
+	ws := connect(t, f, c)
+	const voice = `{"voice":{"token":"tok","endpoint":"ep","sessionId":"vs","channelId":"50"}}`
+	c.voiceStateUpdate("1", "555", "vs", "50")
+	c.voiceServerUpdate("1", "tok", "ep")
+	f.want("PATCH", "/v4/sessions/S/players/1", voice)
+
+	redialed := func() *websocket.Conn {
+		t.Helper()
+		select {
+		case ws := <-f.ws:
+			return ws
+		case <-time.After(5 * time.Second):
+			t.Fatal("not reconnected")
+			return nil
+		}
+	}
+
+	// A dropped WebSocket resumes its session, which the node kept with its players.
+	ws.Close()
+	ws = redialed()
+	if id := <-f.resumes; id != "S" {
+		t.Fatalf("resumed session %q, want S", id)
+	}
+	f.want("PATCH", "/v4/sessions/S", `{"resuming":true,"timeout":60}`)
+	f.none() // the players are still connected
+
+	// When the node no longer has the session, voice is connected again on the new one.
+	f.resuming.Store(false)
+	ws.Close()
+	ws = redialed()
+	<-f.resumes
+	got := map[string]bool{}
+	for range 2 {
+		select {
+		case r := <-f.reqs:
+			got[r.method+" "+r.path+" "+r.body] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("requests = %v", got)
+		}
+	}
+	if !got["PATCH /v4/sessions/S2/players/1 "+voice] || !got[`PATCH /v4/sessions/S2 {"resuming":true,"timeout":60}`] {
+		t.Fatalf("requests = %v", got)
+	}
+
+	// Close turns resuming off and stops reconnecting, even while the client
+	// waits to reconnect and the node keeps the session waiting.
+	ws.Close()
+	for c.connected() {
+		time.Sleep(time.Millisecond)
+	}
+	c.Close()
+	f.want("PATCH", "/v4/sessions/S2", `{"resuming":false}`)
+	select {
+	case <-f.ws:
+		t.Fatal("reconnected after Close")
+	case <-time.After(1500 * time.Millisecond):
+	}
 }
 
 func TestEvents(t *testing.T) {

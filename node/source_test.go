@@ -140,6 +140,50 @@ func TestYouTubeInput(t *testing.T) {
 	}
 }
 
+// TestYouTubeSearch runs Search against a fake yt-dlp that prints flat
+// search results: a video, a live stream and a channel.
+func TestYouTubeSearch(t *testing.T) {
+	dir := t.TempDir()
+	args := filepath.Join(dir, "args")
+	script := filepath.Join(dir, "yt-dlp")
+	os.WriteFile(script, []byte(`#!/bin/sh
+printf '%s\n' "$@" > "`+args+`"
+echo '{"_type":"playlist","entries":[
+ {"_type":"url","ie_key":"Youtube","url":"https://www.youtube.com/watch?v=a1","title":"Song","channel":"Band","duration":212.0,
+  "thumbnails":[{"url":"https://i.ytimg.com/small.jpg"},{"url":"https://i.ytimg.com/big.jpg"}]},
+ {"_type":"url","ie_key":"Youtube","url":"https://www.youtube.com/watch?v=l1","title":"Radio","uploader":"Live","duration":null,"live_status":"is_live"},
+ {"_type":"url","ie_key":"YoutubeTab","url":"https://www.youtube.com/@band","title":"Band"}]}'
+`), 0o755)
+	f := &FFmpeg{YTDLP: script}
+	ctx := context.Background()
+
+	infos, err := f.Search(ctx, "ytsearch: -x never gonna ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(args)
+	if lines := strings.Split(strings.TrimSpace(string(got)), "\n"); lines[len(lines)-2] != "--" || lines[len(lines)-1] != "ytsearch10:-x never gonna" {
+		t.Fatalf("yt-dlp args = %q, want the query after --", lines)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("results = %+v, want the two videos", infos)
+	}
+	if v := infos[0]; v.Identifier != "https://www.youtube.com/watch?v=a1" || v.Title != "Song" || v.Author != "Band" ||
+		v.Length != 212000 || !v.IsSeekable || v.SourceName != "youtube" || *v.ArtworkURL != "https://i.ytimg.com/big.jpg" {
+		t.Errorf("video = %+v", v)
+	}
+	if v := infos[1]; !v.IsStream || v.IsSeekable || v.Author != "Live" {
+		t.Errorf("live = %+v", v)
+	}
+
+	if _, err := f.Search(ctx, "https://youtu.be/abc"); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("link searched: %v", err)
+	}
+	if infos, err := f.Search(ctx, "ytsearch:  "); err != nil || len(infos) != 0 {
+		t.Errorf("empty query = %v, %v", infos, err)
+	}
+}
+
 // TestYouTubePipeline runs real ffmpeg behind a fake yt-dlp that prints
 // metadata for -J and streams a tone file for -o -.
 func TestYouTubePipeline(t *testing.T) {

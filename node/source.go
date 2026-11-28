@@ -26,6 +26,13 @@ type Source interface {
 	Open(ctx context.Context, info TrackInfo, position time.Duration, volume int) (FrameReader, error)
 }
 
+// Searcher is a Source that also answers searches, such as "ytsearch:query".
+// Search returns ErrUnsupported for identifiers that aren't searches, which
+// then go to Load.
+type Searcher interface {
+	Search(ctx context.Context, identifier string) ([]TrackInfo, error)
+}
+
 // FrameReader yields 20ms Opus frames until io.EOF.
 type FrameReader interface {
 	ReadFrame() ([]byte, error)
@@ -165,46 +172,99 @@ func ytdlpArgs(id string, args ...string) []string {
 	return append(append([]string{"--ignore-config", "--no-playlist", "--no-warnings"}, args...), "--", id)
 }
 
-func (f *FFmpeg) loadYouTube(ctx context.Context, id string) (TrackInfo, error) {
-	cmd := exec.CommandContext(ctx, f.bin("yt-dlp", f.YTDLP), ytdlpArgs(id, "--dump-single-json")...)
-	out, err := cmd.Output()
+// ytdlpJSON runs yt-dlp with args and decodes its JSON output into v.
+func (f *FFmpeg) ytdlpJSON(ctx context.Context, args []string, v any) error {
+	out, err := exec.CommandContext(ctx, f.bin("yt-dlp", f.YTDLP), args...).Output()
 	if err != nil {
 		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
-			return TrackInfo{}, fmt.Errorf("yt-dlp: %s", bytes.TrimSpace(ee.Stderr))
+			return fmt.Errorf("yt-dlp: %s", bytes.TrimSpace(ee.Stderr))
 		}
-		return TrackInfo{}, fmt.Errorf("yt-dlp: %w", err)
+		return fmt.Errorf("yt-dlp: %w", err)
 	}
-	var v struct {
-		Type       string  `json:"_type"`
-		Title      string  `json:"title"`
-		Uploader   string  `json:"uploader"`
-		Channel    string  `json:"channel"`
-		Duration   float64 `json:"duration"`
-		IsLive     bool    `json:"is_live"`
-		WebpageURL string  `json:"webpage_url"`
-		Thumbnail  string  `json:"thumbnail"`
+	if err := json.Unmarshal(out, v); err != nil {
+		return fmt.Errorf("yt-dlp: %w", err)
 	}
-	if err := json.Unmarshal(out, &v); err != nil {
-		return TrackInfo{}, fmt.Errorf("yt-dlp: %w", err)
-	}
-	if v.Type == "playlist" {
-		return TrackInfo{}, errors.New("playlists are not supported; link one video")
-	}
+	return nil
+}
+
+// ytVideo is a video as yt-dlp describes it, in full or as a flat search
+// result, which has url and thumbnails instead of webpage_url and thumbnail.
+type ytVideo struct {
+	Type       string  `json:"_type"`
+	IEKey      string  `json:"ie_key"` // "Youtube" for a video in search results
+	Title      string  `json:"title"`
+	Uploader   string  `json:"uploader"`
+	Channel    string  `json:"channel"`
+	Duration   float64 `json:"duration"`
+	IsLive     bool    `json:"is_live"`
+	LiveStatus string  `json:"live_status"`
+	URL        string  `json:"url"`
+	WebpageURL string  `json:"webpage_url"`
+	Thumbnail  string  `json:"thumbnail"`
+	Thumbnails []struct {
+		URL string `json:"url"`
+	} `json:"thumbnails"`
+}
+
+// info is the video as a track played from id.
+func (v *ytVideo) info(id string) TrackInfo {
+	uri := cmp.Or(v.WebpageURL, id)
 	info := TrackInfo{Identifier: id, Title: v.Title, Author: cmp.Or(v.Channel, v.Uploader, "Unknown artist"),
-		URI: &id, SourceName: "youtube"}
-	if v.WebpageURL != "" {
-		info.URI = &v.WebpageURL
+		URI: &uri, SourceName: "youtube"}
+	if n := len(v.Thumbnails); v.Thumbnail == "" && n > 0 {
+		v.Thumbnail = v.Thumbnails[n-1].URL // yt-dlp lists them smallest first
 	}
 	if v.Thumbnail != "" {
 		info.ArtworkURL = &v.Thumbnail
 	}
-	if v.IsLive || v.Duration <= 0 {
+	if v.IsLive || v.LiveStatus == "is_live" || v.Duration <= 0 {
 		info.IsStream = true
 	} else {
 		info.Length = int64(v.Duration * 1000)
 		info.IsSeekable = true
 	}
-	return info, nil
+	return info
+}
+
+func (f *FFmpeg) loadYouTube(ctx context.Context, id string) (TrackInfo, error) {
+	var v ytVideo
+	if err := f.ytdlpJSON(ctx, ytdlpArgs(id, "--dump-single-json"), &v); err != nil {
+		return TrackInfo{}, err
+	}
+	if v.Type == "playlist" {
+		return TrackInfo{}, errors.New("playlists are not supported; link one video")
+	}
+	return v.info(id), nil
+}
+
+// searchResults is how many tracks a YouTube search returns.
+const searchResults = 10
+
+// Search answers "ytsearch:query" with the first YouTube results, through
+// yt-dlp. Other identifiers get ErrUnsupported.
+func (f *FFmpeg) Search(ctx context.Context, id string) ([]TrackInfo, error) {
+	q, ok := strings.CutPrefix(id, "ytsearch:")
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	if q = strings.TrimSpace(q); q == "" {
+		return nil, nil
+	}
+	var res struct {
+		Entries []ytVideo `json:"entries"`
+	}
+	args := ytdlpArgs(fmt.Sprintf("ytsearch%d:%s", searchResults, q), "--flat-playlist", "--dump-single-json")
+	if err := f.ytdlpJSON(ctx, args, &res); err != nil {
+		return nil, err
+	}
+	infos := make([]TrackInfo, 0, len(res.Entries))
+	for _, v := range res.Entries {
+		// Searches can list channels and playlists too; keep videos Open plays as YouTube.
+		if _, src, err := f.input(v.URL); err == nil && src == "youtube" && v.IEKey == "Youtube" {
+			infos = append(infos, v.info(v.URL))
+		}
+	}
+	return infos, nil
 }
 
 // ffmpegArgs builds the command line that turns in into 20ms Ogg/Opus pages.

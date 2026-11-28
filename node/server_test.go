@@ -33,6 +33,20 @@ func (f *fakeSource) Load(_ context.Context, id string) (TrackInfo, error) {
 	return TrackInfo{Identifier: id, Title: id, Length: 60000, IsSeekable: true, SourceName: "fake"}, nil
 }
 
+// Search answers "find:q" with q-1 and q-2, and "find:none" with nothing.
+func (f *fakeSource) Search(_ context.Context, id string) ([]TrackInfo, error) {
+	q, ok := strings.CutPrefix(id, "find:")
+	switch {
+	case !ok:
+		return nil, ErrUnsupported
+	case q == "none":
+		return nil, nil
+	case q == "broken":
+		return nil, errors.New("search failed")
+	}
+	return []TrackInfo{{Identifier: q + "-1", Title: q + "-1"}, {Identifier: q + "-2", Title: q + "-2"}}, nil
+}
+
 func (f *fakeSource) Open(ctx context.Context, info TrackInfo, pos time.Duration, volume int) (FrameReader, error) {
 	f.opens <- fmt.Sprintf("%s@%d v%d", info.Identifier, pos.Milliseconds(), volume)
 	switch info.Identifier {
@@ -93,6 +107,7 @@ func (c *fakeConn) closeWith(err error)      { c.once.Do(func() { c.err = err; c
 
 type harness struct {
 	t      *testing.T
+	node   *Server
 	url    string
 	ws     *websocket.Conn
 	sid    string
@@ -102,7 +117,8 @@ type harness struct {
 	dialFn func() (VoiceConn, error)
 }
 
-func newHarness(t *testing.T) *harness {
+// newHarness starts a node, applying opts before it serves, and connects.
+func newHarness(t *testing.T, opts ...func(*Server)) *harness {
 	h := &harness{t: t, src: &fakeSource{opens: make(chan string, 100)},
 		dials: make(chan voice.Params, 10), conns: make(chan *fakeConn, 10)}
 	h.dialFn = func() (VoiceConn, error) {
@@ -110,7 +126,7 @@ func newHarness(t *testing.T) *harness {
 		h.conns <- c
 		return c, nil
 	}
-	srv := httptest.NewServer(New(Config{
+	h.node = New(Config{
 		Password: "pw", Source: h.src,
 		Dial: func(_ context.Context, p voice.Params) (VoiceConn, error) {
 			h.dials <- p
@@ -118,23 +134,37 @@ func newHarness(t *testing.T) *harness {
 		},
 		StuckThreshold: 100 * time.Millisecond, PlayerUpdateInterval: 30 * time.Millisecond, StatsInterval: time.Hour,
 		Logger: slog.New(slog.DiscardHandler),
-	}))
+	})
+	for _, o := range opts {
+		o(h.node)
+	}
+	srv := httptest.NewServer(h.node)
 	t.Cleanup(srv.Close)
 	h.url = srv.URL
 
-	hdr := http.Header{"Authorization": {"pw"}, "User-Id": {"555"}, "Client-Name": {"test/1"}}
-	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/v4/websocket", hdr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { ws.Close() })
-	h.ws = ws
-	ready := h.next("ready")
-	if ready["resumed"] != false {
+	if ready := h.connect(""); ready["resumed"] != false {
 		t.Fatalf("ready = %v", ready)
 	}
-	h.sid = ready["sessionId"].(string)
 	return h
+}
+
+// connect opens the WebSocket, resuming sessionID if set, and returns the
+// ready message.
+func (h *harness) connect(sessionID string) map[string]any {
+	h.t.Helper()
+	hdr := http.Header{"Authorization": {"pw"}, "User-Id": {"555"}, "Client-Name": {"test/1"}}
+	if sessionID != "" {
+		hdr.Set("Session-Id", sessionID)
+	}
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(h.url, "http")+"/v4/websocket", hdr)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.t.Cleanup(func() { ws.Close() })
+	h.ws = ws
+	ready := h.next("ready")
+	h.sid = ready["sessionId"].(string)
+	return ready
 }
 
 // next reads WebSocket messages until one with op (or event type) want.
@@ -387,6 +417,134 @@ func TestLoadFailedAndStuck(t *testing.T) {
 
 	if code, _ := h.do("PATCH", "/v4/sessions/"+h.sid+"/players/42", map[string]any{"track": map[string]any{"identifier": "bad"}}); code != 400 {
 		t.Fatalf("bad identifier = %d", code)
+	}
+}
+
+func TestSearch(t *testing.T) {
+	h := newHarness(t)
+	_, res := h.do("GET", "/v4/loadtracks?identifier=find:song", nil)
+	tracks, _ := res["data"].([]any)
+	if res["loadType"] != "search" || len(tracks) != 2 || tracks[1].(map[string]any)["info"].(map[string]any)["title"] != "song-2" {
+		t.Fatalf("search = %v", res)
+	}
+	if _, res := h.do("GET", "/v4/loadtracks?identifier=find:none", nil); res["loadType"] != "empty" {
+		t.Fatalf("no results = %v", res)
+	}
+	if _, res := h.do("GET", "/v4/loadtracks?identifier=find:broken", nil); res["loadType"] != "error" {
+		t.Fatalf("failed search = %v", res)
+	}
+
+	// A search given to a player plays its first result.
+	h.patch(map[string]any{"track": map[string]any{"identifier": "find:song"}})
+	h.wantOpen("song-1@0 v100")
+	if code, _ := h.do("PATCH", "/v4/sessions/"+h.sid+"/players/42", map[string]any{"track": map[string]any{"identifier": "find:none"}}); code != 400 {
+		t.Fatalf("search without results = %d", code)
+	}
+}
+
+// waitDetached waits until the node has seen session sid's WebSocket drop,
+// or the session ended.
+func (h *harness) waitDetached(sid string) {
+	h.t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		h.node.mu.Lock()
+		sess := h.node.sessions[sid]
+		h.node.mu.Unlock()
+		if sess == nil {
+			return
+		}
+		sess.wsMu.Lock()
+		gone := sess.ws == nil
+		sess.wsMu.Unlock()
+		if gone {
+			return
+		}
+	}
+	h.t.Fatal("WebSocket drop not seen")
+}
+
+func TestResume(t *testing.T) {
+	h := newHarness(t)
+	sid := h.sid
+	if code, res := h.do("PATCH", "/v4/sessions/"+sid, map[string]any{"resuming": true, "timeout": 1}); code != 200 ||
+		res["resuming"] != true || res["timeout"] != 1.0 {
+		t.Fatalf("update session = %d %v", code, res)
+	}
+	if code, _ := h.do("PATCH", "/v4/sessions/"+sid, map[string]any{"timeout": 0}); code != 400 {
+		t.Fatalf("zero timeout = %d", code)
+	}
+	c := h.join()
+
+	// While the WebSocket is gone, the player plays on and its events queue.
+	h.ws.Close()
+	h.waitDetached(sid)
+	h.patch(map[string]any{"track": map[string]any{"encoded": encoded("short")}})
+	h.wantOpen("short@0 v100")
+	if <-c.speaking != true || <-c.speaking != false {
+		t.Fatal("track not played while disconnected")
+	}
+	if ready := h.connect(sid); ready["resumed"] != true || ready["sessionId"] != sid {
+		t.Fatalf("resume = %v", ready)
+	}
+	h.next("TrackStartEvent")
+	if end := h.next("TrackEndEvent"); end["reason"] != "finished" {
+		t.Fatalf("queued end = %v", end)
+	}
+	select {
+	case <-c.done:
+		t.Fatal("voice closed by the drop")
+	default:
+	}
+
+	// Past the timeout, the session ends with its players.
+	h.ws.Close()
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("player kept past the timeout")
+	}
+	if ready := h.connect(sid); ready["resumed"] != false || ready["sessionId"] == sid {
+		t.Fatalf("expired resume = %v", ready)
+	}
+	if code, _ := h.do("GET", "/v4/sessions/"+sid+"/players", nil); code != 404 {
+		t.Fatalf("expired session = %d", code)
+	}
+
+	// Without resuming, a drop ends the session at once.
+	sid = h.sid
+	h.ws.Close()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if code, _ := h.do("GET", "/v4/sessions/"+sid+"/players", nil); code == 404 {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("session after drop = %d", code)
+		}
+	}
+}
+
+// A client that answers the node's pings stays; one that stops is dropped.
+func TestDeadClientDropped(t *testing.T) {
+	h := newHarness(t, func(s *Server) { s.pingPeriod, s.pongWait = 20*time.Millisecond, 200*time.Millisecond })
+	alive, live := h.sid, h.ws
+	go func() { // reading answers pings
+		for {
+			if _, _, err := live.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	h.connect("") // a second client that never reads again
+	dead := h.sid
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if code, _ := h.do("GET", "/v4/sessions/"+dead+"/players", nil); code == 404 {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatal("silent client not dropped")
+		}
+	}
+	if code, _ := h.do("GET", "/v4/sessions/"+alive+"/players", nil); code != 200 {
+		t.Fatalf("answering client dropped: %d", code)
 	}
 }
 

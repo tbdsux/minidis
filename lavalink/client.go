@@ -11,8 +11,10 @@
 //	err = ll.Play(ctx, guildID, track)
 //
 // Attach forwards the bot's voice events to the node and opens the node's
-// WebSocket when the bot is ready. The client keeps no queue: play the next
-// track from OnEvent when an Event says MayStartNext.
+// WebSocket when the bot is ready. When the WebSocket drops, the client
+// reconnects and resumes its session, so the node's players play on. The
+// client keeps no queue: play the next track from OnEvent when an Event says
+// MayStartNext.
 package lavalink
 
 import (
@@ -24,8 +26,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +53,20 @@ type Error struct {
 
 func (e *Error) Error() string { return fmt.Sprintf("lavalink: %d: %s", e.Status, e.Message) }
 
+// resumeTimeout is how long the node keeps the players after the WebSocket
+// drops, waiting for the client to reconnect.
+const resumeTimeout = 60 * time.Second
+
+// pingPeriod and pongWait catch a node that stopped answering without the
+// WebSocket failing, as after a network change: the client pings it, and
+// reconnects when neither a pong nor a message came for pongWait. Lavalink
+// sends stats every minute, so pongWait stays longer than that even for a
+// node that doesn't answer pings.
+const (
+	pingPeriod = 20 * time.Second
+	pongWait   = 70 * time.Second
+)
+
 // Client talks to one node. Set its fields before using it.
 type Client struct {
 	URL        string // the node's base URL, such as http://localhost:2333
@@ -56,11 +74,17 @@ type Client struct {
 	HTTPClient *http.Client
 	Logger     *slog.Logger
 
+	connectMu sync.Mutex // serializes Connect
+
+	// pingPeriod and pongWait override the constants when set; tests shorten them.
+	pingPeriod, pongWait time.Duration
+
 	mu        sync.Mutex
 	session   *client.Session
 	userID    string
-	sessionID string
+	sessionID string // kept while reconnecting, to resume it
 	ws        *websocket.Conn
+	closed    bool                   // by Close, which stops reconnecting
 	voice     map[string]*VoiceState // by guild, as Discord sent it so far
 	handlers  []func(*Event)
 }
@@ -105,17 +129,69 @@ func (c *Client) Attach(s *client.Session) {
 	})
 }
 
-// Connect opens the node's WebSocket as the bot userID. Attach calls it on
-// READY; it does nothing when already connected.
+// Connect opens the node's WebSocket as the bot userID and turns on
+// resuming for its session. Attach calls it on READY; it does nothing when
+// already connected.
 func (c *Client) Connect(ctx context.Context, userID string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.ws != nil {
+	c.closed = false
+	c.mu.Unlock()
+	return c.connect(ctx, userID)
+}
+
+// connect is Connect without undoing Close, for reconnecting.
+func (c *Client) connect(ctx context.Context, userID string) error {
+	c.connectMu.Lock()
+	defer c.connectMu.Unlock()
+	c.mu.Lock()
+	connected, closed, old := c.ws != nil, c.closed, c.sessionID
+	c.mu.Unlock()
+	if closed {
+		return ErrNotConnected
+	}
+	if connected {
 		return nil
 	}
-	u, err := url.Parse(c.URL + "/v4/websocket")
+	ws, sessionID, resumed, err := c.dial(ctx, userID, old)
 	if err != nil {
 		return err
+	}
+	c.mu.Lock()
+	if c.closed { // Close ran while dialing
+		c.mu.Unlock()
+		ws.Close()
+		return ErrNotConnected
+	}
+	c.ws, c.userID, c.sessionID = ws, userID, sessionID
+	guilds := slices.Collect(maps.Keys(c.voice))
+	wait := cmp.Or(c.pongWait, pongWait)
+	c.mu.Unlock()
+	// Set before reading starts: the pong handler runs inside ReadMessage.
+	ws.SetReadDeadline(time.Now().Add(wait))
+	ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(wait)) })
+	go c.readLoop(ws, wait)
+	go c.keepalive(ws)
+
+	if old != "" && !resumed {
+		// The node ended the old session, and its players with it: connect voice again.
+		c.log().Warn("lavalink: node session not resumed; tracks that were playing ended", "session", sessionID)
+		for _, g := range guilds {
+			go c.sendVoice(g)
+		}
+	}
+	if err := c.do(ctx, http.MethodPatch, "/v4/sessions/"+url.PathEscape(sessionID),
+		map[string]any{"resuming": true, "timeout": int(resumeTimeout / time.Second)}, nil); err != nil {
+		c.log().Warn("lavalink: turn on resuming", "error", err)
+	}
+	return nil
+}
+
+// dial opens the WebSocket, asking to resume sessionID if set, and reads the
+// ready message.
+func (c *Client) dial(ctx context.Context, userID, sessionID string) (*websocket.Conn, string, bool, error) {
+	u, err := url.Parse(c.URL + "/v4/websocket")
+	if err != nil {
+		return nil, "", false, err
 	}
 	u.Scheme = strings.Replace(u.Scheme, "http", "ws", 1)
 	header := http.Header{
@@ -123,15 +199,19 @@ func (c *Client) Connect(ctx context.Context, userID string) error {
 		"User-Id":       {userID},
 		"Client-Name":   {"minidis/" + client.LibraryVersion},
 	}
+	if sessionID != "" {
+		header.Set("Session-Id", sessionID)
+	}
 	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, u.String(), header)
 	if err != nil {
 		if resp != nil {
-			return fmt.Errorf("lavalink: connect: %w (HTTP %d)", err, resp.StatusCode)
+			return nil, "", false, fmt.Errorf("lavalink: connect: %w (HTTP %d)", err, resp.StatusCode)
 		}
-		return fmt.Errorf("lavalink: connect: %w", err)
+		return nil, "", false, fmt.Errorf("lavalink: connect: %w", err)
 	}
 	var ready struct {
 		Op        string `json:"op"`
+		Resumed   bool   `json:"resumed"`
 		SessionID string `json:"sessionId"`
 	}
 	if dl, ok := ctx.Deadline(); ok {
@@ -139,27 +219,62 @@ func (c *Client) Connect(ctx context.Context, userID string) error {
 	}
 	if err := ws.ReadJSON(&ready); err != nil || ready.Op != "ready" {
 		ws.Close()
-		return fmt.Errorf("lavalink: no ready message: %v", err)
+		return nil, "", false, fmt.Errorf("lavalink: no ready message: %v", err)
 	}
 	ws.SetReadDeadline(time.Time{})
-	c.ws, c.userID, c.sessionID = ws, userID, ready.SessionID
-	go c.readLoop(ws)
-	return nil
+	return ws, ready.SessionID, ready.Resumed, nil
 }
 
-func (c *Client) readLoop(ws *websocket.Conn) {
+// reconnect connects again after the WebSocket dropped, waiting longer
+// after each failure, until it succeeds or Close is called.
+func (c *Client) reconnect(userID string) {
+	for wait := time.Second; ; wait = min(wait*2, 30*time.Second) {
+		time.Sleep(wait)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := c.connect(ctx, userID)
+		cancel()
+		if err == nil || errors.Is(err, ErrNotConnected) {
+			return
+		}
+		c.log().Error("lavalink: reconnect to node", "error", err, "retry_in", min(wait*2, 30*time.Second))
+	}
+}
+
+// keepalive pings ws until it is replaced or fails.
+func (c *Client) keepalive(ws *websocket.Conn) {
+	c.mu.Lock()
+	period := cmp.Or(c.pingPeriod, pingPeriod)
+	c.mu.Unlock()
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for range t.C {
+		c.mu.Lock()
+		current := c.ws == ws
+		c.mu.Unlock()
+		if !current || ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)) != nil {
+			return
+		}
+	}
+}
+
+func (c *Client) readLoop(ws *websocket.Conn, wait time.Duration) {
 	for {
 		_, data, err := ws.ReadMessage()
+		if err == nil {
+			ws.SetReadDeadline(time.Now().Add(wait))
+		}
 		if err != nil {
 			c.mu.Lock()
-			lost := c.ws == ws // else Close was called
+			lost := c.ws == ws && !c.closed // else Close was called
 			if lost {
-				c.ws, c.sessionID = nil, ""
+				c.ws = nil
 			}
+			userID := c.userID
 			c.mu.Unlock()
+			ws.Close()
 			if lost {
-				// shortcut: no reconnect or resume; the node drops its players with the WebSocket.
-				c.log().Error("lavalink: node connection lost", "error", err)
+				c.log().Warn("lavalink: node connection lost; reconnecting", "error", err)
+				go c.reconnect(userID)
 			}
 			return
 		}
@@ -187,19 +302,26 @@ func (c *Client) OnEvent(h func(*Event)) {
 	c.handlers = append(c.handlers, h)
 }
 
-// Close closes the node's WebSocket, which ends its players.
+// Close closes the node's WebSocket and stops reconnecting. It turns
+// resuming off first, so the node ends the players at once.
 func (c *Client) Close() error {
 	c.mu.Lock()
-	ws := c.ws
-	c.ws, c.sessionID = nil, ""
+	ws, sid := c.ws, c.sessionID
+	c.ws, c.sessionID, c.closed = nil, "", true
 	c.mu.Unlock()
+	if sid != "" { // also while reconnecting, when the node keeps the session waiting
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.do(ctx, http.MethodPatch, "/v4/sessions/"+url.PathEscape(sid), map[string]any{"resuming": false}, nil)
+	}
 	if ws == nil {
 		return nil
 	}
 	return ws.Close()
 }
 
-// SessionID is the node's session, or "" when not connected.
+// SessionID is the node's session, or "" before the first connection and
+// after Close. It stays set while the client reconnects to resume it.
 func (c *Client) SessionID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
