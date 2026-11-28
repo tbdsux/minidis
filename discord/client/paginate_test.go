@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tbdsux/minidis/discord"
 )
@@ -186,5 +187,99 @@ func TestPaginateStopsWhenTheCursorDoesNotAdvance(t *testing.T) {
 		if want := map[string]int{"same": 2, "": 1}[cursor]; calls != want {
 			t.Errorf("cursor %q: %d pages fetched, want %d", cursor, calls, want)
 		}
+	}
+}
+
+func TestPaginateMoreCursors(t *testing.T) {
+	ctx := context.Background()
+	pinned := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, c := range []struct {
+		name string
+		size int
+		item func(last bool) obj // the last item of a page holds the cursor
+		wrap string              // the field a page is wrapped in, if any
+		all  func(s *Session) int
+		want []string
+	}{
+		{"pins", 50, func(last bool) obj {
+			if last {
+				return obj{"pinned_at": pinned}
+			}
+			return obj{"pinned_at": pinned.Add(time.Hour)}
+		}, "items", func(s *Session) int { return drain(t, s.ChannelPinsAll(ctx, "C")) },
+			[]string{"/channels/C/messages/pins?limit=50", "/channels/C/messages/pins?before=2026-01-02T03%3A04%3A05Z&limit=50"}},
+		{"poll voters", 100, idItem("id"), "users", func(s *Session) int { return drain(t, s.PollAnswerVotersAll(ctx, "C", "M", 1)) },
+			[]string{"/channels/C/polls/M/answers/1?limit=100", "/channels/C/polls/M/answers/1?after=L&limit=100"}},
+		{"thread members", 100, idItem("user_id"), "", func(s *Session) int { return drain(t, s.ThreadMembersAll(ctx, "T")) },
+			[]string{"/channels/T/thread-members?limit=100&with_member=true", "/channels/T/thread-members?after=L&limit=100&with_member=true"}},
+		{"event users", 100, func(last bool) obj { return obj{"user": idItem("id")(last)} }, "",
+			func(s *Session) int { return drain(t, s.GuildScheduledEventUsersAll(ctx, "G", "E", false)) },
+			[]string{"/guilds/G/scheduled-events/E/users?limit=100", "/guilds/G/scheduled-events/E/users?after=L&limit=100"}},
+		{"audit log", 100, idItem("id"), "audit_log_entries",
+			func(s *Session) int {
+				return drain(t, s.GuildAuditLogAll(ctx, "G", discord.AuditLogQuery{UserID: "U", Before: "B", After: "A", Limit: 5}))
+			},
+			[]string{"/guilds/G/audit-logs?before=B&limit=100&user_id=U", "/guilds/G/audit-logs?before=L&limit=100&user_id=U"}},
+		{"guilds", 200, idItem("id"), "", func(s *Session) int { return drain(t, s.CurrentUserGuildsAll(ctx)) },
+			[]string{"/users/@me/guilds?limit=200&with_counts=true", "/users/@me/guilds?after=L&limit=200&with_counts=true"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var (
+				mu      sync.Mutex
+				queries []string
+			)
+			// The first page is full; the next is empty.
+			s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				queries = append(queries, r.URL.Path+"?"+r.URL.RawQuery)
+				first := len(queries) == 1
+				mu.Unlock()
+
+				page := []obj{}
+				for i := 0; first && i < c.size; i++ {
+					page = append(page, c.item(i == c.size-1))
+				}
+				if c.wrap != "" {
+					json.NewEncoder(w).Encode(obj{c.wrap: page})
+					return
+				}
+				json.NewEncoder(w).Encode(page)
+			})
+
+			if n := c.all(s); n != c.size {
+				t.Errorf("got %d items, want %d", n, c.size)
+			}
+			if !slices.Equal(queries, c.want) {
+				t.Errorf("queries = %q, want %q", queries, c.want)
+			}
+		})
+	}
+}
+
+// idItem returns items with an ID in field, "L" for the last of a page.
+func idItem(field string) func(last bool) obj {
+	return func(last bool) obj {
+		if last {
+			return obj{field: "L"}
+		}
+		return obj{field: "1"}
+	}
+}
+
+func TestPaginateStopsAtAMemberOrBanWithoutAUser(t *testing.T) {
+	calls := 0
+	s := newRESTSession(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		page := make([]obj, 1000) // a full page, whose last item has no user
+		for i := range page[:999] {
+			page[i] = obj{"user": obj{"id": strconv.Itoa(i)}}
+		}
+		page[999] = obj{}
+		json.NewEncoder(w).Encode(page)
+	})
+	ctx := context.Background()
+
+	if n := drain(t, s.GuildMembersAll(ctx, "G")) + drain(t, s.GuildBansAll(ctx, "G")); n != 2000 || calls != 2 {
+		t.Errorf("got %d items in %d requests, want 2000 in 2", n, calls)
 	}
 }

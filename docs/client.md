@@ -51,7 +51,7 @@ s.GuildBanCreate(client.WithAuditLogReason(ctx, "spam"), guildID, userID, 0)
 
 ### Every page
 
-`ChannelMessagesAll`, `GuildMembersAll`, `GuildBansAll` and `MessageReactionsAll` go through a whole list, fetching the next page as the loop reaches it. Breaking out of the loop stops the fetching, and a page that fails ends it with the error:
+`ChannelMessagesAll`, `ChannelPinsAll`, `GuildMembersAll`, `GuildBansAll`, `GuildAuditLogAll`, `GuildScheduledEventUsersAll`, `CurrentUserGuildsAll`, `ThreadMembersAll`, `MessageReactionsAll` and `PollAnswerVotersAll` go through a whole list, fetching the next page as the loop reaches it. Breaking out of the loop stops the fetching, and a page that fails ends it with the error:
 
 ```go
 for m, err := range s.GuildMembersAll(ctx, guildID) {
